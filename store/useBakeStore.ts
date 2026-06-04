@@ -1,6 +1,6 @@
 import { create } from 'zustand';
-import { persist, createJSONStorage, StateStorage } from 'zustand/middleware';
-import * as SQLite from 'expo-sqlite/kv-store';
+import { persist, createJSONStorage } from 'zustand/middleware';
+import sqliteStorage from './sqliteStorage';
 
 export type CrumbType = 'Classical' | 'Honeycomb' | 'Molten' | 'Fools Crumb';
 export type ShapeType = 'Full Body' | 'Sloping Shoulders' | 'Spreading';
@@ -27,18 +27,6 @@ interface BakeState {
   saveLog: (crumbType: CrumbType, shapeType: ShapeType) => void;
   clearPendingLog: () => void;
 }
-
-const sqliteStorage: StateStorage = {
-  getItem: (name: string) => {
-    return SQLite.getItemSync(name) ?? null;
-  },
-  setItem: (name: string, value: string) => {
-    SQLite.setItemSync(name, value);
-  },
-  removeItem: (name: string) => {
-    SQLite.removeItemSync(name);
-  },
-};
 
 export const useBakeStore = create<BakeState>()(
   persist(

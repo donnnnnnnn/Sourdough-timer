@@ -12,6 +12,18 @@ import {
 } from 'lucide-react-native';
 import { useBakeStore, CrumbType, ShapeType } from '@/store/useBakeStore';
 
+const C = {
+  bg: '#0c0c0f',
+  card: 'rgba(255,255,255,0.05)',
+  cardBorder: 'rgba(255,255,255,0.08)',
+  accent: '#F59E0B',
+  accentSoft: 'rgba(245,158,11,0.15)',
+  accentBorder: 'rgba(245,158,11,0.3)',
+  text: '#e4e4e7',
+  textMuted: 'rgba(255,255,255,0.45)',
+  textDim: 'rgba(255,255,255,0.25)',
+};
+
 const CRUMB_OPTIONS: { type: CrumbType; label: string; description: string; Icon: React.FC<{ color: string; size: number }> }[] = [
   { type: 'Classical', label: 'Classical Artisan', description: 'Varied mix of large & small holes', Icon: Layers },
   { type: 'Honeycomb', label: 'Honeycomb', description: 'Regular, even matrix of holes', Icon: Grid2x2 },
@@ -43,23 +55,24 @@ export default function LogScreen() {
 
   if (!hasPending) {
     return (
-      <View className="flex-1 bg-stone-50 items-center justify-center" style={{ padding: 32 }}>
-        <Text style={{ fontSize: 64 }}>🍞</Text>
-        <Text className="text-stone-800 text-2xl font-bold text-center mt-4 mb-2">
+      <View style={{ flex: 1, backgroundColor: C.bg, alignItems: 'center', justifyContent: 'center', padding: 32 }}>
+        <Text style={{ fontSize: 56, marginBottom: 4, opacity: 0.8 }}>🍞</Text>
+        <Text style={{ color: C.text, fontSize: 22, fontWeight: '700', textAlign: 'center', marginTop: 12, marginBottom: 6 }}>
           No bake in progress
         </Text>
-        <Text className="text-stone-400 text-base text-center mb-8">
+        <Text style={{ color: C.textMuted, fontSize: 15, textAlign: 'center', marginBottom: 28, lineHeight: 22 }}>
           Complete a bulk fermentation first, then come back here to log your results.
         </Text>
         <TouchableOpacity
           onPress={() => router.push('/')}
+          activeOpacity={0.8}
           style={{
-            backgroundColor: '#b5521e',
-            borderRadius: 20,
-            paddingVertical: 18,
-            paddingHorizontal: 40,
+            backgroundColor: C.accent,
+            borderRadius: 18,
+            paddingVertical: 16,
+            paddingHorizontal: 36,
           }}>
-          <Text style={{ color: '#ffffff', fontSize: 18, fontWeight: '700' }}>
+          <Text style={{ color: '#0c0c0f', fontSize: 16, fontWeight: '700' }}>
             Go to Timer
           </Text>
         </TouchableOpacity>
@@ -69,38 +82,41 @@ export default function LogScreen() {
 
   return (
     <ScrollView
-      className="flex-1 bg-stone-50"
+      style={{ flex: 1, backgroundColor: C.bg }}
       contentContainerStyle={{ padding: 24, paddingBottom: 48 }}>
 
-      <Text className="text-stone-800 text-3xl font-bold mb-1">Log Your Bake</Text>
-      <Text className="text-stone-400 text-base mb-6">
+      <Text style={{ color: C.text, fontSize: 28, fontWeight: '800', letterSpacing: -0.3, marginBottom: 4 }}>
+        Log Your Bake
+      </Text>
+      <Text style={{ color: C.textMuted, fontSize: 15, marginBottom: 24 }}>
         How did it turn out?
       </Text>
 
-      <Text className="text-stone-500 text-xs font-semibold uppercase tracking-widest mb-3">
+      <Text style={{ color: C.textDim, fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 2, marginBottom: 14 }}>
         Crumb Structure
       </Text>
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 24 }}>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 28 }}>
         {CRUMB_OPTIONS.map(({ type, label, description, Icon }) => {
           const active = selectedCrumb === type;
           return (
             <TouchableOpacity
               key={type}
               onPress={() => setSelectedCrumb(type)}
+              activeOpacity={0.7}
               style={{
-                width: '47%',
-                backgroundColor: active ? '#b5521e' : '#ffffff',
-                borderWidth: 2,
-                borderColor: active ? '#b5521e' : '#e7e5e4',
-                borderRadius: 16,
+                width: '48%',
+                backgroundColor: active ? C.accentSoft : C.card,
+                borderWidth: 1.5,
+                borderColor: active ? C.accent : C.cardBorder,
+                borderRadius: 18,
                 padding: 18,
                 alignItems: 'center',
               }}>
-              <Icon color={active ? '#ffffff' : '#78716c'} size={32} />
+              <Icon color={active ? C.accent : C.textMuted} size={30} />
               <Text
                 style={{
-                  color: active ? '#ffffff' : '#1c1917',
-                  fontSize: 15,
+                  color: active ? C.accent : C.text,
+                  fontSize: 14,
                   fontWeight: '700',
                   textAlign: 'center',
                   marginTop: 10,
@@ -110,9 +126,10 @@ export default function LogScreen() {
               </Text>
               <Text
                 style={{
-                  color: active ? '#fde8d8' : '#a8a29e',
-                  fontSize: 12,
+                  color: active ? 'rgba(245,158,11,0.65)' : C.textDim,
+                  fontSize: 11,
                   textAlign: 'center',
+                  lineHeight: 15,
                 }}>
                 {description}
               </Text>
@@ -121,7 +138,7 @@ export default function LogScreen() {
         })}
       </View>
 
-      <Text className="text-stone-500 text-xs font-semibold uppercase tracking-widest mb-3">
+      <Text style={{ color: C.textDim, fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 2, marginBottom: 14 }}>
         Loaf Shape
       </Text>
       <View style={{ gap: 10, marginBottom: 32 }}>
@@ -131,28 +148,29 @@ export default function LogScreen() {
             <TouchableOpacity
               key={type}
               onPress={() => setSelectedShape(type)}
+              activeOpacity={0.7}
               style={{
-                backgroundColor: active ? '#b5521e' : '#ffffff',
-                borderWidth: 2,
-                borderColor: active ? '#b5521e' : '#e7e5e4',
-                borderRadius: 16,
+                backgroundColor: active ? C.accentSoft : C.card,
+                borderWidth: 1.5,
+                borderColor: active ? C.accent : C.cardBorder,
+                borderRadius: 18,
                 padding: 18,
                 flexDirection: 'row',
                 alignItems: 'center',
                 gap: 16,
               }}>
-              <Icon color={active ? '#ffffff' : '#78716c'} size={28} />
+              <Icon color={active ? C.accent : C.textMuted} size={26} />
               <View style={{ flex: 1 }}>
                 <Text
                   style={{
-                    color: active ? '#ffffff' : '#1c1917',
-                    fontSize: 16,
+                    color: active ? C.accent : C.text,
+                    fontSize: 15,
                     fontWeight: '700',
                     marginBottom: 2,
                   }}>
                   {label}
                 </Text>
-                <Text style={{ color: active ? '#fde8d8' : '#a8a29e', fontSize: 13 }}>
+                <Text style={{ color: active ? 'rgba(245,158,11,0.65)' : C.textDim, fontSize: 12 }}>
                   {description}
                 </Text>
               </View>
@@ -163,13 +181,22 @@ export default function LogScreen() {
 
       <TouchableOpacity
         onPress={handleSubmit}
+        activeOpacity={0.8}
         style={{
-          backgroundColor: selectedCrumb && selectedShape ? '#b5521e' : '#d6d3d1',
+          backgroundColor: selectedCrumb && selectedShape ? C.accent : 'rgba(255,255,255,0.08)',
           borderRadius: 20,
-          paddingVertical: 22,
+          paddingVertical: 20,
           alignItems: 'center',
+          shadowColor: selectedCrumb && selectedShape ? C.accent : 'transparent',
+          shadowOffset: { width: 0, height: 8 },
+          shadowOpacity: 0.3,
+          shadowRadius: 20,
         }}>
-        <Text style={{ color: '#ffffff', fontSize: 20, fontWeight: '700' }}>
+        <Text style={{
+          color: selectedCrumb && selectedShape ? '#0c0c0f' : C.textDim,
+          fontSize: 18,
+          fontWeight: '800',
+        }}>
           Save Bake Log
         </Text>
       </TouchableOpacity>

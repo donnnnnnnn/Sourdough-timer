@@ -5,15 +5,20 @@ export default function TabLayout() {
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: '#b5521e',
-        tabBarInactiveTintColor: '#78716c',
+        tabBarActiveTintColor: '#F59E0B',
+        tabBarInactiveTintColor: 'rgba(255,255,255,0.35)',
         tabBarStyle: {
-          backgroundColor: '#fafaf9',
-          borderTopColor: '#e7e5e4',
+          backgroundColor: 'rgba(24,24,27,0.92)',
+          borderTopColor: 'rgba(255,255,255,0.06)',
+          borderTopWidth: 0.5,
+          paddingTop: 4,
         },
-        headerStyle: { backgroundColor: '#fafaf9' },
-        headerTintColor: '#1c1917',
-        headerTitleStyle: { fontWeight: '700', fontSize: 18 },
+        headerStyle: {
+          backgroundColor: '#0c0c0f',
+        },
+        headerTintColor: '#e4e4e7',
+        headerTitleStyle: { fontWeight: '600', fontSize: 17, letterSpacing: 0.3 },
+        headerShadowVisible: false,
       }}>
       <Tabs.Screen
         name="index"

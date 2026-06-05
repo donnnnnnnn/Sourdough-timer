@@ -5,6 +5,15 @@ import sqliteStorage from './sqliteStorage';
 export type CrumbType = 'Classical' | 'Honeycomb' | 'Molten' | 'Fools Crumb';
 export type ShapeType = 'Full Body' | 'Sloping Shoulders' | 'Spreading';
 
+export type Diagnosis =
+  | 'under_fermented'
+  | 'slightly_under'
+  | 'properly_fermented'
+  | 'slightly_over'
+  | 'over_fermented'
+  | 'weak_shaping'
+  | 'fools_crumb';
+
 export interface BakeLog {
   id: string;
   timestamp: number;

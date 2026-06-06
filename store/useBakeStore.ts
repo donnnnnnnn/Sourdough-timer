@@ -12,7 +12,8 @@ export type Diagnosis =
   | 'slightly_over'
   | 'over_fermented'
   | 'weak_shaping'
-  | 'fools_crumb';
+  | 'fools_crumb'
+  | 'oven_artifact';
 
 export interface BakeLog {
   id: string;
@@ -21,6 +22,7 @@ export interface BakeLog {
   foldCount: number;
   crumbType: CrumbType;
   shapeType: ShapeType;
+  diagnosis?: Diagnosis;
 }
 
 interface BakeState {
@@ -33,7 +35,7 @@ interface BakeState {
   startBulk: (intervalMinutes: number) => void;
   recordFold: () => void;
   endBulk: () => void;
-  saveLog: (crumbType: CrumbType, shapeType: ShapeType) => void;
+  saveLog: (crumbType: CrumbType, shapeType: ShapeType, diagnosis?: Diagnosis) => void;
   clearPendingLog: () => void;
 }
 
@@ -70,7 +72,7 @@ export const useBakeStore = create<BakeState>()(
         });
       },
 
-      saveLog: (crumbType, shapeType) => {
+      saveLog: (crumbType, shapeType, diagnosis) => {
         const { lastBulkDurationMinutes, lastFoldCount, bakeLogs } = get();
         if (lastBulkDurationMinutes === null || lastFoldCount === null) return;
         const newLog: BakeLog = {
@@ -80,6 +82,7 @@ export const useBakeStore = create<BakeState>()(
           foldCount: lastFoldCount,
           crumbType,
           shapeType,
+          diagnosis,
         };
         set({
           bakeLogs: [newLog, ...bakeLogs],

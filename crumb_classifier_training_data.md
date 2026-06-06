@@ -820,3 +820,243 @@ The following synthesizes indicators that appear across multiple independent sou
 | **Bubbles in bloom** | Sourdough Journey | Gas pockets visible in the score opening — sign of overproofing; gluten too weak to form strands |
 | **Gummy knife test** | Pantry Mama | Pressing knife through crumb leaves doughy residue — underfermented or underbaked |
 | **Dense strip at bottom** | Sourdough Journey | Band of tight crumb along the bottom of a slice — hallmark of underproofed loaf regardless of what the top half shows |
+
+---
+
+## Part 4 — Hamelman — *Bread: A Baker's Book of Techniques and Recipes* (3rd ed., 2021)
+
+**Source:** Jeffrey Hamelman, *Bread: A Baker's Book of Techniques and Recipes*, 3rd edition, John Wiley & Sons, 2021.
+**Relevance:** Professional bakery reference. Hamelman spent decades as head baker at King Arthur Flour and as a World Bread Cup coach. His framework is oriented toward professional production but contains precise, testable diagnostic criteria for crumb, crust, and fermentation that translate directly to visual classification signals.
+
+---
+
+### 1. Fermentation Stage Framework
+
+Hamelman identifies **five distinct, interconnected fermentation stages**:
+
+| Stage | Description | Diagnostic relevance |
+|---|---|---|
+| **Pre-ferment** (optional) | Poolish, biga, levain build ripens 6–18 h | State of pre-ferment directly affects bulk duration needed |
+| **Bulk (primary) fermentation** | Begins when mixer stops; includes all folds; ends at dividing | Main fermentation window — bulk duration is primary timing input |
+| **Bench rest** | After dividing and preshaping; brief relaxation | Short bench → tight, torn crust; long bench → weak shaping |
+| **Final fermentation (final proof)** | Shaped loaves rise to target volume | Key visual assessment window; 85–90% risen = load point |
+| **Oven spring** | Brief fermentation boost as loaf heats in oven; ceases at 138°F/59°C | Vigorous oven spring = good dough strength; no spring = weak or over |
+
+**Key rule:** Bread should never reach 100% rise before loading — "just as we will fall onto our noses if we lean over 100 percent, so too will the loaves collapse." (p.13)
+
+---
+
+### 2. Final Proof Visual/Tactile Assessment
+
+**Target state:** 85–90% risen — "well risen and feel light."
+
+> *"The dough should feel light, somewhat loose, somewhat weak."* (p.146)
+> *"Breads that receive a completely full rise risk collapsing in the oven."* (p.211)
+
+| Proof state | Visual / tactile indicators | Baking adjustment |
+|---|---|---|
+| **Slightly underrisen** | Dough feels dense, tight; has not expanded to expected volume | Extra steam recommended — keeps surface moist longer so bread can spring further |
+| **Properly risen (85–90%)** | Feels light, somewhat loose; still has slight resistance | Normal steam; scores expand beautifully in oven |
+| **Fully risen (100%)** | Very light, little resistance, surface starts to lose tension | Risk of oven collapse; do not steam extra |
+| **Overrisen** | Surface may look puffy but soft; loses tension; score may drag | Less steam — crust must firm quickly to prevent flattening; light scoring only |
+
+**5 Senses diagnostic framework:**
+- **Hearing**: Mixer slap-slap = gluten developing; popping = strengthening; listen to oven for crust set
+- **Touch**: Feel shaped loaves — light and somewhat loose = good; dense and firm = underproofed; pillowy with zero resistance = overproofed. Thump bottom of baked loaf for doneness
+- **Smell**: Poolish/levain when ripe: "wheaty and ripe, with a nice sweet tang." Weak or bland = immature. Overly acidic/off = overripe
+- **Sight**: "Our eyes guide us at every stage." Pale at base of score cuts → more oven time needed. Volume and color together tell the story
+- **Taste**: Taste raw dough for salt; taste levain for acid balance; taste baked crumb for proper development
+
+---
+
+### 3. Pre-ferment and Levain Ripeness Indicators
+
+These signals are observable BEFORE the final bake and predict crumb outcome:
+
+#### Poolish (liquid, ~100% hydration)
+| Signal | Interpretation |
+|---|---|
+| Surface covered with small breaking bubbles + fissures/rivulets | **At peak** — mix immediately |
+| Risen and then collapsed; "high-water mark" on bowl sides | **Past its prime** (overripe) — acidity too high, yeast exhausted |
+| Flat, no bubbles | **Immature** — more time needed |
+
+#### Stiff biga / pâte fermentée
+| Signal | Interpretation |
+|---|---|
+| Domed and just beginning to recede in center | **At peak** |
+| Fully domed, no recession | Still ripening |
+| Concave / collapsed | **Overripe** |
+
+#### Liquid levain
+| Signal | Interpretation |
+|---|---|
+| Mildly acidic aroma + subtle sweetness + soap-bubble surface | **At peak** |
+| Flat, bland, no bubbles | **Too young** |
+| High-water mark on container sides, culture dropped | **Overripe** — cool environment or reduce culture percentage next build |
+
+#### Stiff levain (55–65% hydration)
+| Signal | Interpretation |
+|---|---|
+| Domed, just barely starting to recede in center | **At peak** — highest-quality window |
+| Fully domed | Approaching peak |
+| Concave/collapsed | **Overripened** — needs cooler temp or less ripening time |
+
+**Effect of under/overripe levain on finished bread:**
+> *"Poor volume, poor luster to the crust, and deficient eating quality will result if the levain build is either too young or too ripe when it is added to the final mix."* (p.146)
+
+---
+
+### 4. Steam and Crust Diagnostics
+
+Hamelman gives the most thorough steam–crust analysis of any source reviewed.
+
+#### Crust color mechanism
+- Enzymes on the loaf surface convert starch → dextrins + reducing sugars during early baking
+- Steam keeps the surface moist, allowing enzymes to remain active longer → **richer, deeper crust color**
+- Unsteamed oven: surface dries quickly, enzymes inactivated → **pale, lusterless crust**
+- Steam also gelatinizes surface starches → creates **sheen/gloss** on crust
+
+#### Steam diagnostic table
+
+| Steam condition | Crust appearance | Crumb/volume signal |
+|---|---|---|
+| **Correct steam** | Rich color, sheen, thin and crispy | Superior volume; scores expand cleanly |
+| **No steam / insufficient steam** | Pale, dull, lusterless; rough surface | Reduced oven spring; crust may burst at weak points |
+| **Too much steam** | Thick, chewy crust; cuts don't spring open | Loaves flatten; volume reduced |
+| **Steam retained too long** | Thick crust softens back to gummy | Indicates vents not opened to dry the oven in final bake phase |
+
+**Asymmetric steam rule for proofing corrections:**
+- If bread is **slightly underrisen**: give extra steam → surface stays moist longer → more spring before crust sets
+- If bread is **overrisen**: give less steam → crust firms quickly, limiting flatness
+
+---
+
+### 5. Crust Color as Fermentation Diagnostic
+
+**Pale/dull crust** can have multiple causes — the visual is the same but the fix is different:
+
+| Cause of pale crust | Distinguishing context |
+|---|---|
+| **Overfermentation** | Yeast consumed all residual sugars; also likely flat loaf, gummy crumb, no ear |
+| **Levain too young or too ripe** | Poor volume simultaneously; crumb may be dense |
+| **No salt / insufficient salt** | Yeast fermented too quickly, consumed all sugars |
+| **No steam** | Loaf otherwise normal height; surface dull and rough; reduced oven spring |
+| **Over-aged dough** | "Lacks color and has a lusterless personality" — dough divided/shaped too late after mixing |
+| **Green (unaged) flour** | Coarse crumb texture + thick unpleasant crust + poor volume + poor oven spring occurring together |
+| **Long retard / low residual sugar** | Addressed by adding diastatic malt powder (0.1–0.2% flour weight) |
+
+**Excess crust color** (too dark, too early):
+- Damaged starch (high amylase activity): browning accelerated
+- Excess sugar in formula: more Maillard/caramelization
+
+---
+
+### 6. Scoring Behavior as Proof-State Diagnostic
+
+Hamelman ties scoring outcome directly to dough strength and proof state:
+
+| Score behavior | What it signals |
+|---|---|
+| **Scores expand beautifully, ear lifts** | Good dough strength at proper proof; sufficient oven spring available |
+| **Scores seal up / don't open** | Either blade held too vertical (technique), OR dough is **overrisen** (cuts can't support themselves) |
+| **Score collapses back onto loaf** | Blade cut too deep (technique), OR dough too weak / overrisen |
+| **Score opens but loaf still flat** | Structural weakness from shaping or fermentation despite adequate scoring |
+| **Random burst at weak points** | Loaf unscored or scoring inadequate; OR overrisen dough bursting unpredictably |
+
+**Rule for overrisen or structurally weak dough:**
+> *"If a bread is weak, either from overrising or due to its nature… light scoring is indicated: Since the lateral structure of the loaf is already somewhat compromised, deep scoring makes the bread tend to flatten out rather than rise upward."* (p.19)
+
+**Baguette-specific ear diagnostic (30° blade rule):**
+- Blade at 30° → thin flap opens into ear
+- Blade vertical → cuts seal up, no ear
+- Cut too deep → collapses from its own weight
+→ These blade-angle/depth rules help distinguish scoring technique error from fermentation-driven poor score opening
+
+---
+
+### 7. Crumb Texture — Gummy Crumb Causes
+
+Hamelman identifies multiple distinct pathways to gummy crumb:
+
+| Cause | Mechanism | Distinguishing feature |
+|---|---|---|
+| **Rye starch attack** | Alpha-amylase active 140–176°F (60–80°C) breaks down starch before gluten sets; sourdough acid inhibits this | Only in rye/high-rye breads; fix is sourdough |
+| **Excess damaged starch** | Damaged particles over-absorb water during mix, release it during bake, weakening structure | Dough becomes sticky during bulk; loaves flatten; cuts don't open; crust softens after bake |
+| **Excess diastatic malt** | Too much added → excess amylase → starch breakdown | Specifically triggered by malt addition; add 0.1–0.2% max |
+| **Long retard / low residual sugar** | Over-acidification during retard can damage gluten | Associated with very long retard times |
+| **Underbaked** | Starch not fully gelatinized; interior still wet | Knife test leaves residue; crust may look done but interior gummy |
+
+---
+
+### 8. Damaged Starch Diagnostic Cluster
+
+Hamelman describes a specific multi-signal cluster that distinguishes damaged starch problems from fermentation issues — critical for classifier disambiguation:
+
+**All of these signals occurring together = damaged starch / high amylase flour:**
+1. Dough becomes slack at end of mixing
+2. Dough becomes more and more sticky during bulk fermentation (worsening stickiness = temporal signal)
+3. Once shaped, loaves tend to flatten out
+4. In the oven, cuts open poorly or not at all
+5. Excess crust color (high enzymatic activity)
+6. Crust softens after bake (unusual — normally crust firms as it cools)
+
+→ **Crust that softens after bake is a near-unique signal** not associated with fermentation errors — if present, the cause is enzymatic/starch, not timing.
+
+---
+
+### 9. Overmixing vs. Undermixing Crumb Effects
+
+| Condition | Visible in crumb | Other signals |
+|---|---|---|
+| **Overmixed** | Coarser crumb, reduced flavor complexity, white/bland crumb | Dough shiny, sticky, weak in mixer; carotenoid pigments destroyed |
+| **Properly mixed (moderate)** | Creamy-colored crumb, flavor present | Dough shows development but not maximum gluten |
+| **Undermixed** | Dense, poor structure, little volume | Compensated by longer bulk + folds |
+
+**Key insight:** Dough that leaves the mixer as a "weak sticky mass" can become "a cohesive, well-structured dough" simply through correct folding — this is why mixing level alone cannot diagnose crumb structure.
+
+---
+
+### 10. Temperature Table — What Happens as Bread Bakes
+
+Relevant because these ranges explain *why* certain crumb structures form:
+
+| Internal temp range | Biological/structural event |
+|---|---|
+| 77–122°F (25–50°C) | Rapid yeast increase, enzymatic activity, starch swelling, peak gas production → **oven spring window** |
+| 122–140°F (50–60°C) | Rye starch gelatinizes; bacteria die; yeast enzymes inactivated |
+| 140–158°F (60–70°C) | Wheat starch begins to gelatinize; loaf expansion slows; gluten coagulation begins |
+| 158–176°F (70–80°C) | **Gluten coagulation complete — crumb structure locked in** |
+| 176–194°F (80–90°C) | Wheat starch gelatinization complete; enzyme activity ceases |
+| 194–212°F (90–100°C) | Max internal temp; **crust coloration begins** |
+| 212–350°F (100–177°C) | Maillard reaction → crust color, aroma |
+| 300–400°F (149–204°C) | Caramelization → deeper color, flavor |
+
+**Diagnostic implication:** Gummy crumb in wheat bread = structure didn't lock in properly at 158–176°F range (amylase still active if malt was excessive, or loaf underbaked).
+
+---
+
+### 11. Rye Bread — Different Diagnostic Rules
+
+Hamelman is thorough on rye because its rules diverge significantly from wheat:
+
+- Rye breads are **always denser** — tight crumb is not a fermentation failure in rye
+- Gummy crumb in rye = **starch attack** (amylase problem), not fermentation
+- Fix for rye gummy crumb: sourdough acid (lowers pH, inhibits alpha-amylase)
+- Overrisen rye is fragile — scoring with a razor creates weak spots; use dough docker for 80%+ rye
+- Rye levain/sourdough ripeness: domed, tangy aroma, distinct volume increase from mixing; collapsed = overripe
+
+---
+
+### 12. Cross-Source Consensus Additions from Hamelman
+
+These statements reinforce or refine signals from other sources in this training data:
+
+| Signal | Hamelman's wording | Classifier rule |
+|---|---|---|
+| Pale crust | "In the absence of salt, yeast quickly consumes available sugars, and crust on baked bread will be pale and dull" | Pale crust = residual sugar exhaustion (over-ferment, no salt, no steam, over-aged — need to cross-check other signals) |
+| Over-aged dough | "Over-aged, resulting in bread that lacks color and has a lusterless personality" | Lusterless crust + low volume = over-aged OR over-fermented |
+| Loaves collapse if 100% proofed | Explicit rule | Fully proofed before loading → flat result; DO NOT interpret flat as under-fermented |
+| Scoring seals shut | Overrisen OR blade angle error | Check other over-ferment signals before concluding scoring technique |
+| Gluten coagulation locks crumb at 158–176°F | Physical mechanism | Crumb structure is determined entirely before 176°F — oven temp and bake duration matter |
+| "Well risen and feel light" at 90% | Tactile + visual target | Puffed but with slight resistance = load now |
+

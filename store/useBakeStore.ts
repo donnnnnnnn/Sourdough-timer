@@ -2,9 +2,6 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import sqliteStorage from './sqliteStorage';
 
-export type CrumbType = 'Classical' | 'Honeycomb' | 'Molten' | 'Fools Crumb';
-export type ShapeType = 'Full Body' | 'Sloping Shoulders' | 'Spreading';
-
 export type Diagnosis =
   | 'under_fermented'
   | 'slightly_under'
@@ -15,29 +12,29 @@ export type Diagnosis =
   | 'fools_crumb'
   | 'oven_artifact';
 
-export interface BakeLog {
+export interface PendingSession {
   id: string;
   timestamp: number;
   bulkDurationMinutes: number;
   foldCount: number;
+}
+
+export interface BakeLog extends PendingSession {
   diagnosis: Diagnosis;
-  // Legacy fields from the pre-diagnosis log format; kept so old persisted logs still render.
-  crumbType?: CrumbType;
-  shapeType?: ShapeType;
 }
 
 interface BakeState {
   bulkStartTimestamp: number | null;
   foldIntervalMinutes: number;
   completedFolds: number;
-  lastBulkDurationMinutes: number | null;
-  lastFoldCount: number | null;
+  defaultFoldCount: number;
+  pendingSessions: PendingSession[];
   bakeLogs: BakeLog[];
   startBulk: (intervalMinutes: number) => void;
   recordFold: () => void;
   endBulk: () => void;
-  saveLog: (diagnosis: Diagnosis) => void;
-  clearPendingLog: () => void;
+  saveLog: (sessionId: string, diagnosis: Diagnosis) => void;
+  setDefaultFoldCount: (n: number) => void;
 }
 
 export const useBakeStore = create<BakeState>()(
@@ -46,8 +43,8 @@ export const useBakeStore = create<BakeState>()(
       bulkStartTimestamp: null,
       foldIntervalMinutes: 30,
       completedFolds: 0,
-      lastBulkDurationMinutes: null,
-      lastFoldCount: null,
+      defaultFoldCount: 3,
+      pendingSessions: [],
       bakeLogs: [],
 
       startBulk: (intervalMinutes) =>
@@ -61,37 +58,35 @@ export const useBakeStore = create<BakeState>()(
         set((state) => ({ completedFolds: state.completedFolds + 1 })),
 
       endBulk: () => {
-        const { bulkStartTimestamp, completedFolds } = get();
+        const { bulkStartTimestamp, completedFolds, pendingSessions } = get();
         if (!bulkStartTimestamp) return;
         const durationMs = Date.now() - bulkStartTimestamp;
         const durationMinutes = Math.round(durationMs / 60000);
-        set({
-          bulkStartTimestamp: null,
-          lastBulkDurationMinutes: durationMinutes,
-          lastFoldCount: completedFolds,
-          completedFolds: 0,
-        });
-      },
-
-      saveLog: (diagnosis) => {
-        const { lastBulkDurationMinutes, lastFoldCount, bakeLogs } = get();
-        if (lastBulkDurationMinutes === null || lastFoldCount === null) return;
-        const newLog: BakeLog = {
+        const newSession: PendingSession = {
           id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
           timestamp: Date.now(),
-          bulkDurationMinutes: lastBulkDurationMinutes,
-          foldCount: lastFoldCount,
-          diagnosis,
+          bulkDurationMinutes: durationMinutes,
+          foldCount: completedFolds,
         };
         set({
-          bakeLogs: [newLog, ...bakeLogs],
-          lastBulkDurationMinutes: null,
-          lastFoldCount: null,
+          bulkStartTimestamp: null,
+          completedFolds: 0,
+          pendingSessions: [newSession, ...pendingSessions],
         });
       },
 
-      clearPendingLog: () =>
-        set({ lastBulkDurationMinutes: null, lastFoldCount: null }),
+      saveLog: (sessionId, diagnosis) => {
+        const { pendingSessions, bakeLogs } = get();
+        const session = pendingSessions.find((s) => s.id === sessionId);
+        if (!session) return;
+        const newLog: BakeLog = { ...session, diagnosis };
+        set({
+          bakeLogs: [newLog, ...bakeLogs],
+          pendingSessions: pendingSessions.filter((s) => s.id !== sessionId),
+        });
+      },
+
+      setDefaultFoldCount: (n) => set({ defaultFoldCount: n }),
     }),
     {
       name: 'bake-store',

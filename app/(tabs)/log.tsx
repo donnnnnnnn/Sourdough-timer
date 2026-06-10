@@ -1,9 +1,8 @@
 import { useState } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, Image, ActivityIndicator, Alert } from 'react-native';
-import { router } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { Camera } from 'lucide-react-native';
-import { useBakeStore, type Diagnosis } from '@/store/useBakeStore';
+import { useBakeStore, type Diagnosis, type PendingSession } from '@/store/useBakeStore';
 import { diagnose, type ClassifierInput, type ShoulderProfile } from '@/model/classifier';
 import { analyzeCrumbPhoto, type CrumbVisionFeatures } from '@/model/visionAnalyzer';
 import { DIAGNOSIS_COPY } from '@/model/training-data';
@@ -63,29 +62,48 @@ function pickTiebreakerQuestions(diag: Diagnosis) {
   return [Q_CRUST, Q_TEXTURE];
 }
 
+function formatMinutes(min: number) {
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  if (h === 0) return `${m}m`;
+  if (m === 0) return `${h}h`;
+  return `${h}h ${m}m`;
+}
+
+function formatDate(ts: number) {
+  const d = new Date(ts);
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
 function avgBulk(logs: { bulkDurationMinutes: number }[], n = 5): number | null {
   const recent = logs.slice(0, n);
   if (recent.length === 0) return null;
   return Math.round(recent.reduce((s, l) => s + l.bulkDurationMinutes, 0) / recent.length);
 }
 
-type Step = 'quick' | 'photo' | 'analysing' | 'result' | 'tiebreaker';
+type Step = 'sessions' | 'quick' | 'photo' | 'analysing' | 'result' | 'tiebreaker';
 
 export default function LogScreen() {
-  const { lastBulkDurationMinutes, lastFoldCount, bakeLogs, saveLog } = useBakeStore();
-  const [step, setStep] = useState<Step>('quick');
+  const { pendingSessions, bakeLogs, saveLog } = useBakeStore();
+  const [step, setStep] = useState<Step>('sessions');
+  const [activeSession, setActiveSession] = useState<PendingSession | null>(null);
   const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [vision, setVision] = useState<CrumbVisionFeatures | null>(null);
   const [diagResult, setDiagResult] = useState<ReturnType<typeof diagnose> | null>(null);
   const [whyOpen, setWhyOpen] = useState(false);
   const [tbAnswers, setTbAnswers] = useState<TiebreakerAnswers>({});
 
-  const hasPending = lastBulkDurationMinutes !== null;
   const userAvg = avgBulk(bakeLogs);
 
+  function selectSession(session: PendingSession) {
+    setActiveSession(session);
+    setStep('quick');
+  }
+
   function handleQuickLog(diagnosis: Diagnosis) {
-    saveLog(diagnosis);
-    router.push('/');
+    if (!activeSession) return;
+    saveLog(activeSession.id, diagnosis);
+    resetToSessions();
   }
 
   async function handlePickPhoto(fromCamera: boolean) {
@@ -100,7 +118,7 @@ export default function LogScreen() {
       const features = await analyzeCrumbPhoto(uri);
       setVision(features);
       runFusion(features, {});
-    } catch (e) {
+    } catch {
       Alert.alert('Analysis failed', 'Could not read that photo. Try a clearer, well-lit shot of the cut face.');
       setStep('photo');
     }
@@ -109,7 +127,6 @@ export default function LogScreen() {
   function runFusion(features: CrumbVisionFeatures, answers: TiebreakerAnswers) {
     const input: ClassifierInput = {
       crumbProbs: features.crumbProbs,
-      // Photo-derived signals; tiebreaker answers override when present
       shapeFlat: answers.shape ? answers.shape === 'flat' : false,
       crustPale: answers.crust ? answers.crust === 'pale' : false,
       gummyDetected: answers.texture ? answers.texture === 'gummy' : features.gummyDetected,
@@ -120,14 +137,13 @@ export default function LogScreen() {
       shoulderProfile: (answers.shape as ShoulderProfile) ?? 'unknown',
       glutenStrandsInBloom: false,
       bubblesInBloom: false,
-      bulkDurationMinutes: lastBulkDurationMinutes ?? 0,
-      foldCount: lastFoldCount ?? 0,
+      bulkDurationMinutes: activeSession?.bulkDurationMinutes ?? 0,
+      foldCount: activeSession?.foldCount ?? 0,
       userAverageBulkMinutes: userAvg,
     };
     const result = diagnose(input);
     setDiagResult(result);
     const answered = Object.keys(answers).length > 0;
-    // After tiebreakers, always show the result — don't loop the user
     setStep(result.confidence >= 0.75 || answered ? 'result' : 'tiebreaker');
   }
 
@@ -140,9 +156,19 @@ export default function LogScreen() {
   }
 
   function handleSaveResult() {
-    if (!diagResult) return;
-    saveLog(diagResult.diagnosis as Diagnosis);
-    router.push('/');
+    if (!diagResult || !activeSession) return;
+    saveLog(activeSession.id, diagResult.diagnosis as Diagnosis);
+    resetToSessions();
+  }
+
+  function resetToSessions() {
+    setStep('sessions');
+    setActiveSession(null);
+    setDiagResult(null);
+    setPhotoUri(null);
+    setVision(null);
+    setWhyOpen(false);
+    setTbAnswers({});
   }
 
   function resetPhotoFlow() {
@@ -154,23 +180,55 @@ export default function LogScreen() {
     setTbAnswers({});
   }
 
-  if (!hasPending) {
+  if (step === 'sessions') {
     return (
-      <View style={{ flex: 1, backgroundColor: C.bg, alignItems: 'center', justifyContent: 'center', padding: 32 }}>
-        <Text style={{ fontSize: 56, marginBottom: 4, opacity: 0.8 }}>🍞</Text>
-        <Text style={{ color: C.text, fontSize: 22, fontWeight: '700', textAlign: 'center', marginTop: 12, marginBottom: 6 }}>
-          No bake in progress
+      <ScrollView style={{ flex: 1, backgroundColor: C.bg }} contentContainerStyle={{ padding: 24, paddingBottom: 48 }}>
+        <Text style={{ color: C.text, fontSize: 28, fontWeight: '800', letterSpacing: -0.3, marginBottom: 4 }}>
+          Bake Log
         </Text>
-        <Text style={{ color: C.textMuted, fontSize: 15, textAlign: 'center', marginBottom: 28, lineHeight: 22 }}>
-          Complete a bulk fermentation first, then come back here to log your results.
+        <Text style={{ color: C.textMuted, fontSize: 15, marginBottom: 28 }}>
+          How’d it turn out?
         </Text>
-        <TouchableOpacity
-          onPress={() => router.push('/')}
-          activeOpacity={0.8}
-          style={{ backgroundColor: C.accent, borderRadius: 18, paddingVertical: 16, paddingHorizontal: 36 }}>
-          <Text style={{ color: '#0c0c0f', fontSize: 16, fontWeight: '700' }}>Go to Timer</Text>
-        </TouchableOpacity>
-      </View>
+
+        {pendingSessions.length === 0 ? (
+          <View style={{ alignItems: 'center', paddingTop: 48 }}>
+            <Text style={{ fontSize: 48, marginBottom: 12 }}>🍞</Text>
+            <Text style={{ color: C.textMuted, fontSize: 16, textAlign: 'center', lineHeight: 24 }}>
+              No sessions to log yet.{'\n'}Finish a bulk fermentation first.
+            </Text>
+          </View>
+        ) : (
+          <View style={{ gap: 12 }}>
+            {pendingSessions.map((session) => (
+              <TouchableOpacity
+                key={session.id}
+                onPress={() => selectSession(session)}
+                activeOpacity={0.7}
+                style={{
+                  backgroundColor: C.card,
+                  borderWidth: 1.5,
+                  borderColor: C.cardBorder,
+                  borderRadius: 22,
+                  padding: 22,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 16,
+                }}>
+                <Text style={{ fontSize: 32 }}>🧙</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: C.text, fontSize: 17, fontWeight: '700', marginBottom: 3 }}>
+                    {formatMinutes(session.bulkDurationMinutes)} bulk · {session.foldCount} fold{session.foldCount !== 1 ? 's' : ''}
+                  </Text>
+                  <Text style={{ color: C.textDim, fontSize: 13 }}>
+                    {formatDate(session.timestamp)}
+                  </Text>
+                </View>
+                <Text style={{ color: C.accent, fontSize: 22 }}>›</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+      </ScrollView>
     );
   }
 
@@ -188,6 +246,9 @@ export default function LogScreen() {
     const tbQuestions = pickTiebreakerQuestions(diagResult.diagnosis);
     return (
       <ScrollView style={{ flex: 1, backgroundColor: C.bg }} contentContainerStyle={{ padding: 24, paddingBottom: 48 }}>
+        <TouchableOpacity onPress={resetToSessions} activeOpacity={0.7} style={{ marginBottom: 24 }}>
+          <Text style={{ color: C.accent, fontSize: 15, fontWeight: '600' }}>← Back</Text>
+        </TouchableOpacity>
         <Text style={{ color: C.text, fontSize: 24, fontWeight: '800', letterSpacing: -0.3, marginBottom: 6 }}>
           I need a bit more info
         </Text>
@@ -230,6 +291,9 @@ export default function LogScreen() {
     const copy = DIAGNOSIS_COPY[diagResult.diagnosis as keyof typeof DIAGNOSIS_COPY];
     return (
       <ScrollView style={{ flex: 1, backgroundColor: C.bg }} contentContainerStyle={{ padding: 24, paddingBottom: 48 }}>
+        <TouchableOpacity onPress={resetToSessions} activeOpacity={0.7} style={{ marginBottom: 16 }}>
+          <Text style={{ color: C.accent, fontSize: 15, fontWeight: '600' }}>← Back</Text>
+        </TouchableOpacity>
         <Text style={{ color: C.textDim, fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 2, marginBottom: 16 }}>
           Diagnosis
         </Text>
@@ -298,7 +362,7 @@ export default function LogScreen() {
           Diagnose from photo
         </Text>
         <Text style={{ color: C.textMuted, fontSize: 15, marginBottom: 32, lineHeight: 22 }}>
-          Cut or tear the loaf in half, then photograph the cut face straight-on in good light. Analysis runs entirely on your device.
+          Cut the loaf in half, then photograph the cut face straight-on in good light. Analysis runs entirely on your device.
         </Text>
 
         <TouchableOpacity
@@ -334,11 +398,27 @@ export default function LogScreen() {
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: C.bg }} contentContainerStyle={{ padding: 24, paddingBottom: 48 }}>
+      <TouchableOpacity onPress={resetToSessions} activeOpacity={0.7} style={{ marginBottom: 24 }}>
+        <Text style={{ color: C.accent, fontSize: 15, fontWeight: '600' }}>← Back</Text>
+      </TouchableOpacity>
+
+      {activeSession && (
+        <View style={{ backgroundColor: C.card, borderRadius: 16, padding: 16, marginBottom: 24 }}>
+          <Text style={{ color: C.textDim, fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 4 }}>
+            Logging session
+          </Text>
+          <Text style={{ color: C.text, fontSize: 16, fontWeight: '600' }}>
+            {formatMinutes(activeSession.bulkDurationMinutes)} bulk · {activeSession.foldCount} fold{activeSession.foldCount !== 1 ? 's' : ''}
+          </Text>
+          <Text style={{ color: C.textDim, fontSize: 13, marginTop: 2 }}>{formatDate(activeSession.timestamp)}</Text>
+        </View>
+      )}
+
       <Text style={{ color: C.text, fontSize: 28, fontWeight: '800', letterSpacing: -0.3, marginBottom: 4 }}>
-        Log Your Bake
+        How’d it turn out?
       </Text>
       <Text style={{ color: C.textMuted, fontSize: 15, marginBottom: 28 }}>
-        How did the fermentation go?
+        Quick log or diagnose from a photo.
       </Text>
 
       <View style={{ gap: 12, marginBottom: 12 }}>

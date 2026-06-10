@@ -44,13 +44,16 @@ export default function HomeScreen() {
     bulkStartTimestamp,
     foldIntervalMinutes,
     completedFolds,
+    defaultFoldCount,
     bakeLogs,
     startBulk,
     recordFold,
     endBulk,
+    setDefaultFoldCount,
   } = useBakeStore();
 
   const [selectedInterval, setSelectedInterval] = useState(30);
+  const [foldCount, setFoldCount] = useState(defaultFoldCount);
   const [now, setNow] = useState(Date.now());
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -93,6 +96,7 @@ export default function HomeScreen() {
   }
 
   function handleStart() {
+    if (foldCount !== defaultFoldCount) setDefaultFoldCount(foldCount);
     scheduleNotification(selectedInterval);
     startBulk(selectedInterval);
     setNow(Date.now());
@@ -102,6 +106,10 @@ export default function HomeScreen() {
     cancelNotifications();
     endBulk();
     router.push('/log');
+  }
+
+  function changeFoldCount(delta: number) {
+    setFoldCount((n) => Math.max(0, Math.min(12, n + delta)));
   }
 
   const elapsedMs = isActive ? now - (bulkStartTimestamp ?? now) : 0;
@@ -136,19 +144,11 @@ export default function HomeScreen() {
           <Sparkles color={C.accent} size={22} />
           <View style={{ flex: 1 }}>
             <Text style={{ color: C.textMuted, fontSize: 11, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 1.5 }}>
-              Your last great loaf
+              Your last bake
             </Text>
             <Text style={{ color: C.text, fontSize: 18, fontWeight: '700', marginTop: 2 }}>
               {formatMinutes(recentLog.bulkDurationMinutes)} · {recentLog.foldCount} fold{recentLog.foldCount !== 1 ? 's' : ''}
             </Text>
-            <View style={{ flexDirection: 'row', gap: 8, marginTop: 6 }}>
-              <View style={{ backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 8, paddingVertical: 3, paddingHorizontal: 10 }}>
-                <Text style={{ color: C.textMuted, fontSize: 12 }}>{recentLog.crumbType}</Text>
-              </View>
-              <View style={{ backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 8, paddingVertical: 3, paddingHorizontal: 10 }}>
-                <Text style={{ color: C.textMuted, fontSize: 12 }}>{recentLog.shapeType}</Text>
-              </View>
-            </View>
           </View>
         </View>
       )}
@@ -185,12 +185,7 @@ export default function HomeScreen() {
                       borderWidth: 1.5,
                       borderColor: active ? C.accent : C.cardBorder,
                     }}>
-                    <Text
-                      style={{
-                        fontSize: 30,
-                        fontWeight: '700',
-                        color: active ? C.accent : C.text,
-                      }}>
+                    <Text style={{ fontSize: 30, fontWeight: '700', color: active ? C.accent : C.text }}>
                       {mins}
                     </Text>
                     <Text style={{ fontSize: 12, color: active ? C.accent : C.textDim, marginTop: 2 }}>
@@ -202,24 +197,66 @@ export default function HomeScreen() {
             </View>
           </View>
 
-          <TouchableOpacity
-            onPress={handleStart}
-            activeOpacity={0.8}
-            style={{
-              backgroundColor: C.accent,
-              borderRadius: 22,
-              paddingVertical: 26,
-              alignItems: 'center',
-              marginTop: 4,
-              shadowColor: C.accent,
-              shadowOffset: { width: 0, height: 8 },
-              shadowOpacity: 0.35,
-              shadowRadius: 24,
-            }}>
-            <Text style={{ color: '#0c0c0f', fontSize: 26, fontWeight: '800', letterSpacing: -0.3 }}>
-              Start Bulk
+          <View>
+            <Text style={{ color: C.textDim, fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 2, marginBottom: 14 }}>
+              Planned folds
             </Text>
-          </TouchableOpacity>
+            <View style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'center',
+              backgroundColor: C.card,
+              borderWidth: 1,
+              borderColor: C.cardBorder,
+              borderRadius: 18,
+              padding: 8,
+              gap: 0,
+            }}>
+              <TouchableOpacity
+                onPress={() => changeFoldCount(-1)}
+                activeOpacity={0.7}
+                style={{ paddingVertical: 12, paddingHorizontal: 28 }}>
+                <Text style={{ color: foldCount > 0 ? C.text : C.textDim, fontSize: 28, fontWeight: '300' }}>−</Text>
+              </TouchableOpacity>
+              <View style={{ flex: 1, alignItems: 'center' }}>
+                <Text style={{ color: C.accent, fontSize: 40, fontWeight: '200', fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' }}>
+                  {foldCount}
+                </Text>
+                <Text style={{ color: C.textDim, fontSize: 12, marginTop: -2 }}>
+                  fold{foldCount !== 1 ? 's' : ''}
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => changeFoldCount(1)}
+                activeOpacity={0.7}
+                style={{ paddingVertical: 12, paddingHorizontal: 28 }}>
+                <Text style={{ color: foldCount < 12 ? C.text : C.textDim, fontSize: 28, fontWeight: '300' }}>+</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          <View>
+            <TouchableOpacity
+              onPress={handleStart}
+              activeOpacity={0.8}
+              style={{
+                backgroundColor: C.accent,
+                borderRadius: 22,
+                paddingVertical: 26,
+                alignItems: 'center',
+                shadowColor: C.accent,
+                shadowOffset: { width: 0, height: 8 },
+                shadowOpacity: 0.35,
+                shadowRadius: 24,
+              }}>
+              <Text style={{ color: '#0c0c0f', fontSize: 26, fontWeight: '800', letterSpacing: -0.3 }}>
+                Start Bulk
+              </Text>
+            </TouchableOpacity>
+            <Text style={{ color: C.textDim, fontSize: 13, textAlign: 'center', marginTop: 10 }}>
+              starter mixed in?
+            </Text>
+          </View>
         </View>
       ) : (
         <View style={{ gap: 20 }}>

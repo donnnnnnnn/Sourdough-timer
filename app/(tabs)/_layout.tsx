@@ -30,7 +30,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="log"
         options={{
-          title: 'Log Bake',
+          title: 'Bake Log',
           tabBarIcon: ({ color, size }) => <BookOpen color={color} size={size} />,
         }}
       />

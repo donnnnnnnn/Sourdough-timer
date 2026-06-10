@@ -187,7 +187,7 @@ export default function LogScreen() {
           Bake Log
         </Text>
         <Text style={{ color: C.textMuted, fontSize: 15, marginBottom: 28 }}>
-          How’d it turn out?
+          How'd it turn out?
         </Text>
 
         {pendingSessions.length === 0 ? (
@@ -214,7 +214,7 @@ export default function LogScreen() {
                   alignItems: 'center',
                   gap: 16,
                 }}>
-                <Text style={{ fontSize: 32 }}>🧙</Text>
+                <Text style={{ fontSize: 32 }}>🫙</Text>
                 <View style={{ flex: 1 }}>
                   <Text style={{ color: C.text, fontSize: 17, fontWeight: '700', marginBottom: 3 }}>
                     {formatMinutes(session.bulkDurationMinutes)} bulk · {session.foldCount} fold{session.foldCount !== 1 ? 's' : ''}
@@ -418,7 +418,7 @@ export default function LogScreen() {
       )}
 
       <Text style={{ color: C.text, fontSize: 28, fontWeight: '800', letterSpacing: -0.3, marginBottom: 4 }}>
-        How’d it turn out?
+        How'd it turn out?
       </Text>
       <Text style={{ color: C.textMuted, fontSize: 15, marginBottom: 28 }}>
         Quick log or diagnose from a photo.

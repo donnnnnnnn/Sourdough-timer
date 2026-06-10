@@ -1,18 +1,21 @@
 #!/usr/bin/env python3
-"""Auto-label crumb photos from Reddit, sourdough blogs, and PDFs, then train.
+"""Auto-label crumb photos from sourdough blogs and PDFs, then train.
 
 Run on your local machine (needs internet + optional PDFs in current dir):
 
-    pip3 install pymupdf tensorflow beautifulsoup4
+    curl -sS https://bootstrap.pypa.io/get-pip.py | python3
+    python3 -m pip install pymupdf beautifulsoup4 tensorflow
     python3 tools/build_dataset.py --out dataset
 
 Stages:
-  1. Reddit   — query-based download + comment-consensus re-labeling
-  2. Blogs    — HTML scraping with heading/caption-based auto-labeling
-  3. PDFs     — image extraction with nearby-text labeling
-  4. Train    — fine-tune MobileNetV3Small, export crumb_classifier.tflite
+  1. Blogs    — HTML scraping with heading/caption-based auto-labeling
+  2. PDFs     — image extraction with nearby-text labeling
+  3. Train    — fine-tune MobileNetV3Small, export crumb_classifier.tflite
 
-Skip stages with --no-reddit / --no-blogs / --no-pdf / --no-train
+Reddit's search API requires OAuth since 2023 and is skipped by default.
+Pass --reddit to attempt it anyway.
+
+Skip stages with --no-blogs / --no-pdf / --no-train
 """
 import argparse
 import json
@@ -130,36 +133,34 @@ def save_image(url: str, label: str, outdir: str, seen: set) -> bool:
     return download(url, dest)
 
 
-# ── Stage 1: Reddit ─────────────────────────────────────────────────────────
+# ── Stage 1: Reddit (opt-in) ──────────────────────────────────────────────────
 
 REDDIT_SEARCHES: list[tuple[str, str]] = [
-    # query, seed label (may be overridden by comment consensus)
-    ("underproofed crumb",       "under_fermented"),
-    ("under proofed crumb",      "under_fermented"),
-    ("underfermented sourdough", "under_fermented"),
-    ("underproved loaf",         "under_fermented"),
-    ("dense gummy crumb",        "under_fermented"),
-    ("fools crumb",              "under_fermented"),
-    ("overproofed crumb",        "over_fermented"),
-    ("over proofed crumb",       "over_fermented"),
-    ("overfermented sourdough",  "over_fermented"),
-    ("overproved loaf",          "over_fermented"),
-    ("flat collapsed loaf",      "over_fermented"),
+    ("underproofed crumb",        "under_fermented"),
+    ("under proofed crumb",       "under_fermented"),
+    ("underfermented sourdough",  "under_fermented"),
+    ("underproved loaf",          "under_fermented"),
+    ("dense gummy crumb",         "under_fermented"),
+    ("fools crumb",               "under_fermented"),
+    ("overproofed crumb",         "over_fermented"),
+    ("over proofed crumb",        "over_fermented"),
+    ("overfermented sourdough",   "over_fermented"),
+    ("overproved loaf",           "over_fermented"),
+    ("flat collapsed loaf",       "over_fermented"),
     ("too much bulk fermentation","over_fermented"),
-    ("perfect crumb",            "properly_fermented"),
-    ("great crumb sourdough",    "properly_fermented"),
-    ("open even crumb",          "properly_fermented"),
-    ("nailed my bulk",           "properly_fermented"),
-    ("rate my crumb",            None),  # label purely from comments
-    ("crumb shot",               None),
-    ("bulk fermentation result", None),
+    ("perfect crumb",             "properly_fermented"),
+    ("great crumb sourdough",     "properly_fermented"),
+    ("open even crumb",           "properly_fermented"),
+    ("nailed my bulk",            "properly_fermented"),
+    ("rate my crumb",             None),
+    ("crumb shot",                None),
+    ("bulk fermentation result",  None),
 ]
 
 SUBREDDITS = ["Sourdough", "Breadit", "SourdoughStarter"]
 
 
 def reddit_comment_label(permalink: str) -> str | None:
-    """Fetch top comments for a post and return consensus label, or None."""
     try:
         url = f"https://old.reddit.com{permalink}.json?limit=20&sort=top"
         data = fetch(url, is_json=True)
@@ -212,26 +213,20 @@ def run_reddit(outdir: str, per_query: int, seen: set) -> None:
                 imgs = image_urls_from_post(post)
                 if not imgs:
                     continue
-
-                # derive label: comment consensus > seed label
                 pd = post["data"]
                 post_text = (pd.get("selftext") or "") + " " + (pd.get("title") or "")
                 pu, po, pg = score_text(post_text)
-
                 permalink = pd.get("permalink", "")
                 comment_label = reddit_comment_label(permalink) if permalink else None
                 time.sleep(0.8)
-
                 if comment_label:
                     label = comment_label
                 elif (pu + po + pg) > 0:
                     label = majority_label(pu, po, pg)
                 else:
                     label = seed_label
-
                 if label is None:
                     continue
-
                 for img in imgs:
                     if save_image(img, label, outdir, seen):
                         counts[label] = counts.get(label, 0) + 1
@@ -267,15 +262,12 @@ MIN_BYTES = 25_000
 
 
 def label_from_context(tag, page_url: str) -> str | None:
-    """Walk up the DOM to find a heading or figcaption that indicates label."""
     if not BS4:
         return None
-    # check alt text
     alt = (tag.get("alt") or "").lower()
     u, o, g = score_text(alt)
     if (l := majority_label(u, o, g)):
         return l
-    # check figcaption sibling / parent
     fig = tag.find_parent("figure")
     if fig:
         cap = fig.find("figcaption")
@@ -283,7 +275,6 @@ def label_from_context(tag, page_url: str) -> str | None:
             u, o, g = score_text(cap.get_text())
             if (l := majority_label(u, o, g)):
                 return l
-    # walk up to 4 ancestors looking for heading text
     node = tag.parent
     for _ in range(4):
         if node is None:
@@ -300,6 +291,7 @@ def run_blogs(outdir: str, seen: set) -> None:
     print("\n=== Stage 2: Blogs ===")
     if not BS4:
         print("  beautifulsoup4 not installed — falling back to regex (no context labeling)")
+        print("  Install with: python3 -m pip install beautifulsoup4")
 
     counts: dict[str, int] = {}
 
@@ -348,7 +340,6 @@ def run_blogs(outdir: str, seen: set) -> None:
                 time.sleep(0.4)
             print(f"  {page} → {labeled} labeled images")
         else:
-            # fallback: use page-level label from URL/title heuristic
             page_u, page_o, page_g = score_text(html[:5000])
             label = majority_label(page_u, page_o, page_g)
             for src in IMG_RE.findall(html):
@@ -379,15 +370,13 @@ def run_blogs(outdir: str, seen: set) -> None:
 
 # ── Stage 3: PDFs ─────────────────────────────────────────────────────────
 
-PDF_CONTEXT_CHARS = 800  # chars of nearby text to scan per image
-
 
 def run_pdfs(pdf_paths: list[str], outdir: str) -> None:
     print("\n=== Stage 3: PDFs ===")
     try:
         import fitz
     except ImportError:
-        print("  pymupdf not installed (pip3 install pymupdf) — skipping PDFs")
+        print("  pymupdf not installed — install with: python3 -m pip install pymupdf")
         return
 
     counts: dict[str, int] = {}
@@ -413,7 +402,6 @@ def run_pdfs(pdf_paths: list[str], outdir: str) -> None:
             for img_index, img in enumerate(images):
                 xref = img[0]
                 try:
-                    import fitz
                     pix = fitz.Pixmap(doc, xref)
                 except Exception:
                     continue
@@ -436,7 +424,7 @@ def run_train(dataset_dir: str, model_out: str, epochs: int) -> None:
     try:
         import tensorflow as tf
     except ImportError:
-        print("  tensorflow not installed (pip3 install tensorflow==2.16.*) — skipping training")
+        print("  tensorflow not installed — install with: python3 -m pip install tensorflow")
         return
 
     IMG_SIZE = 224
@@ -518,16 +506,19 @@ def main() -> None:
     ap.add_argument("--epochs", type=int, default=12)
     ap.add_argument("--pdfs", nargs="*", default=[],
                     help="PDF file paths to extract images from")
-    ap.add_argument("--no-reddit", action="store_true")
-    ap.add_argument("--no-blogs",  action="store_true")
-    ap.add_argument("--no-pdf",    action="store_true")
-    ap.add_argument("--no-train",  action="store_true")
+    ap.add_argument("--reddit",   action="store_true",
+                    help="Attempt Reddit scraping (API requires OAuth, likely blocked)")
+    ap.add_argument("--no-blogs", action="store_true")
+    ap.add_argument("--no-pdf",   action="store_true")
+    ap.add_argument("--no-train", action="store_true")
     args = ap.parse_args()
 
     seen: set[str] = set()
 
-    if not args.no_reddit:
+    if args.reddit:
         run_reddit(args.out, args.per_query, seen)
+    else:
+        print("Skipping Reddit (API requires OAuth since 2023 — pass --reddit to attempt)")
 
     if not args.no_blogs:
         run_blogs(args.out, seen)
@@ -535,14 +526,12 @@ def main() -> None:
     if not args.no_pdf:
         pdf_paths = args.pdfs
         if not pdf_paths:
-            # auto-detect PDFs in current directory
             pdf_paths = [str(p) for p in Path(".").glob("*.pdf")]
             if pdf_paths:
                 print(f"Auto-detected PDFs: {pdf_paths}")
         run_pdfs(pdf_paths, args.out)
 
     if not args.no_train:
-        # check we have enough data
         total = sum(
             len(list(Path(os.path.join(args.out, d)).glob("*")))
             for d in ["under_fermented", "properly_fermented", "over_fermented"]
@@ -550,7 +539,7 @@ def main() -> None:
         )
         if total < 30:
             print(f"\nOnly {total} images collected — skipping training (need ≥30).")
-            print("Delete bad labels by hand, then run: python3 tools/build_dataset.py --no-reddit --no-blogs --no-pdf")
+            print("Review dataset/ folders, then re-run: python3 tools/build_dataset.py --no-blogs --no-pdf")
         else:
             run_train(args.out, args.model_out, args.epochs)
 

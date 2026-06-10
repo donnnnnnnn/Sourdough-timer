@@ -361,8 +361,11 @@ export default function LogScreen() {
         <Text style={{ color: C.text, fontSize: 28, fontWeight: '800', letterSpacing: -0.3, marginBottom: 6 }}>
           Diagnose from photo
         </Text>
-        <Text style={{ color: C.textMuted, fontSize: 15, marginBottom: 32, lineHeight: 22 }}>
-          Cut the loaf in half, then photograph the cut face straight-on in good light. Analysis runs entirely on your device.
+        <Text style={{ color: C.textMuted, fontSize: 15, marginBottom: 8, lineHeight: 22 }}>
+          Cut the loaf in half, then photograph the cut face straight-on in good light.
+        </Text>
+        <Text style={{ color: C.textDim, fontSize: 13, fontStyle: 'italic', marginBottom: 32 }}>
+          Analysis runs entirely on your device.
         </Text>
 
         <TouchableOpacity

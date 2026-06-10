@@ -94,7 +94,7 @@ def majority_label(u: int, o: int, g: int) -> str | None:
 
 # ── HTTP helpers ───────────────────────────────────────────────────────────────
 
-UA = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) crumb-dataset-builder/1.0"}
+UA = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0"}
 
 def fetch(url: str, *, is_json: bool = False):
     req = urllib.request.Request(url, headers=UA)
@@ -161,7 +161,7 @@ SUBREDDITS = ["Sourdough", "Breadit", "SourdoughStarter"]
 def reddit_comment_label(permalink: str) -> str | None:
     """Fetch top comments for a post and return consensus label, or None."""
     try:
-        url = f"https://www.reddit.com{permalink}.json?limit=20&sort=top"
+        url = f"https://old.reddit.com{permalink}.json?limit=20&sort=top"
         data = fetch(url, is_json=True)
         time.sleep(0.5)
         comments = data[1]["data"]["children"]
@@ -198,7 +198,7 @@ def run_reddit(outdir: str, per_query: int, seen: set) -> None:
     for query, seed_label in REDDIT_SEARCHES:
         for sub in SUBREDDITS:
             url = (
-                f"https://www.reddit.com/r/{sub}/search.json"
+                f"https://old.reddit.com/r/{sub}/search.json"
                 f"?q={urllib.parse.quote(query)}&restrict_sr=1"
                 f"&limit={per_query}&sort=top&t=all"
             )
@@ -251,14 +251,15 @@ except ImportError:
     BS4 = False
 
 BLOG_PAGES = [
-    "https://thesourdoughjourney.com/faq-bulk-fermentation-tools/",
-    "https://thesourdoughjourney.com/troubleshooting/",
-    "https://thesourdoughjourney.com/the-mysteries-of-bulk-fermentation/",
-    "https://www.theperfectloaf.com/guides/whats-the-difference-between-over-and-under-proofed-bread-dough/",
-    "https://www.theperfectloaf.com/guides/sourdough-bread-troubleshooting-guide/",
-    "https://www.kingarthurbaking.com/blog/2023/03/21/sourdough-troubleshooting",
-    "https://challengerbreadware.com/blogs/bread-education/how-to-read-a-crumb",
-    "https://www.thefreshloaf.com/node/68071/reading-crumb",
+    "https://thesourdoughjourney.com/the-ultimate-sourdough-bulk-fermentation-guide/",
+    "https://thesourdoughjourney.com/faq-over-under-proofed/",
+    "https://thesourdoughjourney.com/tools/",
+    "https://www.theperfectloaf.com/guides/proofing-bread-dough/",
+    "https://www.theperfectloaf.com/how-to-use-the-dough-poke-test/",
+    "https://www.kingarthurbaking.com/learn/guides/sourdough",
+    "https://www.kingarthurbaking.com/blog/tag/sourdough-troubleshooting",
+    "https://challengerbreadware.com/bread-techniques/identifying-proofing-levels-in-baked-bread/",
+    "https://www.thefreshloaf.com/node/71162/read-my-crumb-please",
 ]
 
 IMG_RE = re.compile(r'<img[^>]+src=["\']([^"\']+\.(?:jpe?g|png|webp))["\']', re.I)

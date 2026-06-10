@@ -1,21 +1,18 @@
 #!/usr/bin/env python3
-"""Auto-label crumb photos from sourdough blogs and PDFs, then train.
+"""Auto-label crumb photos from Reddit, sourdough blogs, and PDFs, then train.
 
 Run on your local machine (needs internet + optional PDFs in current dir):
 
-    curl -sS https://bootstrap.pypa.io/get-pip.py | python3
-    python3 -m pip install pymupdf beautifulsoup4 tensorflow
+    pip3 install pymupdf tensorflow beautifulsoup4
     python3 tools/build_dataset.py --out dataset
 
 Stages:
-  1. Blogs    — HTML scraping with heading/caption-based auto-labeling
-  2. PDFs     — image extraction with nearby-text labeling
-  3. Train    — fine-tune MobileNetV3Small, export crumb_classifier.tflite
+  1. Reddit   — query-based download + comment-consensus re-labeling
+  2. Blogs    — HTML scraping with heading/caption-based auto-labeling
+  3. PDFs     — image extraction with nearby-text labeling
+  4. Train    — fine-tune MobileNetV3Small, export crumb_classifier.tflite
 
-Reddit's search API requires OAuth since 2023 and is skipped by default.
-Pass --reddit to attempt it anyway.
-
-Skip stages with --no-blogs / --no-pdf / --no-train
+Skip stages with --no-reddit / --no-blogs / --no-pdf / --no-train
 """
 import argparse
 import json
@@ -246,19 +243,36 @@ except ImportError:
     BS4 = False
 
 BLOG_PAGES = [
+    # Bulk fermentation & proofing — mixed labels, good scoring targets
     "https://thesourdoughjourney.com/the-ultimate-sourdough-bulk-fermentation-guide/",
     "https://thesourdoughjourney.com/faq-over-under-proofed/",
     "https://thesourdoughjourney.com/tools/",
+    "https://thesourdoughjourney.com/what-is-a-good-sourdough-crumb/",
+    "https://thesourdoughjourney.com/how-to-read-sourdough-crumb/",
+    # The Perfect Loaf — celebrates good crumb heavily, also has under-proofed diagnosis
     "https://www.theperfectloaf.com/guides/proofing-bread-dough/",
     "https://www.theperfectloaf.com/how-to-use-the-dough-poke-test/",
+    "https://www.theperfectloaf.com/beginners-sourdough-bread/",
+    "https://www.theperfectloaf.com/guides/crumb-structure/",
+    # King Arthur — good beginner guides with ideal crumb photos
     "https://www.kingarthurbaking.com/learn/guides/sourdough",
     "https://www.kingarthurbaking.com/blog/tag/sourdough-troubleshooting",
+    "https://www.kingarthurbaking.com/recipes/sourdough-bread-recipe",
+    # Challenger — proofing levels comparison, explicitly labeled
     "https://challengerbreadware.com/bread-techniques/identifying-proofing-levels-in-baked-bread/",
+    # The Fresh Loaf community — crumb-reading threads with expert commentary
     "https://www.thefreshloaf.com/node/71162/read-my-crumb-please",
+    "https://www.thefreshloaf.com/node/69612/crumb-analysis",
+    # Full Proof Baking — known for open crumb tutorials (properly_fermented heavy)
+    "https://www.fullproofbaking.com/open-crumb-sourdough/",
+    "https://www.fullproofbaking.com/best-bread-crumb-structure/",
+    # Brod & Taylor — under-proofed diagnosis content
+    "https://brodandtaylor.com/blogs/recipes/how-to-tell-if-bread-is-proofed",
+    "https://brodandtaylor.com/blogs/recipes/sourdough-troubleshooting",
 ]
 
 IMG_RE = re.compile(r'<img[^>]+src=["\']([^"\']+\.(?:jpe?g|png|webp))["\']', re.I)
-MIN_BYTES = 25_000
+MIN_BYTES = 15_000  # lowered from 25KB to catch more real photos
 
 
 def label_from_context(tag, page_url: str) -> str | None:
@@ -439,6 +453,17 @@ def run_train(dataset_dir: str, model_out: str, epochs: int) -> None:
     labels = train_ds.class_names
     print("Classes:", labels)
 
+    # compute class weights to handle imbalanced dataset
+    import numpy as np
+    class_counts = np.zeros(len(labels))
+    for d in [dataset_dir + "/" + l for l in labels]:
+        idx = labels.index(Path(d).name)
+        class_counts[idx] = len(list(Path(d).glob("*.*"))) if Path(d).exists() else 1
+    class_counts = np.maximum(class_counts, 1)
+    total = class_counts.sum()
+    class_weight = {i: total / (len(labels) * c) for i, c in enumerate(class_counts)}
+    print("Class weights:", {labels[i]: f"{w:.2f}" for i, w in class_weight.items()})
+
     augment = tf.keras.Sequential([
         tf.keras.layers.RandomFlip("horizontal"),
         tf.keras.layers.RandomRotation(0.08),
@@ -467,7 +492,7 @@ def run_train(dataset_dir: str, model_out: str, epochs: int) -> None:
         loss="sparse_categorical_crossentropy",
         metrics=["accuracy"],
     )
-    model.fit(train_ds, validation_data=val_ds, epochs=epochs)
+    model.fit(train_ds, validation_data=val_ds, epochs=epochs, class_weight=class_weight)
 
     base.trainable = True
     for layer in base.layers[:-20]:
@@ -477,7 +502,7 @@ def run_train(dataset_dir: str, model_out: str, epochs: int) -> None:
         loss="sparse_categorical_crossentropy",
         metrics=["accuracy"],
     )
-    model.fit(train_ds, validation_data=val_ds, epochs=4)
+    model.fit(train_ds, validation_data=val_ds, epochs=4, class_weight=class_weight)
 
     os.makedirs(model_out, exist_ok=True)
     converter = tf.lite.TFLiteConverter.from_keras_model(model)
@@ -537,8 +562,8 @@ def main() -> None:
             for d in ["under_fermented", "properly_fermented", "over_fermented"]
             if os.path.isdir(os.path.join(args.out, d))
         )
-        if total < 30:
-            print(f"\nOnly {total} images collected — skipping training (need ≥30).")
+        if total < 15:
+            print(f"\nOnly {total} images collected — skipping training (need ≥15).")
             print("Review dataset/ folders, then re-run: python3 tools/build_dataset.py --no-blogs --no-pdf")
         else:
             run_train(args.out, args.model_out, args.epochs)

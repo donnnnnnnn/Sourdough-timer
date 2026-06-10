@@ -1,5 +1,5 @@
 import { Tabs } from 'expo-router';
-import { Timer, BookOpen, History, ScanLine } from 'lucide-react-native';
+import { Timer, BookOpen, History } from 'lucide-react-native';
 
 export default function TabLayout() {
   return (
@@ -39,13 +39,6 @@ export default function TabLayout() {
         options={{
           title: 'History',
           tabBarIcon: ({ color, size }) => <History color={color} size={size} />,
-        }}
-      />
-      <Tabs.Screen
-        name="diagnose"
-        options={{
-          title: 'Diagnose',
-          tabBarIcon: ({ color, size }) => <ScanLine color={color} size={size} />,
         }}
       />
     </Tabs>

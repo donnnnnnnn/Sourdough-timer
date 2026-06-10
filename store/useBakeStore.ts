@@ -20,9 +20,10 @@ export interface BakeLog {
   timestamp: number;
   bulkDurationMinutes: number;
   foldCount: number;
-  crumbType: CrumbType;
-  shapeType: ShapeType;
-  diagnosis?: Diagnosis;
+  diagnosis: Diagnosis;
+  // Legacy fields from the pre-diagnosis log format; kept so old persisted logs still render.
+  crumbType?: CrumbType;
+  shapeType?: ShapeType;
 }
 
 interface BakeState {
@@ -35,7 +36,7 @@ interface BakeState {
   startBulk: (intervalMinutes: number) => void;
   recordFold: () => void;
   endBulk: () => void;
-  saveLog: (crumbType: CrumbType, shapeType: ShapeType, diagnosis?: Diagnosis) => void;
+  saveLog: (diagnosis: Diagnosis) => void;
   clearPendingLog: () => void;
 }
 
@@ -72,7 +73,7 @@ export const useBakeStore = create<BakeState>()(
         });
       },
 
-      saveLog: (crumbType, shapeType, diagnosis) => {
+      saveLog: (diagnosis) => {
         const { lastBulkDurationMinutes, lastFoldCount, bakeLogs } = get();
         if (lastBulkDurationMinutes === null || lastFoldCount === null) return;
         const newLog: BakeLog = {
@@ -80,8 +81,6 @@ export const useBakeStore = create<BakeState>()(
           timestamp: Date.now(),
           bulkDurationMinutes: lastBulkDurationMinutes,
           foldCount: lastFoldCount,
-          crumbType,
-          shapeType,
           diagnosis,
         };
         set({

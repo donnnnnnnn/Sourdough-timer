@@ -1,5 +1,6 @@
 import { View, Text, FlatList } from 'react-native';
 import { useBakeStore, BakeLog } from '@/store/useBakeStore';
+import { DIAGNOSIS_COPY } from '@/model/training-data';
 
 const C = {
   bg: '#0c0c0f',
@@ -29,6 +30,7 @@ function formatDuration(min: number) {
 }
 
 function BakeCard({ item }: { item: BakeLog }) {
+  const copy = item.diagnosis ? DIAGNOSIS_COPY[item.diagnosis] : null;
   return (
     <View
       style={{
@@ -52,12 +54,26 @@ function BakeCard({ item }: { item: BakeLog }) {
           </Text>
         </View>
         <View style={{ alignItems: 'flex-end', gap: 6, marginTop: 4 }}>
-          <View style={{ backgroundColor: C.chip, borderRadius: 10, paddingVertical: 5, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            <Text style={{ color: C.accent, fontSize: 13, fontWeight: '600' }}>{item.crumbType}</Text>
-          </View>
-          <View style={{ backgroundColor: C.chip, borderRadius: 10, paddingVertical: 5, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            <Text style={{ color: C.textMuted, fontSize: 13, fontWeight: '600' }}>{item.shapeType}</Text>
-          </View>
+          {copy ? (
+            <View style={{ backgroundColor: C.chip, borderRadius: 10, paddingVertical: 5, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Text style={{ fontSize: 13 }}>{copy.emoji}</Text>
+              <Text style={{ color: C.accent, fontSize: 13, fontWeight: '600' }}>{copy.title}</Text>
+            </View>
+          ) : (
+            // Legacy logs saved before the diagnosis flow
+            <>
+              {item.crumbType && (
+                <View style={{ backgroundColor: C.chip, borderRadius: 10, paddingVertical: 5, paddingHorizontal: 12 }}>
+                  <Text style={{ color: C.accent, fontSize: 13, fontWeight: '600' }}>{item.crumbType}</Text>
+                </View>
+              )}
+              {item.shapeType && (
+                <View style={{ backgroundColor: C.chip, borderRadius: 10, paddingVertical: 5, paddingHorizontal: 12 }}>
+                  <Text style={{ color: C.textMuted, fontSize: 13, fontWeight: '600' }}>{item.shapeType}</Text>
+                </View>
+              )}
+            </>
+          )}
         </View>
       </View>
     </View>

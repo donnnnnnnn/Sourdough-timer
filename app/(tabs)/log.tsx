@@ -298,7 +298,7 @@ export default function LogScreen() {
           Diagnose from photo
         </Text>
         <Text style={{ color: C.textMuted, fontSize: 15, marginBottom: 32, lineHeight: 22 }}>
-          Slice the loaf, then photograph the cut face straight-on in good light. Analysis runs entirely on your device.
+          Cut or tear the loaf in half, then photograph the cut face straight-on in good light. Analysis runs entirely on your device.
         </Text>
 
         <TouchableOpacity

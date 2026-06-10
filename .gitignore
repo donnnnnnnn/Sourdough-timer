@@ -1,0 +1,29 @@
+node_modules/
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Native builds
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+ios/
+android/
+
+# Metro
+.metro-health-check*
+
+# ML training artifacts (run locally, not committed)
+dataset/
+dataset_pdf/
+dataset_blogs/
+
+# Misc
+.DS_Store
+*.pem
+npm-debug.*
+*.tsbuildinfo

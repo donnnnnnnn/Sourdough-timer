@@ -1,5 +1,5 @@
 import { Tabs } from 'expo-router';
-import { Timer, BookOpen, History } from 'lucide-react-native';
+import { Timer, BookOpen } from 'lucide-react-native';
 import { C, fonts } from '@/components/theme';
 
 export default function TabLayout() {
@@ -36,15 +36,6 @@ export default function TabLayout() {
           tabBarIcon: ({ color, size }) => <BookOpen color={color} size={size} />,
         }}
       />
-      <Tabs.Screen
-        name="history"
-        options={{
-          title: 'History',
-          tabBarIcon: ({ color, size }) => <History color={color} size={size} />,
-        }}
-      />
-      {/* Legacy standalone diagnose flow — superseded by the photo flow
-          inside Bake Log. Hidden from the tab bar but kept on disk. */}
       <Tabs.Screen name="diagnose" options={{ href: null }} />
     </Tabs>
   );

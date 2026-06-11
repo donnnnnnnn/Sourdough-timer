@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, Image, ActivityIndicator, Alert } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { Camera } from 'lucide-react-native';
-import { useBakeStore, type Diagnosis, type PendingSession } from '@/store/useBakeStore';
+import { useBakeStore, type Diagnosis, type PendingSession, type BakeLog } from '@/store/useBakeStore';
 import { diagnose, type ClassifierInput, type ShoulderProfile } from '@/model/classifier';
 import { analyzeCrumbPhoto, type CrumbVisionFeatures } from '@/model/visionAnalyzer';
 import { DIAGNOSIS_COPY } from '@/model/training-data';
@@ -68,6 +68,64 @@ function avgBulk(logs: { bulkDurationMinutes: number }[], n = 5): number | null 
   const recent = logs.slice(0, n);
   if (recent.length === 0) return null;
   return Math.round(recent.reduce((s, l) => s + l.bulkDurationMinutes, 0) / recent.length);
+}
+
+function Stat({ value, caption }: { value: string; caption: string }) {
+  return (
+    <View style={{ flex: 1, backgroundColor: C.card, borderWidth: 1, borderColor: C.cardBorder, borderRadius: 16, padding: 14, alignItems: 'center' }}>
+      <Text style={{ color: C.accent, fontSize: 22, fontWeight: '300', fontFamily: fonts.mono }}>{value}</Text>
+      <Text style={{ color: C.textDim, fontSize: 11, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 1, marginTop: 4 }}>{caption}</Text>
+    </View>
+  );
+}
+
+function BakeCard({ item }: { item: BakeLog }) {
+  const copy = item.diagnosis ? DIAGNOSIS_COPY[item.diagnosis as keyof typeof DIAGNOSIS_COPY] : null;
+  return (
+    <View
+      style={{
+        backgroundColor: C.card,
+        borderWidth: 1,
+        borderColor: C.cardBorder,
+        borderRadius: 20,
+        padding: 20,
+      }}>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <View style={{ flex: 1 }}>
+          <Text style={{ color: C.textDim, fontSize: 11, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 1.2, marginBottom: 6 }}>
+            {new Date(item.timestamp).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+          </Text>
+          <Text style={{ color: C.text, fontSize: 28, fontWeight: '200', letterSpacing: -1, fontFamily: fonts.mono }}>
+            {formatMinutes(item.bulkDurationMinutes)}
+          </Text>
+          <Text style={{ color: C.textMuted, fontSize: 14, marginTop: 4 }}>
+            {item.foldCount} fold{item.foldCount !== 1 ? 's' : ''}
+          </Text>
+        </View>
+        <View style={{ alignItems: 'flex-end', gap: 6, marginTop: 4 }}>
+          {copy ? (
+            <View style={{ backgroundColor: C.chip, borderRadius: 10, paddingVertical: 5, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Text style={{ fontSize: 13 }}>{copy.emoji}</Text>
+              <Text style={{ color: C.accent, fontSize: 13, fontWeight: '600' }}>{copy.title}</Text>
+            </View>
+          ) : (
+            <>
+              {item.crumbType && (
+                <View style={{ backgroundColor: C.chip, borderRadius: 10, paddingVertical: 5, paddingHorizontal: 12 }}>
+                  <Text style={{ color: C.accent, fontSize: 13, fontWeight: '600' }}>{item.crumbType}</Text>
+                </View>
+              )}
+              {item.shapeType && (
+                <View style={{ backgroundColor: C.chip, borderRadius: 10, paddingVertical: 5, paddingHorizontal: 12 }}>
+                  <Text style={{ color: C.textMuted, fontSize: 13, fontWeight: '600' }}>{item.shapeType}</Text>
+                </View>
+              )}
+            </>
+          )}
+        </View>
+      </View>
+    </View>
+  );
 }
 
 type Step = 'sessions' | 'quick' | 'photo' | 'analysing' | 'result' | 'tiebreaker';
@@ -179,43 +237,64 @@ export default function LogScreen() {
           How'd it turn out?
         </Text>
 
-        {pendingSessions.length === 0 ? (
-          <View style={{ alignItems: 'center', paddingTop: 48 }}>
-            <Text style={{ fontSize: 48, marginBottom: 12 }}>🍞</Text>
+        {pendingSessions.length > 0 && (
+          <>
+            <Text style={{ color: C.textDim, fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 2, marginBottom: 12 }}>
+              Ready to log
+            </Text>
+            <View style={{ gap: 12, marginBottom: 32 }}>
+              {pendingSessions.map((session) => (
+                <TouchableOpacity
+                  key={session.id}
+                  onPress={() => selectSession(session)}
+                  activeOpacity={0.7}
+                  style={{
+                    backgroundColor: C.card,
+                    borderWidth: 1.5,
+                    borderColor: C.cardBorder,
+                    borderRadius: 22,
+                    padding: 22,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 16,
+                  }}>
+                  <Text style={{ fontSize: 32 }}>🫙</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: C.text, fontSize: 17, fontWeight: '700', marginBottom: 3 }}>
+                      {formatMinutes(session.bulkDurationMinutes)} bulk · {session.foldCount} fold{session.foldCount !== 1 ? 's' : ''}
+                    </Text>
+                    <Text style={{ color: C.textDim, fontSize: 13 }}>
+                      {formatDate(session.timestamp)}
+                    </Text>
+                  </View>
+                  <Text style={{ color: C.accent, fontSize: 22 }}>›</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </>
+        )}
+
+        <Text style={{ color: C.textDim, fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 2, marginBottom: 12 }}>
+          History
+        </Text>
+        {bakeLogs.length === 0 ? (
+          <View style={{ alignItems: 'center', paddingTop: 32 }}>
+            <Text style={{ fontSize: 48, marginBottom: 12 }}>📖</Text>
             <Text style={{ color: C.textMuted, fontSize: 16, textAlign: 'center', lineHeight: 24 }}>
-              No sessions to log yet.{'\n'}Finish a bulk fermentation first.
+              No bakes logged yet.{'\n'}Finish a bulk fermentation and log the result.
             </Text>
           </View>
         ) : (
-          <View style={{ gap: 12 }}>
-            {pendingSessions.map((session) => (
-              <TouchableOpacity
-                key={session.id}
-                onPress={() => selectSession(session)}
-                activeOpacity={0.7}
-                style={{
-                  backgroundColor: C.card,
-                  borderWidth: 1.5,
-                  borderColor: C.cardBorder,
-                  borderRadius: 22,
-                  padding: 22,
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 16,
-                }}>
-                <Text style={{ fontSize: 32 }}>🫙</Text>
-                <View style={{ flex: 1 }}>
-                  <Text style={{ color: C.text, fontSize: 17, fontWeight: '700', marginBottom: 3 }}>
-                    {formatMinutes(session.bulkDurationMinutes)} bulk · {session.foldCount} fold{session.foldCount !== 1 ? 's' : ''}
-                  </Text>
-                  <Text style={{ color: C.textDim, fontSize: 13 }}>
-                    {formatDate(session.timestamp)}
-                  </Text>
-                </View>
-                <Text style={{ color: C.accent, fontSize: 22 }}>›</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
+          <>
+            <View style={{ flexDirection: 'row', gap: 10, marginBottom: 20 }}>
+              <Stat value={String(bakeLogs.length)} caption="bakes" />
+              <Stat value={formatMinutes(Math.round(bakeLogs.reduce((s, l) => s + l.bulkDurationMinutes, 0) / bakeLogs.length))} caption="avg bulk" />
+              <Stat value={String(bakeLogs.filter(l => l.diagnosis === 'properly_fermented').length)} caption="dialed in" />
+            </View>
+            <View style={{ gap: 10 }}>
+              {bakeLogs.map((item) => <BakeCard key={item.id} item={item} />)}
+            </View>
+          </>
         )}
       </ScrollView>
     );

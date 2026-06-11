@@ -291,6 +291,7 @@ BLOG_PAGES = [
     "https://www.theperfectloaf.com/how-to-use-the-dough-poke-test/",
     "https://www.theperfectloaf.com/beginners-sourdough-bread/",
     "https://www.theperfectloaf.com/guides/crumb-structure/",
+    "https://www.theperfectloaf.com/troubleshooting-sourdough-bread/",
     # King Arthur — recipe pages use neutral language, label hardcoded below
     "https://www.kingarthurbaking.com/learn/guides/sourdough",
     "https://www.kingarthurbaking.com/recipes/sourdough-bread-recipe",
@@ -302,11 +303,20 @@ BLOG_PAGES = [
     # Busby's Bakery — dense/gummy crumb troubleshooting (under_fermented heavy)
     "https://www.busbysbakery.com/why-is-my-sourdough-dense/",
     "https://www.busbysbakery.com/sourdough-underproofed/",
-    # The Clever Carrot — troubleshooting guide
+    # The Clever Carrot — troubleshooting guides
     "https://www.theclevercarrot.com/2019/03/sourdough-bread-troubleshooting-guide/",
+    "https://www.theclevercarrot.com/2021/04/why-is-my-sourdough-dense/",
     # Brod & Taylor — updated URLs
     "https://brodandtaylor.com/blogs/recipes/proofing-bread",
     "https://brodandtaylor.com/blogs/recipes/sourdough-bread-problems-and-solutions",
+    # Pantry Mama — dense/gummy crumb troubleshooting
+    "https://www.pantrymama.com/sourdough-bread-dense/",
+    "https://www.pantrymama.com/underproofed-sourdough/",
+    # Little Spoon Farm — underproofed diagnosis
+    "https://littlespoonfarm.com/sourdough-bread-troubleshooting/",
+    # True Sourdough — dense bread causes (under_fermented)
+    "https://truesourdough.com/sourdough-bread-too-dense/",
+    "https://truesourdough.com/underproofed-sourdough/",
 ]
 
 # Pages where keyword scoring is unreliable — override with known label.
@@ -319,10 +329,16 @@ HARDCODED_PAGE_LABELS: dict[str, str | None] = {
     "https://www.busbysbakery.com/sourdough-underproofed/": "under_fermented",
     "https://thesourdoughjourney.com/fixing-underproofed-sourdough/": "under_fermented",
     "https://thesourdoughjourney.com/fixing-overproofed-sourdough/": "over_fermented",
+    "https://www.pantrymama.com/sourdough-bread-dense/": "under_fermented",
+    "https://www.pantrymama.com/underproofed-sourdough/": "under_fermented",
+    "https://littlespoonfarm.com/sourdough-bread-troubleshooting/": "under_fermented",
+    "https://truesourdough.com/sourdough-bread-too-dense/": "under_fermented",
+    "https://truesourdough.com/underproofed-sourdough/": "under_fermented",
+    "https://www.theclevercarrot.com/2021/04/why-is-my-sourdough-dense/": "under_fermented",
 }
 
 IMG_RE = re.compile(r'<img[^>]+(?:src|data-src)=["\']([^"\']+)["\']', re.I)
-MIN_BYTES = 15_000  # lowered from 25KB to catch more real photos
+MIN_BYTES = 8_000  # 8KB — catches compressed WordPress thumbnails; icons/logos filtered by _SKIP_SRC_RE
 # Patterns that definitely aren't photos
 _SKIP_SRC_RE = re.compile(r'\.(svg|gif|ico|css|js|woff2?|ttf|eot)(\?|$)', re.I)
 

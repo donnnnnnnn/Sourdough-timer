@@ -1,23 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, Platform } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { View, Text, TouchableOpacity, ScrollView, Platform, Animated, Easing } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import { useBakeStore } from '@/store/useBakeStore';
 import { router } from 'expo-router';
-import { Sparkles } from 'lucide-react-native';
+import { Sparkles, Hand } from 'lucide-react-native';
+import { C, fonts, label } from '@/components/theme';
 
 const FOLD_INTERVALS = [30, 45, 60];
-
-const C = {
-  bg: '#0c0c0f',
-  card: 'rgba(255,255,255,0.05)',
-  cardBorder: 'rgba(255,255,255,0.08)',
-  accent: '#F59E0B',
-  accentSoft: 'rgba(245,158,11,0.15)',
-  accentBorder: 'rgba(245,158,11,0.3)',
-  text: '#e4e4e7',
-  textMuted: 'rgba(255,255,255,0.45)',
-  textDim: 'rgba(255,255,255,0.25)',
-};
 
 function formatElapsed(ms: number) {
   const totalSeconds = Math.floor(ms / 1000);
@@ -39,6 +28,136 @@ function formatMinutes(min: number) {
   return `${h}h ${m}m`;
 }
 
+/** Soft breathing dot shown while the dough is fermenting. */
+function PulseDot() {
+  const pulse = useRef(new Animated.Value(0.4)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1, duration: 1100, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 0.4, duration: 1100, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulse]);
+  return (
+    <Animated.View
+      style={{
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+        backgroundColor: C.accent,
+        opacity: pulse,
+      }}
+    />
+  );
+}
+
+type BubbleSpec = {
+  left: string;        // horizontal position, e.g. '37%'
+  size: number;        // diameter in px
+  rise: number;        // how far it floats up
+  duration: number;    // one rise cycle
+  delay: number;       // initial stagger — small at first = activation burst
+  drift: number;       // sideways sway in px
+  peak: number;        // max opacity
+};
+
+function makeBubbles(count: number): BubbleSpec[] {
+  return Array.from({ length: count }).map((_, i) => ({
+    left: `${6 + Math.random() * 88}%`,
+    size: 3 + Math.random() * 7,
+    rise: 120 + Math.random() * 110,
+    duration: 2800 + Math.random() * 2600,
+    // quick stagger for the first wave (the "cultures waking up" burst),
+    // then each bubble loops on its own rhythm
+    delay: i * 110 + Math.random() * 250,
+    drift: (Math.random() - 0.5) * 26,
+    peak: 0.25 + Math.random() * 0.3,
+  }));
+}
+
+function Bubble({ spec }: { spec: BubbleSpec }) {
+  const t = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.timing(t, {
+        toValue: 1,
+        duration: spec.duration,
+        delay: spec.delay,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }),
+      { resetBeforeIteration: true },
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [t, spec]);
+
+  const translateY = t.interpolate({ inputRange: [0, 1], outputRange: [0, -spec.rise] });
+  const translateX = t.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, spec.drift, 0] });
+  const opacity = t.interpolate({ inputRange: [0, 0.15, 0.7, 1], outputRange: [0, spec.peak, spec.peak, 0] });
+  const scale = t.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1.15] });
+
+  return (
+    <Animated.View
+      style={{
+        position: 'absolute',
+        bottom: 0,
+        left: spec.left as `${number}%`,
+        width: spec.size,
+        height: spec.size,
+        borderRadius: spec.size / 2,
+        backgroundColor: C.accent,
+        opacity,
+        transform: [{ translateY }, { translateX }, { scale }],
+      }}
+    />
+  );
+}
+
+/**
+ * The fermentation field: micro-bubbles of CO2 rising as the yeast and
+ * lactic acid bacteria go to work. Bursts to life right after "Start Bulk"
+ * (tight stagger), then settles into a calm ambient drift.
+ */
+function FermentationField() {
+  const bubbles = useMemo(() => makeBubbles(16), []);
+  return (
+    <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, overflow: 'hidden' }}>
+      {bubbles.map((spec, i) => (
+        <Bubble key={i} spec={spec} />
+      ))}
+    </View>
+  );
+}
+
+/** One dot per planned fold; fills in as folds are recorded. */
+function FoldDots({ completed, planned }: { completed: number; planned: number }) {
+  const total = Math.max(planned, completed, 1);
+  return (
+    <View style={{ flexDirection: 'row', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+      {Array.from({ length: total }).map((_, i) => {
+        const done = i < completed;
+        return (
+          <View
+            key={i}
+            style={{
+              width: 10,
+              height: 10,
+              borderRadius: 5,
+              backgroundColor: done ? C.accent : 'transparent',
+              borderWidth: 1.5,
+              borderColor: done ? C.accent : C.textDim,
+            }}
+          />
+        );
+      })}
+    </View>
+  );
+}
+
 export default function HomeScreen() {
   const {
     bulkStartTimestamp,
@@ -58,6 +177,31 @@ export default function HomeScreen() {
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const isActive = bulkStartTimestamp !== null;
+
+  // Entrance for the active view: fades/slides in when bulk starts.
+  const enter = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (isActive) {
+      enter.setValue(0);
+      Animated.timing(enter, {
+        toValue: 1,
+        duration: 600,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start();
+    }
+  }, [isActive, enter]);
+
+  // Satisfying pop on the fold counter each time a fold is recorded.
+  const foldPop = useRef(new Animated.Value(1)).current;
+  const prevFolds = useRef(completedFolds);
+  useEffect(() => {
+    if (completedFolds > prevFolds.current) {
+      foldPop.setValue(1.25);
+      Animated.spring(foldPop, { toValue: 1, friction: 4, tension: 120, useNativeDriver: true }).start();
+    }
+    prevFolds.current = completedFolds;
+  }, [completedFolds, foldPop]);
 
   useEffect(() => {
     if (isActive) {
@@ -120,6 +264,10 @@ export default function HomeScreen() {
   const elapsedInCurrentInterval = elapsedSecs % intervalSecs;
   const secondsUntilNextFold = intervalSecs - elapsedInCurrentInterval;
   const nextFold = formatElapsed(secondsUntilNextFold * 1000);
+  const intervalProgress = elapsedInCurrentInterval / intervalSecs;
+
+  // First couple of minutes: caption acknowledges the starter just went in.
+  const justStarted = isActive && elapsedSecs < 120;
 
   const recentLog = bakeLogs.length > 0 ? bakeLogs[0] : null;
 
@@ -143,7 +291,7 @@ export default function HomeScreen() {
           }}>
           <Sparkles color={C.accent} size={22} />
           <View style={{ flex: 1 }}>
-            <Text style={{ color: C.textMuted, fontSize: 11, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 1.5 }}>
+            <Text style={{ ...label, letterSpacing: 1.5, color: C.textMuted }}>
               Your last bake
             </Text>
             <Text style={{ color: C.text, fontSize: 18, fontWeight: '700', marginTop: 2 }}>
@@ -156,16 +304,16 @@ export default function HomeScreen() {
       {!isActive ? (
         <View style={{ gap: 28 }}>
           <View>
-            <Text style={{ color: C.text, fontSize: 34, fontWeight: '800', letterSpacing: -0.5 }}>
+            <Text style={{ color: C.text, fontSize: 36, fontFamily: fonts.display, letterSpacing: 0.2 }}>
               Ready to bake?
             </Text>
-            <Text style={{ color: C.textMuted, fontSize: 16, marginTop: 4 }}>
+            <Text style={{ color: C.textMuted, fontSize: 16, marginTop: 6 }}>
               Set your fold reminder interval.
             </Text>
           </View>
 
           <View>
-            <Text style={{ color: C.textDim, fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 2, marginBottom: 14 }}>
+            <Text style={{ ...label, marginBottom: 14 }}>
               Alert me every
             </Text>
             <View style={{ flexDirection: 'row', gap: 10 }}>
@@ -198,7 +346,7 @@ export default function HomeScreen() {
           </View>
 
           <View>
-            <Text style={{ color: C.textDim, fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 2, marginBottom: 14 }}>
+            <Text style={{ ...label, marginBottom: 14 }}>
               Planned folds
             </Text>
             <View style={{
@@ -210,7 +358,6 @@ export default function HomeScreen() {
               borderColor: C.cardBorder,
               borderRadius: 18,
               padding: 8,
-              gap: 0,
             }}>
               <TouchableOpacity
                 onPress={() => changeFoldCount(-1)}
@@ -219,7 +366,7 @@ export default function HomeScreen() {
                 <Text style={{ color: foldCount > 0 ? C.text : C.textDim, fontSize: 28, fontWeight: '300' }}>−</Text>
               </TouchableOpacity>
               <View style={{ flex: 1, alignItems: 'center' }}>
-                <Text style={{ color: C.accent, fontSize: 40, fontWeight: '200', fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' }}>
+                <Text style={{ color: C.accent, fontSize: 40, fontWeight: '200', fontFamily: fonts.mono }}>
                   {foldCount}
                 </Text>
                 <Text style={{ color: C.textDim, fontSize: 12, marginTop: -2 }}>
@@ -238,7 +385,7 @@ export default function HomeScreen() {
           <View>
             <TouchableOpacity
               onPress={handleStart}
-              activeOpacity={0.8}
+              activeOpacity={0.85}
               style={{
                 backgroundColor: C.accent,
                 borderRadius: 22,
@@ -248,8 +395,9 @@ export default function HomeScreen() {
                 shadowOffset: { width: 0, height: 8 },
                 shadowOpacity: 0.35,
                 shadowRadius: 24,
+                elevation: 8,
               }}>
-              <Text style={{ color: '#0c0c0f', fontSize: 26, fontWeight: '800', letterSpacing: -0.3 }}>
+              <Text style={{ color: C.onAccent, fontSize: 26, fontWeight: '800', letterSpacing: -0.3 }}>
                 Start Bulk
               </Text>
             </TouchableOpacity>
@@ -259,11 +407,22 @@ export default function HomeScreen() {
           </View>
         </View>
       ) : (
-        <View style={{ gap: 20 }}>
+        <Animated.View
+          style={{
+            gap: 18,
+            opacity: enter,
+            transform: [{
+              translateY: enter.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }),
+            }],
+          }}>
           <View style={{ alignItems: 'center', paddingTop: 8 }}>
-            <Text style={{ color: C.accent, fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 2, marginBottom: 8 }}>
-              Bulk fermenting
-            </Text>
+            <FermentationField />
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+              <PulseDot />
+              <Text style={{ ...label, color: C.accent }}>
+                {justStarted ? 'Cultures waking up' : 'Bulk fermenting'}
+              </Text>
+            </View>
             <Text
               style={{
                 color: C.text,
@@ -271,7 +430,7 @@ export default function HomeScreen() {
                 fontWeight: '200',
                 lineHeight: 96,
                 letterSpacing: -4,
-                fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+                fontFamily: fonts.mono,
               }}>
               {elapsed.hours}:{elapsed.minutes}
             </Text>
@@ -279,11 +438,16 @@ export default function HomeScreen() {
               color: C.textDim,
               fontSize: 28,
               fontWeight: '300',
-              fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+              fontFamily: fonts.mono,
               marginTop: -4,
             }}>
               :{elapsed.seconds}
             </Text>
+            {justStarted && (
+              <Text style={{ color: C.textMuted, fontSize: 13, marginTop: 8, textAlign: 'center' }}>
+                Yeast and lactic acid bacteria are starting to raise your dough.
+              </Text>
+            )}
           </View>
 
           <View
@@ -295,18 +459,34 @@ export default function HomeScreen() {
               padding: 20,
               alignItems: 'center',
             }}>
-            <Text style={{ color: C.textDim, fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 2, marginBottom: 6 }}>
+            <Text style={{ ...label, marginBottom: 6 }}>
               Next fold in
             </Text>
             <Text style={{
               color: C.text,
               fontSize: 38,
               fontWeight: '300',
-              fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+              fontFamily: fonts.mono,
             }}>
               {nextFold.minutes}:{nextFold.seconds}
             </Text>
-            <Text style={{ color: C.textDim, fontSize: 13, marginTop: 4 }}>
+            {/* progress through the current fold interval */}
+            <View style={{
+              width: '100%',
+              height: 6,
+              borderRadius: 3,
+              backgroundColor: C.chip,
+              marginTop: 14,
+              overflow: 'hidden',
+            }}>
+              <View style={{
+                width: `${Math.min(100, intervalProgress * 100)}%`,
+                height: '100%',
+                borderRadius: 3,
+                backgroundColor: C.accent,
+              }} />
+            </View>
+            <Text style={{ color: C.textDim, fontSize: 13, marginTop: 10 }}>
               every {foldIntervalMinutes} min
             </Text>
           </View>
@@ -315,38 +495,52 @@ export default function HomeScreen() {
             onPress={recordFold}
             activeOpacity={0.7}
             style={{
-              backgroundColor: C.card,
-              borderWidth: 1,
-              borderColor: C.cardBorder,
+              backgroundColor: C.accentSoft,
+              borderWidth: 1.5,
+              borderColor: C.accentBorder,
               borderRadius: 22,
-              paddingVertical: 28,
+              paddingVertical: 26,
               alignItems: 'center',
             }}>
-            <Text style={{ color: C.textDim, fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 2, marginBottom: 4 }}>
-              Folds completed
-            </Text>
-            <Text style={{ color: C.accent, fontSize: 72, fontWeight: '200', lineHeight: 80, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <Hand color={C.accent} size={14} />
+              <Text style={{ ...label, color: C.accent }}>
+                Folds completed
+              </Text>
+            </View>
+            <Animated.Text
+              style={{
+                color: C.accent,
+                fontSize: 68,
+                fontWeight: '200',
+                lineHeight: 76,
+                fontFamily: fonts.mono,
+                transform: [{ scale: foldPop }],
+              }}>
               {completedFolds}
-            </Text>
-            <Text style={{ color: C.textDim, fontSize: 13, marginTop: 4 }}>tap to record a fold</Text>
+            </Animated.Text>
+            <View style={{ marginTop: 10, marginBottom: 6 }}>
+              <FoldDots completed={completedFolds} planned={defaultFoldCount} />
+            </View>
+            <Text style={{ color: C.textDim, fontSize: 13 }}>tap to record a fold</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
             onPress={handleEnd}
             activeOpacity={0.8}
             style={{
-              backgroundColor: 'rgba(239,68,68,0.12)',
+              backgroundColor: C.redSoft,
               borderWidth: 1,
-              borderColor: 'rgba(239,68,68,0.25)',
+              borderColor: C.redBorder,
               borderRadius: 22,
               paddingVertical: 24,
               alignItems: 'center',
             }}>
-            <Text style={{ color: '#f87171', fontSize: 20, fontWeight: '700' }}>
+            <Text style={{ color: C.red, fontSize: 20, fontWeight: '700' }}>
               End Bulk & Shape
             </Text>
           </TouchableOpacity>
-        </View>
+        </Animated.View>
       )}
     </ScrollView>
   );

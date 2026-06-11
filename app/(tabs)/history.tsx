@@ -1,17 +1,7 @@
 import { View, Text, FlatList } from 'react-native';
 import { useBakeStore, BakeLog } from '@/store/useBakeStore';
 import { DIAGNOSIS_COPY } from '@/model/training-data';
-
-const C = {
-  bg: '#0c0c0f',
-  card: 'rgba(255,255,255,0.05)',
-  cardBorder: 'rgba(255,255,255,0.08)',
-  accent: '#F59E0B',
-  text: '#e4e4e7',
-  textMuted: 'rgba(255,255,255,0.45)',
-  textDim: 'rgba(255,255,255,0.25)',
-  chip: 'rgba(255,255,255,0.07)',
-};
+import { C, fonts, label } from '@/components/theme';
 
 function formatDate(ts: number) {
   return new Date(ts).toLocaleDateString('en-US', {
@@ -29,6 +19,15 @@ function formatDuration(min: number) {
   return `${h}h ${m}m`;
 }
 
+function Stat({ value, caption }: { value: string; caption: string }) {
+  return (
+    <View style={{ flex: 1, backgroundColor: C.card, borderWidth: 1, borderColor: C.cardBorder, borderRadius: 16, padding: 14, alignItems: 'center' }}>
+      <Text style={{ color: C.accent, fontSize: 22, fontWeight: '300', fontFamily: fonts.mono }}>{value}</Text>
+      <Text style={{ color: C.textDim, fontSize: 11, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 1, marginTop: 4 }}>{caption}</Text>
+    </View>
+  );
+}
+
 function BakeCard({ item }: { item: BakeLog }) {
   const copy = item.diagnosis ? DIAGNOSIS_COPY[item.diagnosis] : null;
   return (
@@ -43,10 +42,10 @@ function BakeCard({ item }: { item: BakeLog }) {
       }}>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <View style={{ flex: 1 }}>
-          <Text style={{ color: C.textDim, fontSize: 11, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 1.2, marginBottom: 6 }}>
+          <Text style={{ ...label, letterSpacing: 1.2, marginBottom: 6 }}>
             {formatDate(item.timestamp)}
           </Text>
-          <Text style={{ color: C.text, fontSize: 28, fontWeight: '200', letterSpacing: -1, fontFamily: 'monospace' }}>
+          <Text style={{ color: C.text, fontSize: 28, fontWeight: '200', letterSpacing: -1, fontFamily: fonts.mono }}>
             {formatDuration(item.bulkDurationMinutes)}
           </Text>
           <Text style={{ color: C.textMuted, fontSize: 14, marginTop: 4 }}>
@@ -87,7 +86,7 @@ export default function HistoryScreen() {
     return (
       <View style={{ flex: 1, backgroundColor: C.bg, alignItems: 'center', justifyContent: 'center', padding: 32 }}>
         <Text style={{ fontSize: 56, opacity: 0.7 }}>📖</Text>
-        <Text style={{ color: C.text, fontSize: 22, fontWeight: '700', textAlign: 'center', marginTop: 16, marginBottom: 6 }}>
+        <Text style={{ color: C.text, fontSize: 24, fontFamily: fonts.display, textAlign: 'center', marginTop: 16, marginBottom: 8 }}>
           No bakes logged yet
         </Text>
         <Text style={{ color: C.textMuted, fontSize: 15, textAlign: 'center', lineHeight: 22 }}>
@@ -96,6 +95,11 @@ export default function HistoryScreen() {
       </View>
     );
   }
+
+  const avgBulk = Math.round(
+    bakeLogs.reduce((s, l) => s + l.bulkDurationMinutes, 0) / bakeLogs.length,
+  );
+  const goodBakes = bakeLogs.filter((l) => l.diagnosis === 'properly_fermented').length;
 
   return (
     <FlatList
@@ -106,12 +110,17 @@ export default function HistoryScreen() {
       style={{ backgroundColor: C.bg }}
       ListHeaderComponent={
         <View style={{ marginBottom: 18 }}>
-          <Text style={{ color: C.text, fontSize: 28, fontWeight: '800', letterSpacing: -0.3 }}>
+          <Text style={{ color: C.text, fontSize: 30, fontFamily: fonts.display, letterSpacing: 0.2 }}>
             Bake History
           </Text>
-          <Text style={{ color: C.textMuted, fontSize: 14, marginTop: 4 }}>
+          <Text style={{ color: C.textMuted, fontSize: 14, marginTop: 4, marginBottom: 16 }}>
             {bakeLogs.length} bake{bakeLogs.length !== 1 ? 's' : ''} logged
           </Text>
+          <View style={{ flexDirection: 'row', gap: 10 }}>
+            <Stat value={String(bakeLogs.length)} caption="bakes" />
+            <Stat value={formatDuration(avgBulk)} caption="avg bulk" />
+            <Stat value={String(goodBakes)} caption="dialed in" />
+          </View>
         </View>
       }
     />

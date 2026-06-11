@@ -6,18 +6,7 @@ import { useBakeStore, type Diagnosis, type PendingSession } from '@/store/useBa
 import { diagnose, type ClassifierInput, type ShoulderProfile } from '@/model/classifier';
 import { analyzeCrumbPhoto, type CrumbVisionFeatures } from '@/model/visionAnalyzer';
 import { DIAGNOSIS_COPY } from '@/model/training-data';
-
-const C = {
-  bg: '#0c0c0f',
-  card: 'rgba(255,255,255,0.05)',
-  cardBorder: 'rgba(255,255,255,0.08)',
-  accent: '#F59E0B',
-  accentSoft: 'rgba(245,158,11,0.15)',
-  accentBorder: 'rgba(245,158,11,0.3)',
-  text: '#e4e4e7',
-  textMuted: 'rgba(255,255,255,0.45)',
-  textDim: 'rgba(255,255,255,0.25)',
-};
+import { C, fonts } from '@/components/theme';
 
 const QUICK_OPTIONS: { diagnosis: Diagnosis; emoji: string; label: string; sub: string }[] = [
   { diagnosis: 'properly_fermented', emoji: '✅', label: 'Well fermented', sub: 'Good rise, open crumb, brown crust' },
@@ -183,7 +172,7 @@ export default function LogScreen() {
   if (step === 'sessions') {
     return (
       <ScrollView style={{ flex: 1, backgroundColor: C.bg }} contentContainerStyle={{ padding: 24, paddingBottom: 48 }}>
-        <Text style={{ color: C.text, fontSize: 28, fontWeight: '800', letterSpacing: -0.3, marginBottom: 4 }}>
+        <Text style={{ color: C.text, fontSize: 30, fontFamily: fonts.display, letterSpacing: 0.2, marginBottom: 4 }}>
           Bake Log
         </Text>
         <Text style={{ color: C.textMuted, fontSize: 15, marginBottom: 28 }}>
@@ -249,7 +238,7 @@ export default function LogScreen() {
         <TouchableOpacity onPress={resetToSessions} activeOpacity={0.7} style={{ marginBottom: 24 }}>
           <Text style={{ color: C.accent, fontSize: 15, fontWeight: '600' }}>← Back</Text>
         </TouchableOpacity>
-        <Text style={{ color: C.text, fontSize: 24, fontWeight: '800', letterSpacing: -0.3, marginBottom: 6 }}>
+        <Text style={{ color: C.text, fontSize: 26, fontFamily: fonts.display, letterSpacing: 0.2, marginBottom: 6 }}>
           I need a bit more info
         </Text>
         <Text style={{ color: C.textMuted, fontSize: 15, marginBottom: 28, lineHeight: 22 }}>
@@ -302,7 +291,7 @@ export default function LogScreen() {
 
         <View style={{ backgroundColor: C.accentSoft, borderWidth: 1, borderColor: C.accentBorder, borderRadius: 24, padding: 24, marginBottom: 16 }}>
           <Text style={{ fontSize: 40, marginBottom: 8 }}>{copy.emoji}</Text>
-          <Text style={{ color: C.text, fontSize: 26, fontWeight: '800', letterSpacing: -0.3, marginBottom: 8 }}>{copy.title}</Text>
+          <Text style={{ color: C.text, fontSize: 28, fontFamily: fonts.display, letterSpacing: 0.2, marginBottom: 8 }}>{copy.title}</Text>
           <Text style={{ color: C.text, fontSize: 16, lineHeight: 24, marginBottom: 16 }}>{copy.oneLiner}</Text>
 
           <TouchableOpacity
@@ -338,7 +327,7 @@ export default function LogScreen() {
             shadowOpacity: 0.3,
             shadowRadius: 20,
           }}>
-          <Text style={{ color: '#0c0c0f', fontSize: 18, fontWeight: '800' }}>Save this result</Text>
+          <Text style={{ color: C.onAccent, fontSize: 18, fontWeight: '800' }}>Save this result</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -358,7 +347,7 @@ export default function LogScreen() {
           <Text style={{ color: C.accent, fontSize: 15, fontWeight: '600' }}>← Back</Text>
         </TouchableOpacity>
 
-        <Text style={{ color: C.text, fontSize: 28, fontWeight: '800', letterSpacing: -0.3, marginBottom: 6 }}>
+        <Text style={{ color: C.text, fontSize: 30, fontFamily: fonts.display, letterSpacing: 0.2, marginBottom: 6 }}>
           Diagnose from photo
         </Text>
         <Text style={{ color: C.textMuted, fontSize: 15, marginBottom: 8, lineHeight: 22 }}>
@@ -385,8 +374,8 @@ export default function LogScreen() {
             shadowOpacity: 0.3,
             shadowRadius: 20,
           }}>
-          <Camera color="#0c0c0f" size={22} />
-          <Text style={{ color: '#0c0c0f', fontSize: 18, fontWeight: '800' }}>Take a photo</Text>
+          <Camera color={C.onAccent} size={22} />
+          <Text style={{ color: C.onAccent, fontSize: 18, fontWeight: '800' }}>Take a photo</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -417,7 +406,7 @@ export default function LogScreen() {
         </View>
       )}
 
-      <Text style={{ color: C.text, fontSize: 28, fontWeight: '800', letterSpacing: -0.3, marginBottom: 4 }}>
+      <Text style={{ color: C.text, fontSize: 30, fontFamily: fonts.display, letterSpacing: 0.2, marginBottom: 4 }}>
         How'd it turn out?
       </Text>
       <Text style={{ color: C.textMuted, fontSize: 15, marginBottom: 28 }}>
@@ -465,7 +454,7 @@ export default function LogScreen() {
         <Camera color={C.accent} size={30} />
         <View style={{ flex: 1 }}>
           <Text style={{ color: C.accent, fontSize: 17, fontWeight: '700', marginBottom: 3 }}>Not sure?</Text>
-          <Text style={{ color: 'rgba(245,158,11,0.6)', fontSize: 13 }}>Take a crumb photo and I'll diagnose it</Text>
+          <Text style={{ color: C.accentBorder, fontSize: 13 }}>Take a crumb photo and I'll diagnose it</Text>
         </View>
       </TouchableOpacity>
     </ScrollView>

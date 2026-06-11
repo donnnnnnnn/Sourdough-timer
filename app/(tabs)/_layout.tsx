@@ -1,23 +1,25 @@
 import { Tabs } from 'expo-router';
 import { Timer, BookOpen, History } from 'lucide-react-native';
+import { C, fonts } from '@/components/theme';
 
 export default function TabLayout() {
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: '#F59E0B',
-        tabBarInactiveTintColor: 'rgba(255,255,255,0.35)',
+        tabBarActiveTintColor: C.accent,
+        tabBarInactiveTintColor: C.textDim,
         tabBarStyle: {
-          backgroundColor: 'rgba(24,24,27,0.92)',
-          borderTopColor: 'rgba(255,255,255,0.06)',
+          backgroundColor: C.tabBar,
+          borderTopColor: C.cardBorder,
           borderTopWidth: 0.5,
           paddingTop: 4,
         },
+        tabBarLabelStyle: { fontWeight: '600', fontSize: 11 },
         headerStyle: {
-          backgroundColor: '#0c0c0f',
+          backgroundColor: C.bg,
         },
-        headerTintColor: '#e4e4e7',
-        headerTitleStyle: { fontWeight: '600', fontSize: 17, letterSpacing: 0.3 },
+        headerTintColor: C.text,
+        headerTitleStyle: { fontFamily: fonts.display, fontSize: 19, letterSpacing: 0.3 },
         headerShadowVisible: false,
       }}>
       <Tabs.Screen
@@ -41,6 +43,9 @@ export default function TabLayout() {
           tabBarIcon: ({ color, size }) => <History color={color} size={size} />,
         }}
       />
+      {/* Legacy standalone diagnose flow — superseded by the photo flow
+          inside Bake Log. Hidden from the tab bar but kept on disk. */}
+      <Tabs.Screen name="diagnose" options={{ href: null }} />
     </Tabs>
   );
 }

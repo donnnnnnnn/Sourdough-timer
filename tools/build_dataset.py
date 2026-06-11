@@ -3,7 +3,8 @@
 
 Run on your local machine (needs internet + optional PDFs in current dir):
 
-    pip3 install pymupdf tensorflow beautifulsoup4
+    python3 -m pip install pymupdf beautifulsoup4 playwright tensorflow
+    python3 -m playwright install chromium
     python3 tools/build_dataset.py --out dataset
 
 Stages:
@@ -96,7 +97,34 @@ def majority_label(u: int, o: int, g: int) -> str | None:
 
 UA = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0"}
 
-def fetch(url: str, *, is_json: bool = False):
+try:
+    from playwright.sync_api import sync_playwright
+    PLAYWRIGHT = True
+except ImportError:
+    PLAYWRIGHT = False
+
+_pw_browser = None
+
+def _get_browser():
+    global _pw_browser
+    if _pw_browser is None:
+        _pw = sync_playwright().start()
+        _pw_browser = _pw.chromium.launch(headless=True)
+    return _pw_browser
+
+
+def fetch(url: str, *, is_json: bool = False, rendered: bool = False):
+    if rendered and PLAYWRIGHT:
+        try:
+            browser = _get_browser()
+            page = browser.new_page()
+            page.set_extra_http_headers({"User-Agent": UA["User-Agent"]})
+            page.goto(url, wait_until="networkidle", timeout=30000)
+            html = page.content()
+            page.close()
+            return html
+        except Exception as e:
+            print(f"  playwright failed {url}: {e} — falling back to urllib")
     req = urllib.request.Request(url, headers=UA)
     with urllib.request.urlopen(req, timeout=25) as r:
         data = r.read()
@@ -306,12 +334,17 @@ def run_blogs(outdir: str, seen: set) -> None:
     if not BS4:
         print("  beautifulsoup4 not installed — falling back to regex (no context labeling)")
         print("  Install with: python3 -m pip install beautifulsoup4")
+    if PLAYWRIGHT:
+        print("  Playwright available — using headless browser for JS-rendered pages")
+    else:
+        print("  Playwright not installed — static HTML only (may miss images on JS-heavy sites)")
+        print("  Install: python3 -m pip install playwright && python3 -m playwright install chromium")
 
     counts: dict[str, int] = {}
 
     for page in BLOG_PAGES:
         try:
-            html = fetch(page)
+            html = fetch(page, rendered=True)
         except Exception as e:
             print(f"  skip {page}: {e}")
             continue

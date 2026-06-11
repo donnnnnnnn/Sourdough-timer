@@ -199,7 +199,19 @@ def main() -> None:
                     help="Discard single images below this label confidence")
     args = ap.parse_args()
 
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        sys.exit("ANTHROPIC_API_KEY is not set. Get a key at "
+                 "console.anthropic.com (billing must be active), then:\n"
+                 "  export ANTHROPIC_API_KEY=sk-ant-...")
     client = anthropic.Anthropic()
+    # Preflight: one cheap call so a bad key fails once, not once per image.
+    try:
+        client.messages.create(model=args.model, max_tokens=1,
+                               messages=[{"role": "user", "content": "hi"}])
+    except anthropic.AuthenticationError:
+        sys.exit("API key was rejected (401). Check that the key is active "
+                 "and your workspace has billing enabled at "
+                 "console.anthropic.com.")
     contexts: dict[str, str] = {}
     if args.context_file and os.path.exists(args.context_file):
         contexts = json.loads(Path(args.context_file).read_text())

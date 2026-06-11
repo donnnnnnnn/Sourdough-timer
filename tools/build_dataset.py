@@ -303,20 +303,27 @@ BLOG_PAGES = [
     # Busby's Bakery — dense/gummy crumb troubleshooting (under_fermented heavy)
     "https://www.busbysbakery.com/why-is-my-sourdough-dense/",
     "https://www.busbysbakery.com/sourdough-underproofed/",
+    "https://www.busbysbakery.com/overproofed-sourdough/",
     # The Clever Carrot — troubleshooting guides
     "https://www.theclevercarrot.com/2019/03/sourdough-bread-troubleshooting-guide/",
     "https://www.theclevercarrot.com/2021/04/why-is-my-sourdough-dense/",
+    "https://www.theclevercarrot.com/2020/08/over-proofed-sourdough/",
     # Brod & Taylor — updated URLs
     "https://brodandtaylor.com/blogs/recipes/proofing-bread",
     "https://brodandtaylor.com/blogs/recipes/sourdough-bread-problems-and-solutions",
-    # Pantry Mama — dense/gummy crumb troubleshooting
+    # Pantry Mama — under and over fermented troubleshooting
     "https://www.pantrymama.com/sourdough-bread-dense/",
     "https://www.pantrymama.com/underproofed-sourdough/",
-    # Little Spoon Farm — underproofed diagnosis
+    "https://www.pantrymama.com/overproofed-sourdough/",
+    # Little Spoon Farm — troubleshooting
     "https://littlespoonfarm.com/sourdough-bread-troubleshooting/",
-    # True Sourdough — dense bread causes (under_fermented)
+    "https://littlespoonfarm.com/overproofed-sourdough/",
+    # True Sourdough — dense and over bread causes
     "https://truesourdough.com/sourdough-bread-too-dense/",
     "https://truesourdough.com/underproofed-sourdough/",
+    "https://truesourdough.com/overproofed-sourdough/",
+    # The Sourdough Journey overproofed guide
+    "https://thesourdoughjourney.com/over-proofed-sourdough-guide/",
 ]
 
 # Pages where keyword scoring is unreliable — override with known label.
@@ -327,14 +334,20 @@ HARDCODED_PAGE_LABELS: dict[str, str | None] = {
     "https://www.theperfectloaf.com/beginners-sourdough-bread/": "properly_fermented",
     "https://www.busbysbakery.com/why-is-my-sourdough-dense/": "under_fermented",
     "https://www.busbysbakery.com/sourdough-underproofed/": "under_fermented",
+    "https://www.busbysbakery.com/overproofed-sourdough/": "over_fermented",
     "https://thesourdoughjourney.com/fixing-underproofed-sourdough/": "under_fermented",
     "https://thesourdoughjourney.com/fixing-overproofed-sourdough/": "over_fermented",
+    "https://thesourdoughjourney.com/over-proofed-sourdough-guide/": "over_fermented",
     "https://www.pantrymama.com/sourdough-bread-dense/": "under_fermented",
     "https://www.pantrymama.com/underproofed-sourdough/": "under_fermented",
+    "https://www.pantrymama.com/overproofed-sourdough/": "over_fermented",
     "https://littlespoonfarm.com/sourdough-bread-troubleshooting/": "under_fermented",
+    "https://littlespoonfarm.com/overproofed-sourdough/": "over_fermented",
     "https://truesourdough.com/sourdough-bread-too-dense/": "under_fermented",
     "https://truesourdough.com/underproofed-sourdough/": "under_fermented",
+    "https://truesourdough.com/overproofed-sourdough/": "over_fermented",
     "https://www.theclevercarrot.com/2021/04/why-is-my-sourdough-dense/": "under_fermented",
+    "https://www.theclevercarrot.com/2020/08/over-proofed-sourdough/": "over_fermented",
 }
 
 IMG_RE = re.compile(r'<img[^>]+(?:src|data-src)=["\']([^"\']+)["\']', re.I)

@@ -14,6 +14,9 @@ Stages:
   3. PDFs     — image extraction with nearby-text labeling
   4. Train    — fine-tune MobileNetV3Small, export crumb_classifier.tflite
 
+After scraping, clean the dataset with tools/curate_dataset.py (Claude vision
+filters non-crumb images, splits labeled infographics, fixes labels).
+
 Skip stages with --no-reddit / --no-blogs / --no-pdf / --no-train
 """
 import argparse
@@ -359,6 +362,12 @@ def discover_pages() -> list[tuple[str, str | None]]:
                 if label:
                     discovered.append((href, label))
                     found += 1
+                elif re.search(r"crumb|proof|ferment|troubleshoot|bulk",
+                               link_text + " " + href, re.I):
+                    # neutral guide page — scrape with no preset label;
+                    # curate_dataset.py assigns per-image labels later
+                    discovered.append((href, None))
+                    found += 1
 
             print(f"  search '{q}' @ {base} → {found} labeled links")
             time.sleep(1)
@@ -370,6 +379,9 @@ def discover_pages() -> list[tuple[str, str | None]]:
 IMG_RE = re.compile(r'<img[^>]+(?:src|data-src)=["\']([^"\']+)["\']', re.I)
 MIN_BYTES = 8_000
 _SKIP_SRC_RE = re.compile(r'\.(svg|gif|ico|css|js|woff2?|ttf|eot)(\?|$)', re.I)
+
+# filename -> page context (alt text, caption, page URL) for curate_dataset.py
+IMAGE_CONTEXTS: dict[str, str] = {}
 
 
 def _img_srcs_from_tag(tag) -> list[str]:
@@ -495,6 +507,13 @@ def scrape_page(page: str, page_default: str | None, outdir: str, seen: set, cou
                     f.write(data)
                 counts[label] = counts.get(label, 0) + 1
                 labeled += 1
+                alt = tag.get("alt") or ""
+                cap = ""
+                fig = tag.find_parent("figure")
+                if fig and fig.find("figcaption"):
+                    cap = fig.find("figcaption").get_text(" ", strip=True)
+                IMAGE_CONTEXTS[name] = " | ".join(
+                    x for x in [alt, cap, f"from {page}"] if x)
             except Exception as ex:
                 print(f"    failed {full}: {ex}")
             time.sleep(0.3)
@@ -521,6 +540,11 @@ def run_blogs(outdir: str, seen: set) -> None:
             scrape_page(page, label, outdir, seen, counts)
 
     print("Blog totals:", counts)
+
+    ctx_path = os.path.join(outdir, "contexts.json")
+    with open(ctx_path, "w") as f:
+        json.dump(IMAGE_CONTEXTS, f, indent=1)
+    print(f"Saved image contexts to {ctx_path}")
 
 
 # ── Stage 3: PDFs ───────────────────────────────────────────────────────────────────────────

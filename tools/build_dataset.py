@@ -354,7 +354,13 @@ def run_blogs(outdir: str, seen: set) -> None:
             imgs = soup.find_all("img")
             page_u, page_o, page_g = score_text(soup.get_text())
             page_default = majority_label(page_u, page_o, page_g)
+            # fallback: score the URL itself (e.g. "open-crumb-sourdough" → properly_fermented)
+            if page_default is None:
+                url_u, url_o, url_g = score_text(page)
+                page_default = majority_label(url_u, url_o, url_g)
+            print(f"    page scores u={page_u} o={page_o} g={page_g} → default={page_default} | {len(imgs)} imgs found")
             labeled = 0
+            skipped_no_label = 0
             for tag in imgs:
                 src = tag.get("src") or tag.get("data-src") or ""
                 if not re.search(r"\.(jpe?g|png|webp)", src, re.I):
@@ -362,6 +368,7 @@ def run_blogs(outdir: str, seen: set) -> None:
                 full = urllib.parse.urljoin(page, src)
                 label = label_from_context(tag, page) or page_default
                 if label is None:
+                    skipped_no_label += 1
                     continue
                 dest_dir = os.path.join(outdir, label)
                 os.makedirs(dest_dir, exist_ok=True)
@@ -385,7 +392,7 @@ def run_blogs(outdir: str, seen: set) -> None:
                 except Exception as ex:
                     print(f"    failed {full}: {ex}")
                 time.sleep(0.4)
-            print(f"  {page} → {labeled} labeled images")
+            print(f"  {page} → {labeled} labeled images (skipped {skipped_no_label} with no label)")
         else:
             page_u, page_o, page_g = score_text(html[:5000])
             label = majority_label(page_u, page_o, page_g)

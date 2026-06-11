@@ -297,15 +297,24 @@ HARDCODED_PAGE_LABELS: dict[str, str | None] = {
 # Sites to search dynamically — finds real article URLs instead of guessing slugs.
 # Format: (base_url, search_path_template, queries)
 # WordPress uses /?s={q}, Shopify uses /search?q={q}
+SEARCH_QUERIES = [
+    "overproofed", "overproved", "overfermented", "over fermented",
+    "underproofed", "underproved", "underfermented", "under fermented",
+    "dense crumb", "gummy crumb", "tight crumb",
+    "crumb evaluation", "crumb reading", "crumb debugging",
+    "crumb troubleshooting", "crumb chart", "crumb structure", "open crumb",
+    "bulk fermentation", "troubleshooting",
+]
+
 SEARCH_SITES: list[tuple[str, str, list[str]]] = [
-    ("https://www.pantrymama.com",      "/?s={q}",        ["overproofed sourdough", "underproofed sourdough", "sourdough crumb"]),
-    ("https://www.busbysbakery.com",    "/?s={q}",        ["overproofed sourdough", "underproofed sourdough", "dense sourdough"]),
-    ("https://truesourdough.com",       "/?s={q}",        ["overproofed", "underproofed", "dense crumb"]),
-    ("https://www.theclevercarrot.com", "/?s={q}",        ["overproofed sourdough", "underproofed sourdough"]),
-    ("https://littlespoonfarm.com",     "/?s={q}",        ["overproofed sourdough", "underproofed sourdough"]),
-    ("https://thesourdoughjourney.com", "/?s={q}",        ["overproofed", "underproofed", "crumb"]),
-    ("https://brodandtaylor.com",       "/search?q={q}",  ["overproofed sourdough", "underproofed sourdough"]),
-    ("https://www.theperfectloaf.com",  "/?s={q}",        ["overproofed", "underproofed", "dense crumb"]),
+    ("https://www.pantrymama.com",      "/?s={q}",        SEARCH_QUERIES),
+    ("https://www.busbysbakery.com",    "/?s={q}",        SEARCH_QUERIES),
+    ("https://truesourdough.com",       "/?s={q}",        SEARCH_QUERIES),
+    ("https://www.theclevercarrot.com", "/?s={q}",        SEARCH_QUERIES),
+    ("https://littlespoonfarm.com",     "/?s={q}",        SEARCH_QUERIES),
+    ("https://thesourdoughjourney.com", "/?s={q}",        SEARCH_QUERIES),
+    ("https://brodandtaylor.com",       "/search?q={q}",  SEARCH_QUERIES),
+    ("https://www.theperfectloaf.com",  "/?s={q}",        SEARCH_QUERIES),
 ]
 
 

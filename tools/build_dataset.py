@@ -119,7 +119,7 @@ def fetch(url: str, *, is_json: bool = False, rendered: bool = False):
             browser = _get_browser()
             page = browser.new_page()
             page.set_extra_http_headers({"User-Agent": UA["User-Agent"]})
-            page.goto(url, wait_until="networkidle", timeout=30000)
+            page.goto(url, wait_until="networkidle", timeout=45000)
             html = page.content()
             page.close()
             return html
@@ -279,33 +279,47 @@ except ImportError:
     BS4 = False
 
 BLOG_PAGES = [
-    # Bulk fermentation & proofing — mixed labels, good scoring targets
+    # Sourdough Journey — bulk fermentation & proofing, rich keyword content
     "https://thesourdoughjourney.com/the-ultimate-sourdough-bulk-fermentation-guide/",
     "https://thesourdoughjourney.com/faq-over-under-proofed/",
-    "https://thesourdoughjourney.com/tools/",
     "https://thesourdoughjourney.com/what-is-a-good-sourdough-crumb/",
     "https://thesourdoughjourney.com/how-to-read-sourdough-crumb/",
-    # The Perfect Loaf — celebrates good crumb heavily, also has under-proofed diagnosis
+    "https://thesourdoughjourney.com/fixing-underproofed-sourdough/",
+    "https://thesourdoughjourney.com/fixing-overproofed-sourdough/",
+    # The Perfect Loaf
     "https://www.theperfectloaf.com/guides/proofing-bread-dough/",
     "https://www.theperfectloaf.com/how-to-use-the-dough-poke-test/",
     "https://www.theperfectloaf.com/beginners-sourdough-bread/",
     "https://www.theperfectloaf.com/guides/crumb-structure/",
-    # King Arthur — good beginner guides with ideal crumb photos
+    # King Arthur — recipe pages use neutral language, label hardcoded below
     "https://www.kingarthurbaking.com/learn/guides/sourdough",
-    "https://www.kingarthurbaking.com/blog/tag/sourdough-troubleshooting",
     "https://www.kingarthurbaking.com/recipes/sourdough-bread-recipe",
-    # Challenger — proofing levels comparison, explicitly labeled
+    "https://www.kingarthurbaking.com/blog/2021/10/01/sourdough-bread-common-mistakes",
+    # Challenger — explicit proofing-level comparison photos
     "https://challengerbreadware.com/bread-techniques/identifying-proofing-levels-in-baked-bread/",
-    # The Fresh Loaf community — crumb-reading threads with expert commentary
+    # The Fresh Loaf — static pages load fine via urllib fallback
     "https://www.thefreshloaf.com/node/71162/read-my-crumb-please",
-    "https://www.thefreshloaf.com/node/69612/crumb-analysis",
-    # Full Proof Baking — known for open crumb tutorials (properly_fermented heavy)
-    "https://www.fullproofbaking.com/open-crumb-sourdough/",
-    "https://www.fullproofbaking.com/best-bread-crumb-structure/",
-    # Brod & Taylor — under-proofed diagnosis content
-    "https://brodandtaylor.com/blogs/recipes/how-to-tell-if-bread-is-proofed",
-    "https://brodandtaylor.com/blogs/recipes/sourdough-troubleshooting",
+    # Busby's Bakery — dense/gummy crumb troubleshooting (under_fermented heavy)
+    "https://www.busbysbakery.com/why-is-my-sourdough-dense/",
+    "https://www.busbysbakery.com/sourdough-underproofed/",
+    # The Clever Carrot — troubleshooting guide
+    "https://www.theclevercarrot.com/2019/03/sourdough-bread-troubleshooting-guide/",
+    # Brod & Taylor — updated URLs
+    "https://brodandtaylor.com/blogs/recipes/proofing-bread",
+    "https://brodandtaylor.com/blogs/recipes/sourdough-bread-problems-and-solutions",
 ]
+
+# Pages where keyword scoring is unreliable — override with known label.
+# Use None to skip a page entirely (e.g. tag index pages with no photos).
+HARDCODED_PAGE_LABELS: dict[str, str | None] = {
+    "https://www.kingarthurbaking.com/learn/guides/sourdough": "properly_fermented",
+    "https://www.kingarthurbaking.com/recipes/sourdough-bread-recipe": "properly_fermented",
+    "https://www.theperfectloaf.com/beginners-sourdough-bread/": "properly_fermented",
+    "https://www.busbysbakery.com/why-is-my-sourdough-dense/": "under_fermented",
+    "https://www.busbysbakery.com/sourdough-underproofed/": "under_fermented",
+    "https://thesourdoughjourney.com/fixing-underproofed-sourdough/": "under_fermented",
+    "https://thesourdoughjourney.com/fixing-overproofed-sourdough/": "over_fermented",
+}
 
 IMG_RE = re.compile(r'<img[^>]+(?:src|data-src)=["\']([^"\']+)["\']', re.I)
 MIN_BYTES = 15_000  # lowered from 25KB to catch more real photos
@@ -383,13 +397,21 @@ def run_blogs(outdir: str, seen: set) -> None:
         if BS4:
             soup = BeautifulSoup(html, "html.parser")
             imgs = soup.find_all("img")
-            page_u, page_o, page_g = score_text(soup.get_text())
-            page_default = majority_label(page_u, page_o, page_g)
-            # fallback: score the URL itself (e.g. "open-crumb" → properly_fermented)
-            if page_default is None:
-                url_u, url_o, url_g = score_text(page)
-                page_default = majority_label(url_u, url_o, url_g)
+            # hardcoded label wins over scoring (None means skip page)
+            if page in HARDCODED_PAGE_LABELS:
+                page_default = HARDCODED_PAGE_LABELS[page]
+                page_u = page_o = page_g = -1  # sentinel for display
+            else:
+                page_u, page_o, page_g = score_text(soup.get_text())
+                page_default = majority_label(page_u, page_o, page_g)
+                # fallback: score the URL slug
+                if page_default is None:
+                    url_u, url_o, url_g = score_text(page)
+                    page_default = majority_label(url_u, url_o, url_g)
             print(f"    page scores u={page_u} o={page_o} g={page_g} → default={page_default} | {len(imgs)} imgs found")
+            if page_default is None:
+                print(f"  skip {page} — no label signal")
+                continue
             labeled = 0
             skipped_no_label = 0
             # also gather <source> tags inside <picture> elements

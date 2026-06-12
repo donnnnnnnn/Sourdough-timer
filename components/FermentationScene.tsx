@@ -216,9 +216,9 @@ function ProteaseEnzyme({ size }: { size: number }) {
   const lobeSize = size * 0.6;
   return (
     <View style={{ width: size, height: size, justifyContent: 'center', alignItems: 'center' }}>
-      <View style={{ flexDirection: 'row', gap: -lobeSize * 0.2 }}>
+      <View style={{ flexDirection: 'row' }}>
         <View style={{ width: lobeSize, height: lobeSize, borderRadius: lobeSize / 2, backgroundColor: PROTEASE, opacity: 0.55 }} />
-        <View style={{ width: lobeSize * 0.8, height: lobeSize * 0.8, marginTop: lobeSize * 0.1, borderRadius: lobeSize * 0.4, backgroundColor: PROTEASE, opacity: 0.5 }} />
+        <View style={{ width: lobeSize * 0.8, height: lobeSize * 0.8, marginTop: lobeSize * 0.1, marginLeft: -lobeSize * 0.2, borderRadius: lobeSize * 0.4, backgroundColor: PROTEASE, opacity: 0.5 }} />
       </View>
     </View>
   );
@@ -250,15 +250,16 @@ function Floater({
   const t = useSweep(seed, period);
   if (emerge <= 0.001) return null;
   const dir = seed % 2 === 0 ? 1 : -1;
+  const e = Math.max(0.15, emerge); // ensure minimum visibility once emerged
   return (
     <View pointerEvents="none" style={{ position: 'absolute', left: left as `${number}%`, top: top as `${number}%`, width: size, height: size }}>
       <Animated.View style={{
-        opacity: 0.35 + 0.65 * emerge,
+        opacity: 0.4 + 0.6 * e,
         transform: [
           { translateX: t.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, range * dir, 0] }) },
           { translateY: t.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, -range * 0.7, 0] }) },
           { rotate: t.interpolate({ inputRange: [0, 1], outputRange: ['0deg', `${dir * 10}deg`] }) },
-          { scale: 0.4 + 0.6 * emerge },
+          { scale: 0.5 + 0.5 * e },
         ],
       }}>
         {children}

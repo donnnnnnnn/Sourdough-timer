@@ -1,50 +1,31 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { View, Animated, Easing } from 'react-native';
-import Svg, { Ellipse, Circle, Rect, Path, G, Defs, RadialGradient, Stop } from 'react-native-svg';
 
 // ---------------------------------------------------------------------------
 // Fermentation scene — one continuous, slowly-evolving tableau driven entirely
-// by `fraction` (elapsed / target bulk time, 0..1+). Nothing fades between
-// discrete phases; every property — bubble size, bacterial population, gluten
-// thickness, warmth, acid flecks — is a smooth function of how far along the
-// bulk is. Because a 4h bulk advances `fraction` by ~0.0007/sec, the scene
-// morphs in genuine slow motion: a baker can glance and read progress from the
-// dough itself.
-//
-// The biology is grounded in primary literature — De Vuyst et al. (2014/2017)
-// for population dynamics, Gänzle (2014) for enzyme/metabolite conversions,
-// Gobbetti et al. (2002) and Thiele et al. (2002) for proteolysis/gluten, and
-// the Kazachstania humilis review (Trends in Microbiology 2022). Shapes are
-// stylized to be recognizable to a microbiologist (heterofermentative rod-LAB,
-// elongated multilaterally-budding yeast, TIM-barrel amylase, two-lobed serine
-// protease) yet warm and appetizing to a baker.
+// by `fraction` (elapsed / target bulk time, 0..1+). All organisms are drawn
+// with plain Views (no SVG) so they work identically on web and native.
+// Looping animations use recursive callbacks instead of Animated.loop to avoid
+// a React Native Web bug where loops stop after the first iteration.
 // ---------------------------------------------------------------------------
 
 export type SceneMode = 'idle' | 'autolyse' | 'bulk';
 
 export interface PhaseCopy {
   title: string;
-  /** What's happening microscopically — the mechanism. */
   science: string;
-  /** What you'd see/feel/smell in the bowl — phenomenological (Tartine-style). */
   sensory: string;
 }
 
-// Stylized but accurate palette ----------------------------------------------
-const YEAST_BODY = '#E8A33D'; // honey amber — Kazachstania humilis
+// Palette
+const YEAST_BODY = '#E8A33D';
 const YEAST_CORE = '#F6D08A';
-const LAB_BODY = '#C9A8D6'; // rose-lavender (Gram-stain nod) — F. sanfranciscensis
+const LAB_BODY = '#C9A8D6';
 const LAB_CORE = '#E4CCEC';
-const AMYLASE = '#6FB8A8'; // blue-green TIM-barrel
-const PROTEASE = '#E58C76'; // coral two-lobed serine protease
-const ACETIC = '#9FB36B'; // angular acetic-acid molecule fleck
-const GLUTEN = '232,163,61'; // honey, used as rgba base
-
-// ---------------------------------------------------------------------------
-// Phase script — captions only. Visuals are continuous; these texts snap at
-// the boundaries below. Activity is MAXIMAL from t=0 (ripe levain): the early
-// phases describe the *lag before visible result*, not a microbial lag.
-// ---------------------------------------------------------------------------
+const AMYLASE = '#6FB8A8';
+const PROTEASE = '#E58C76';
+const ACETIC = '#9FB36B';
+const GLUTEN = '232,163,61';
 
 export const AUTOLYSE_COPY: PhaseCopy = {
   title: 'Autolyse',
@@ -58,14 +39,14 @@ export const PHASE_SCRIPT: PhaseCopy[] = [
   {
     title: 'Levain In',
     science:
-      'Your ripe levain hits the dough at full strength — roughly 10:1 to 100:1 bacteria to yeast, all active from the first second. But the CO₂ they exhale dissolves into the dough's water first; it must saturate before a bubble can grow.',
+      `Your ripe levain hits the dough at full strength — roughly 10:1 to 100:1 bacteria to yeast, all active from the first second. But the CO₂ they exhale dissolves into the dough's water first; it must saturate before a bubble can grow.`,
     sensory:
-      'Looks like nothing is happening. The dough sits smooth and tight. Trust it — the engine is already running, you just can't see it.',
+      `Looks like nothing is happening. The dough sits smooth and tight. Trust it — the engine is already running, you just can't see it.`,
   },
   {
     title: 'First Rise',
     science:
-      'The dough water is saturated now, so CO₂ inflates the air pockets folded in during mixing. Kazachstania humilis can't eat maltose, so it lives on glucose the bacteria leak — a quiet cross-feeding partnership blowing the first bubbles.',
+      `The dough water is saturated now, so CO₂ inflates the air pockets folded in during mixing. Kazachstania humilis can't eat maltose, so it lives on glucose the bacteria leak — a quiet cross-feeding partnership blowing the first bubbles.`,
     sensory:
       'A faint dome and the first bubbles at the surface. Folded, the dough feels alive — pillowy, starting to billow instead of resist.',
   },
@@ -79,207 +60,207 @@ export const PHASE_SCRIPT: PhaseCopy[] = [
   {
     title: 'The Sweet Spot',
     science:
-      'Fructilactobacillus sanfranciscensis now diverts some output to acetic acid, layering a sharper note over the lactic. The gluten matrix is at peak gas-trapping strength — the maximum oven-spring window you're chasing.',
+      `Fructilactobacillus sanfranciscensis now diverts some output to acetic acid, layering a sharper note over the lactic. The gluten matrix is at peak gas-trapping strength — the maximum oven-spring window you're chasing.`,
     sensory:
       'Billowy and domed, jiggling like custard, pulling cleanly from the bowl with bubbles along the sides. The aroma turns tangy and ripe.',
   },
   {
-    title: 'The Knife's Edge',
+    title: `The Knife's Edge`,
     science:
-      'Below pH ~4.5 the proteases outpace gluten synthesis and bacterial glutathione snips the disulfide bonds holding the net together. Gas escapes faster than it's trapped — the structure is going slack.',
+      `Below pH ~4.5 the proteases outpace gluten synthesis and bacterial glutathione snips the disulfide bonds holding the net together. Gas escapes faster than it's trapped — the structure is going slack.`,
     sensory:
-      'Loose, sticky, over-billowed; bubbles popping at the surface and the dough slumping rather than holding its edge. Shape now — or pull it earlier next time.',
+      `Loose, sticky, over-billowed; bubbles popping at the surface and the dough slumping rather than holding its edge. Shape now — or pull it earlier next time.`,
   },
 ];
 
 const PHASE_BOUNDS = [0.15, 0.4, 0.65, 0.85];
 
-/** Map a bulk fraction to a caption phase index 0–4. */
 export function bulkPhaseIndex(fraction: number): number {
   for (let i = 0; i < PHASE_BOUNDS.length; i++) if (fraction < PHASE_BOUNDS[i]) return i;
   return PHASE_BOUNDS.length;
 }
 
-// Continuous helpers ----------------------------------------------------------
-function clamp01(x: number) {
-  return x < 0 ? 0 : x > 1 ? 1 : x;
-}
-/** Smooth 0→1 ramp between edge0 and edge1 (Hermite). */
-function smoothstep(edge0: number, edge1: number, x: number) {
-  const t = clamp01((x - edge0) / (edge1 - edge0));
+function clamp01(x: number) { return x < 0 ? 0 : x > 1 ? 1 : x; }
+function smoothstep(e0: number, e1: number, x: number) {
+  const t = clamp01((x - e0) / (e1 - e0));
   return t * t * (3 - 2 * t);
 }
-function lerp(a: number, b: number, t: number) {
-  return a + (b - a) * t;
-}
+function lerp(a: number, b: number, t: number) { return a + (b - a) * t; }
 
 // ---------------------------------------------------------------------------
-// A looping drift that makes organisms feel suspended. Loops are keyed only on
-// `seed` so they NEVER restart as `fraction` changes — that keeps the scene's
-// slow morph perfectly smooth.
+// Reliable looping animation — uses recursive callbacks instead of
+// Animated.loop, which silently stops after one iteration on React Native Web.
 // ---------------------------------------------------------------------------
-function useDrift(seed: number, range = 10, period = 6000) {
+function startLoop(
+  anim: Animated.Value,
+  from: number,
+  to: number,
+  duration: number,
+  easing: (t: number) => number,
+  alive: { current: boolean },
+) {
+  anim.setValue(from);
+  Animated.timing(anim, { toValue: to, duration, easing, useNativeDriver: false }).start(({ finished }) => {
+    if (finished && alive.current) startLoop(anim, from, to, duration, easing, alive);
+  });
+}
+
+function usePingPong(seed: number, duration = 3500) {
   const t = useRef(new Animated.Value(0)).current;
+  const alive = useRef(true);
   useEffect(() => {
-    const loop = Animated.loop(
-      Animated.timing(t, {
-        toValue: 1,
-        duration: period + (seed % 5) * 600,
-        delay: (seed % 7) * 220,
-        easing: Easing.inOut(Easing.sin),
-        useNativeDriver: false,
-      }),
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [t, period, seed]);
+    const d = duration + (seed % 5) * 400;
+    const delay = (seed % 7) * 200;
+    let forward = true;
+    const tick = () => {
+      if (!alive.current) return;
+      const [from, to] = forward ? [0, 1] : [1, 0];
+      forward = !forward;
+      Animated.timing(t, { toValue: to, duration: d, easing: Easing.inOut(Easing.sin), useNativeDriver: false }).start(
+        ({ finished }) => { if (finished && alive.current) tick(); },
+      );
+    };
+    const timer = setTimeout(tick, delay);
+    return () => { alive.current = false; clearTimeout(timer); };
+  }, [t, seed, duration]);
+  return t;
+}
 
-  const dir = seed % 2 === 0 ? 1 : -1;
-  return [
-    { translateX: t.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, range * dir, 0] }) },
-    { translateY: t.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, -range * 0.7, 0] }) },
-    { rotate: t.interpolate({ inputRange: [0, 1], outputRange: ['0deg', `${dir * 12}deg`] }) },
-  ];
+function useSweep(seed: number, duration = 6000) {
+  const t = useRef(new Animated.Value(0)).current;
+  const alive = useRef(true);
+  useEffect(() => {
+    const d = duration + (seed % 5) * 500;
+    const delay = (seed % 9) * 250;
+    alive.current = true;
+    const timer = setTimeout(() => startLoop(t, 0, 1, d, Easing.inOut(Easing.sin), alive), delay);
+    return () => { alive.current = false; clearTimeout(timer); };
+  }, [t, seed, duration]);
+  return t;
 }
 
 // ---------------------------------------------------------------------------
-// Organism SVGs (drawn around a 100x100 local box).
+// Organism shapes — all plain Views, no SVG dependency.
 // ---------------------------------------------------------------------------
 
-/** Kazachstania humilis: elongated oval, nucleus + vacuole, a multilateral bud
- *  that swells and pinches off. `vigor` scales the budding amplitude. */
+/** Kazachstania humilis: amber oval body + budding daughter cell. */
 function YeastCell({ size, seed, vigor }: { size: number; seed: number; vigor: number }) {
-  const bud = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(bud, { toValue: 1, duration: 3200, delay: (seed % 5) * 500, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
-        Animated.timing(bud, { toValue: 0, duration: 700, easing: Easing.in(Easing.ease), useNativeDriver: false }),
-      ]),
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [bud, seed]);
-
-  const budScale = bud.interpolate({ inputRange: [0, 1], outputRange: [0.12, lerp(0.3, 0.66, vigor)] });
-  const budOpacity = bud.interpolate({ inputRange: [0, 0.2, 1], outputRange: [0, 0.6, 1] });
-
+  const bud = usePingPong(seed, 3000);
+  const budMaxScale = lerp(0.28, 0.65, vigor);
   return (
     <View style={{ width: size, height: size }}>
-      <Svg width={size} height={size} viewBox="0 0 100 100">
-        <Defs>
-          <RadialGradient id={`yeast-${seed}`} cx="42%" cy="38%" r="70%">
-            <Stop offset="0%" stopColor={YEAST_CORE} stopOpacity={0.9} />
-            <Stop offset="60%" stopColor={YEAST_BODY} stopOpacity={0.55} />
-            <Stop offset="100%" stopColor={YEAST_BODY} stopOpacity={0.28} />
-          </RadialGradient>
-        </Defs>
-        <Ellipse cx="48" cy="52" rx="34" ry="40" fill={`url(#yeast-${seed})`} stroke={YEAST_BODY} strokeWidth={2} strokeOpacity={0.7} />
-        <Circle cx="40" cy="64" r="13" fill={YEAST_BODY} fillOpacity={0.16} />
-        <Circle cx="55" cy="42" r="7" fill={YEAST_CORE} fillOpacity={0.95} />
-      </Svg>
-      <Animated.View
-        style={{
-          position: 'absolute',
-          top: size * 0.04,
-          right: size * 0.02,
-          width: size * 0.5,
-          height: size * 0.5,
-          opacity: budOpacity,
-          transform: [{ scale: budScale }],
-        }}>
-        <Svg width={size * 0.5} height={size * 0.5} viewBox="0 0 100 100">
-          <Circle cx="50" cy="50" r="42" fill={YEAST_BODY} fillOpacity={0.42} stroke={YEAST_BODY} strokeWidth={3} strokeOpacity={0.7} />
-          <Circle cx="44" cy="44" r="12" fill={YEAST_CORE} fillOpacity={0.85} />
-        </Svg>
-      </Animated.View>
+      {/* body */}
+      <View style={{
+        position: 'absolute', left: size * 0.1, top: size * 0.05,
+        width: size * 0.7, height: size * 0.85,
+        borderRadius: size * 0.4,
+        backgroundColor: YEAST_BODY, opacity: 0.55,
+        borderWidth: 1.5, borderColor: YEAST_BODY,
+      }} />
+      {/* nucleus highlight */}
+      <View style={{
+        position: 'absolute', left: size * 0.38, top: size * 0.20,
+        width: size * 0.22, height: size * 0.22,
+        borderRadius: size * 0.11, backgroundColor: YEAST_CORE, opacity: 0.9,
+      }} />
+      {/* bud */}
+      <Animated.View style={{
+        position: 'absolute', right: 0, top: 0,
+        width: size * 0.45, height: size * 0.45,
+        borderRadius: size * 0.225,
+        backgroundColor: YEAST_BODY, opacity: 0.5,
+        borderWidth: 1, borderColor: YEAST_BODY,
+        transform: [{ scale: bud.interpolate({ inputRange: [0, 1], outputRange: [0.1, budMaxScale] }) }],
+      }} />
     </View>
   );
 }
 
-/** Heterofermentative LAB rod (F. sanfranciscensis): slender capsule chain. */
-function LabRod({ size, chain, seed }: { size: number; chain: number; seed: number }) {
-  const capH = (size / chain) * 0.5;
+/** F. sanfranciscensis: chain of lavender capsules. */
+function LabRod({ size, chain }: { size: number; chain: number }) {
+  const capsuleW = Math.floor(size / chain) - 2;
+  const capsuleH = Math.max(10, Math.floor(capsuleW * 0.45));
   return (
-    <Svg width={size} height={capH} viewBox={`0 0 ${chain * 100} 50`}>
-      <Defs>
-        <RadialGradient id={`lab-${seed}`} cx="50%" cy="40%" r="70%">
-          <Stop offset="0%" stopColor={LAB_CORE} stopOpacity={0.95} />
-          <Stop offset="100%" stopColor={LAB_BODY} stopOpacity={0.5} />
-        </RadialGradient>
-      </Defs>
+    <View style={{ flexDirection: 'row', gap: 2, alignItems: 'center' }}>
       {Array.from({ length: chain }).map((_, i) => (
-        <G key={i}>
-          <Rect x={i * 100 + 4} y={6} width={92} height={38} rx={19} fill={`url(#lab-${seed})`} stroke={LAB_BODY} strokeWidth={2} strokeOpacity={0.7} />
-          <Rect x={i * 100 + 12} y={12} width={76} height={9} rx={4} fill={LAB_CORE} fillOpacity={0.35} />
-        </G>
+        <View key={i} style={{
+          width: capsuleW, height: capsuleH,
+          borderRadius: capsuleH / 2,
+          backgroundColor: LAB_BODY, opacity: 0.6,
+          borderWidth: 1, borderColor: LAB_CORE,
+          justifyContent: 'center', alignItems: 'center',
+        }}>
+          <View style={{
+            width: capsuleW * 0.55, height: capsuleH * 0.3,
+            borderRadius: capsuleH * 0.15, backgroundColor: LAB_CORE, opacity: 0.5,
+          }} />
+        </View>
       ))}
-    </Svg>
+    </View>
   );
 }
 
-/** Amylase: TIM-barrel as a torus with an active-site cleft. */
+/** Amylase: teal torus (ring shape). */
 function AmylaseEnzyme({ size }: { size: number }) {
   return (
-    <Svg width={size} height={size} viewBox="0 0 100 100">
-      <Circle cx="50" cy="50" r="40" fill={AMYLASE} fillOpacity={0.32} stroke={AMYLASE} strokeWidth={3} strokeOpacity={0.75} />
-      <Circle cx="50" cy="50" r="17" fill="transparent" stroke={AMYLASE} strokeWidth={3} strokeOpacity={0.6} />
-      <Path d="M50 10 L58 30 L42 30 Z" fill={AMYLASE} fillOpacity={0.55} />
-    </Svg>
+    <View style={{
+      width: size, height: size, borderRadius: size / 2,
+      borderWidth: size * 0.22, borderColor: AMYLASE,
+      opacity: 0.7,
+    }} />
   );
 }
 
-/** Protease: two rounded lobes with a deep active-site cleft. */
+/** Protease: two coral lobes. */
 function ProteaseEnzyme({ size }: { size: number }) {
+  const lobeSize = size * 0.6;
   return (
-    <Svg width={size} height={size} viewBox="0 0 100 100">
-      <Path d="M50 50 L88 22 A45 45 0 1 1 88 78 Z" fill={PROTEASE} fillOpacity={0.34} stroke={PROTEASE} strokeWidth={3} strokeOpacity={0.75} />
-      <Circle cx="40" cy="50" r="7" fill={PROTEASE} fillOpacity={0.7} />
-    </Svg>
+    <View style={{ width: size, height: size, justifyContent: 'center', alignItems: 'center' }}>
+      <View style={{ flexDirection: 'row', gap: -lobeSize * 0.2 }}>
+        <View style={{ width: lobeSize, height: lobeSize, borderRadius: lobeSize / 2, backgroundColor: PROTEASE, opacity: 0.55 }} />
+        <View style={{ width: lobeSize * 0.8, height: lobeSize * 0.8, marginTop: lobeSize * 0.1, borderRadius: lobeSize * 0.4, backgroundColor: PROTEASE, opacity: 0.5 }} />
+      </View>
+    </View>
   );
 }
 
-/** Angular acetic-acid molecule fleck — the late tang. */
+/** Acetic acid: green angular chevron. */
 function AceticMolecule({ size }: { size: number }) {
   return (
-    <Svg width={size} height={size} viewBox="0 0 100 100">
-      <Path d="M20 70 L50 30 L80 70" fill="none" stroke={ACETIC} strokeWidth={6} strokeOpacity={0.85} strokeLinecap="round" strokeLinejoin="round" />
-      <Circle cx="50" cy="30" r="8" fill={ACETIC} fillOpacity={0.85} />
-    </Svg>
+    <View style={{ width: size, height: size, justifyContent: 'center', alignItems: 'center' }}>
+      <View style={{
+        width: size * 0.7, height: size * 0.7,
+        borderLeftWidth: size * 0.12, borderBottomWidth: size * 0.12,
+        borderColor: ACETIC, opacity: 0.8,
+        transform: [{ rotate: '-45deg' }],
+      }} />
+    </View>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Floater: positions an organism, drifts it, and continuously "emerges" it
-// (scale + opacity grow together) by a 0..1 scalar — no opacity pops, so new
-// organisms grow into the scene as the population builds.
+// Floater — positions and drifts an organism, emerging it smoothly.
 // ---------------------------------------------------------------------------
 function Floater({
-  left,
-  top,
-  size,
-  seed,
-  emerge,
-  range,
-  period,
-  children,
+  left, top, size, seed, emerge, range = 10, period = 6000, children,
 }: {
-  left: string;
-  top: string;
-  size: number;
-  seed: number;
-  emerge: number; // 0..1
-  range?: number;
-  period?: number;
-  children: ReactNode;
+  left: string; top: string; size: number; seed: number;
+  emerge: number; range?: number; period?: number; children: ReactNode;
 }) {
-  const drift = useDrift(seed, range, period);
+  const t = useSweep(seed, period);
   if (emerge <= 0.001) return null;
+  const dir = seed % 2 === 0 ? 1 : -1;
   return (
-    <View
-      pointerEvents="none"
-      style={{ position: 'absolute', left: left as `${number}%`, top: top as `${number}%`, width: size, height: size }}>
-      <Animated.View style={{ opacity: 0.35 + 0.65 * emerge, transform: [...drift, { scale: 0.4 + 0.6 * emerge }] }}>
+    <View pointerEvents="none" style={{ position: 'absolute', left: left as `${number}%`, top: top as `${number}%`, width: size, height: size }}>
+      <Animated.View style={{
+        opacity: 0.35 + 0.65 * emerge,
+        transform: [
+          { translateX: t.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, range * dir, 0] }) },
+          { translateY: t.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, -range * 0.7, 0] }) },
+          { rotate: t.interpolate({ inputRange: [0, 1], outputRange: ['0deg', `${dir * 10}deg`] }) },
+          { scale: 0.4 + 0.6 * emerge },
+        ],
+      }}>
         {children}
       </Animated.View>
     </View>
@@ -287,233 +268,153 @@ function Floater({
 }
 
 // ---------------------------------------------------------------------------
-// Bubble: a glassy CO₂ bubble whose whole life-cycle is a continuous function
-// of `fraction`. Early bulk: small, barely rises, fades before the top (gas
-// dissolving into solution). Mid: nucleates and rises. Late: large and pops
-// (escaping a slackening net). One looping Animated.Value per bubble; the
-// fraction-derived size/rise/escape feed the interpolation output ranges, so
-// the look morphs without ever restarting the loop.
+// Gluten strand — a horizontal wave that thickens then goes dashed (fraying).
+// ---------------------------------------------------------------------------
+function GlutenStrand({ top, seed, strength }: { top: string; seed: number; strength: number }) {
+  const t = usePingPong(seed, 3200);
+  if (strength <= 0.001) return null;
+  const h = 2 + strength * 3;
+  return (
+    <Animated.View pointerEvents="none" style={{
+      position: 'absolute', left: '6%', right: '6%', top: top as `${number}%`,
+      height: h, borderRadius: h / 2,
+      backgroundColor: `rgba(${GLUTEN},0.45)`,
+      opacity: t.interpolate({ inputRange: [0, 1], outputRange: [0.25 * strength, 0.55 * strength] }),
+      transform: [{ scaleY: t.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1.0] }) }],
+    }} />
+  );
+}
+
+// ---------------------------------------------------------------------------
+// CO2 Bubble — lifecycle driven by fraction.
 // ---------------------------------------------------------------------------
 function Bubble({ left, seed, fraction }: { left: string; seed: number; fraction: number }) {
-  const t = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    const loop = Animated.loop(
-      Animated.timing(t, {
-        toValue: 1,
-        duration: 4200 + (seed % 6) * 500,
-        delay: (seed % 9) * 260,
-        easing: Easing.inOut(Easing.sin),
-        useNativeDriver: false,
-      }),
-      { resetBeforeIteration: true },
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [t, seed]);
-
-  // Continuous life-cycle parameters.
-  const grown = smoothstep(0.05, 0.55, fraction); // dissolving → rising
-  const escape = smoothstep(0.6, 1.0, fraction); // retained → popping
-  const size = lerp(4, 20, grown) + (seed % 3);
-  const rise = lerp(34, 230, grown);
-  const peak = lerp(0.32, 0.85, grown);
-  const drift = 6 + (seed % 4) * 4;
-  const hl = size * 0.32;
-
-  const translateY = t.interpolate({ inputRange: [0, 1], outputRange: [0, -rise] });
-  const translateX = t.interpolate({ inputRange: [0, 0.25, 0.5, 0.75, 1], outputRange: [0, drift, 0, -drift, 0] });
-  // Early: fade out mid-rise (dissolving). Late: hold then pop at the top.
-  const opacity = t.interpolate({
-    inputRange: [0, 0.12, lerp(0.45, 0.78, escape), 1],
-    outputRange: [0, peak, peak, 0],
-  });
-  const scale = t.interpolate({ inputRange: [0, 0.85, 1], outputRange: [0.5, 1, lerp(1, 1.5, escape)] });
-
+  const t = useSweep(seed, 4200 + (seed % 6) * 400);
+  const grown = smoothstep(0.05, 0.55, fraction);
+  const escape = smoothstep(0.6, 1.0, fraction);
+  const size = lerp(4, 18, grown) + (seed % 3);
+  const rise = lerp(30, 200, grown);
+  const peak = lerp(0.3, 0.8, grown);
+  const drift = 5 + (seed % 4) * 4;
+  const hl = size * 0.3;
   return (
-    <Animated.View
-      pointerEvents="none"
-      style={{
-        position: 'absolute',
-        bottom: 0,
-        left: left as `${number}%`,
-        opacity,
-        transform: [{ translateY }, { translateX }, { scale }],
+    <Animated.View pointerEvents="none" style={{
+      position: 'absolute', bottom: 0, left: left as `${number}%`,
+      opacity: t.interpolate({ inputRange: [0, 0.12, 0.78, 1], outputRange: [0, peak, peak, 0] }),
+      transform: [
+        { translateY: t.interpolate({ inputRange: [0, 1], outputRange: [0, -rise] }) },
+        { translateX: t.interpolate({ inputRange: [0, 0.25, 0.5, 0.75, 1], outputRange: [0, drift, 0, -drift, 0] }) },
+        { scale: t.interpolate({ inputRange: [0, 0.85, 1], outputRange: [0.5, 1, lerp(1, 1.45, escape)] }) },
+      ],
+    }}>
+      <View style={{
+        width: size, height: size, borderRadius: size / 2,
+        backgroundColor: `rgba(${GLUTEN},${lerp(0.08, 0.16, grown)})`,
+        borderWidth: 1, borderColor: `rgba(${GLUTEN},${lerp(0.4, 0.65, grown)})`,
       }}>
-      <View
-        style={{
-          width: size,
-          height: size,
-          borderRadius: size / 2,
-          backgroundColor: `rgba(${GLUTEN},${lerp(0.1, 0.18, grown)})`,
-          borderWidth: 1,
-          borderColor: `rgba(${GLUTEN},${lerp(0.4, 0.7, grown)})`,
-        }}>
-        <View
-          style={{
-            position: 'absolute',
-            top: size * 0.16,
-            left: size * 0.2,
-            width: hl,
-            height: hl,
-            borderRadius: hl / 2,
-            backgroundColor: 'rgba(255,255,255,0.5)',
-          }}
-        />
+        <View style={{
+          position: 'absolute', top: size * 0.15, left: size * 0.20,
+          width: hl, height: hl, borderRadius: hl / 2,
+          backgroundColor: 'rgba(255,255,255,0.45)',
+        }} />
       </View>
     </Animated.View>
   );
 }
 
-/** A cross-linking gluten strand: thickens as the net forms, then frays. */
-function GlutenStrand({ top, seed, strength, fray }: { top: string; seed: number; strength: number; fray: number }) {
-  const t = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(t, { toValue: 1, duration: 3400 + (seed % 4) * 500, easing: Easing.inOut(Easing.sin), useNativeDriver: false }),
-        Animated.timing(t, { toValue: 0, duration: 3400 + (seed % 4) * 500, easing: Easing.inOut(Easing.sin), useNativeDriver: false }),
-      ]),
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [t, seed]);
-  if (strength <= 0.001) return null;
-  // A frayed net reads as a gappy dashed line; a strong net is a solid wave.
-  const dash = fray > 0.05 ? `${lerp(40, 8, fray)} ${lerp(2, 12, fray)}` : undefined;
-  return (
-    <Animated.View
-      pointerEvents="none"
-      style={{
-        position: 'absolute',
-        left: '6%',
-        right: '6%',
-        top: top as `${number}%`,
-        opacity: t.interpolate({ inputRange: [0, 1], outputRange: [0.28 * strength, 0.6 * strength] }),
-        transform: [{ scaleY: t.interpolate({ inputRange: [0, 1], outputRange: [0.7, 1] }) }],
-      }}>
-      <Svg width="100%" height={14} viewBox="0 0 300 14" preserveAspectRatio="none">
-        <Path
-          d="M0 7 Q 37 0 75 7 T 150 7 T 225 7 T 300 7"
-          fill="none"
-          stroke={`rgba(${GLUTEN},0.55)`}
-          strokeWidth={1.5 + strength * 2}
-          strokeLinecap="round"
-          strokeDasharray={dash}
-        />
-      </Svg>
-    </Animated.View>
-  );
-}
-
-// Stable instance layouts. `born` = the fraction at which an organism starts to
-// emerge (population building over time); LAB and yeast that are present from
-// the ripe levain have born≈0.
+// Layout tables
 const YEAST = [
-  { left: '14%', top: '46%', size: 40, seed: 1, born: 0.0 },
-  { left: '70%', top: '30%', size: 34, seed: 2, born: 0.0 },
-  { left: '48%', top: '60%', size: 46, seed: 3, born: 0.08 },
-  { left: '82%', top: '56%', size: 30, seed: 4, born: 0.3 },
-  { left: '30%', top: '20%', size: 32, seed: 5, born: 0.5 },
+  { left: '14%', top: '42%', size: 40, seed: 1, born: 0.0 },
+  { left: '70%', top: '28%', size: 34, seed: 2, born: 0.0 },
+  { left: '48%', top: '58%', size: 46, seed: 3, born: 0.08 },
+  { left: '82%', top: '54%', size: 30, seed: 4, born: 0.3 },
+  { left: '30%', top: '18%', size: 32, seed: 5, born: 0.5 },
 ];
 const RODS = [
-  { left: '20%', top: '72%', size: 64, chain: 3, seed: 11, born: 0.0 },
-  { left: '60%', top: '78%', size: 46, chain: 2, seed: 12, born: 0.0 },
-  { left: '8%', top: '30%', size: 50, chain: 2, seed: 13, born: 0.12 },
-  { left: '78%', top: '44%', size: 58, chain: 3, seed: 14, born: 0.3 },
-  { left: '44%', top: '36%', size: 42, chain: 2, seed: 15, born: 0.45 },
-  { left: '64%', top: '14%', size: 54, chain: 3, seed: 16, born: 0.6 },
+  { left: '20%', top: '68%', size: 64, chain: 3, seed: 11, born: 0.0 },
+  { left: '60%', top: '74%', size: 46, chain: 2, seed: 12, born: 0.0 },
+  { left: '8%',  top: '28%', size: 50, chain: 2, seed: 13, born: 0.12 },
+  { left: '78%', top: '42%', size: 58, chain: 3, seed: 14, born: 0.3 },
+  { left: '44%', top: '34%', size: 42, chain: 2, seed: 15, born: 0.45 },
+  { left: '64%', top: '12%', size: 54, chain: 3, seed: 16, born: 0.6 },
 ];
 const ENZYMES = [
-  { left: '18%', top: '24%', size: 26, kind: 'amylase', seed: 21 },
-  { left: '74%', top: '66%', size: 22, kind: 'protease', seed: 22 },
-  { left: '40%', top: '80%', size: 24, kind: 'amylase', seed: 23 },
-  { left: '88%', top: '20%', size: 20, kind: 'protease', seed: 24 },
-  { left: '54%', top: '48%', size: 24, kind: 'amylase', seed: 25 },
+  { left: '18%', top: '22%', size: 26, kind: 'amylase', seed: 21 },
+  { left: '74%', top: '64%', size: 22, kind: 'protease', seed: 22 },
+  { left: '40%', top: '78%', size: 24, kind: 'amylase', seed: 23 },
+  { left: '88%', top: '18%', size: 20, kind: 'protease', seed: 24 },
+  { left: '54%', top: '46%', size: 24, kind: 'amylase', seed: 25 },
 ];
 const ACETICS = [
-  { left: '34%', top: '40%', seed: 31 },
-  { left: '68%', top: '54%', seed: 32 },
-  { left: '20%', top: '60%', seed: 33 },
+  { left: '34%', top: '38%', seed: 31 },
+  { left: '68%', top: '52%', seed: 32 },
+  { left: '20%', top: '58%', seed: 33 },
 ];
-const BUBBLES = Array.from({ length: 16 }).map((_, i) => ({ left: `${6 + ((i * 37) % 88)}%`, seed: i + 1, born: (i % 8) * 0.07 }));
+const BUBBLES = Array.from({ length: 16 }).map((_, i) => ({
+  left: `${6 + ((i * 37) % 88)}%`, seed: i + 1, born: (i % 8) * 0.07,
+}));
 
-/**
- * The living scene. `fraction` (0..1+) drives everything continuously. In
- * 'autolyse' mode it shows only enzymes working the flour (no levain yet);
- * in 'bulk' mode the full ecosystem evolves with the dough.
- */
 export function FermentationScene({ mode, fraction = 0 }: { mode: SceneMode; fraction?: number }) {
   const bulk = mode === 'bulk';
   const autolyse = mode === 'autolyse';
   const f = bulk ? fraction : 0;
 
-  // Continuous field parameters.
-  const yeastVigor = smoothstep(0.1, 0.45, f) * (1 - 0.35 * smoothstep(0.7, 1, f)); // peaks mid, eases late
+  const yeastVigor = smoothstep(0.1, 0.45, f) * (1 - 0.35 * smoothstep(0.7, 1, f));
   const glutenForm = smoothstep(0.15, 0.55, f);
   const glutenFray = smoothstep(0.8, 1.05, f);
   const glutenStrength = glutenForm * (1 - 0.45 * glutenFray);
   const aceticEmerge = smoothstep(0.58, 0.8, f);
   const glowOpacity = autolyse ? 0.045 : 0.04 + 0.13 * clamp01(f);
-  // Enzymes: faintly present at the very start of bulk (carryover) and again
-  // late as proteases dominate; full presence during autolyse.
   const enzymeEmerge = autolyse
     ? 1
     : Math.max(1 - smoothstep(0.04, 0.16, f), 0.6 * smoothstep(0.82, 0.96, f));
 
   return (
     <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, overflow: 'hidden' }}>
-      <View
-        style={{
-          position: 'absolute',
-          bottom: -60,
-          alignSelf: 'center',
-          width: 320,
-          height: 140,
-          borderRadius: 160,
-          backgroundColor: `rgba(${GLUTEN},${glowOpacity})`,
-        }}
-      />
+      {/* warm dough glow */}
+      <View style={{
+        position: 'absolute', bottom: -60, alignSelf: 'center',
+        width: 320, height: 140, borderRadius: 160,
+        backgroundColor: `rgba(${GLUTEN},${glowOpacity})`,
+      }} />
 
-      {/* gluten net — thickens then frays */}
-      {bulk &&
-        ['28%', '46%', '64%', '80%'].map((top, i) => (
-          <GlutenStrand key={`g-${i}`} top={top} seed={i + 1} strength={glutenStrength} fray={glutenFray} />
-        ))}
+      {/* gluten strands */}
+      {bulk && ['26%', '44%', '62%', '78%'].map((top, i) => (
+        <GlutenStrand key={`g-${i}`} top={top} seed={i + 1} strength={glutenStrength} />
+      ))}
 
       {/* enzymes */}
-      {enzymeEmerge > 0.01 &&
-        ENZYMES.map((e) => (
-          <Floater key={`e-${e.seed}`} left={e.left} top={e.top} size={e.size} seed={e.seed} emerge={enzymeEmerge} range={14} period={7000}>
-            {e.kind === 'amylase' ? <AmylaseEnzyme size={e.size} /> : <ProteaseEnzyme size={e.size} />}
-          </Floater>
-        ))}
+      {enzymeEmerge > 0.01 && ENZYMES.map((e) => (
+        <Floater key={`e-${e.seed}`} left={e.left} top={e.top} size={e.size} seed={e.seed} emerge={enzymeEmerge} range={14} period={7000}>
+          {e.kind === 'amylase' ? <AmylaseEnzyme size={e.size} /> : <ProteaseEnzyme size={e.size} />}
+        </Floater>
+      ))}
 
-      {/* yeast + bacteria — grow in as the population builds */}
-      {bulk &&
-        YEAST.map((y) => (
-          <Floater key={`y-${y.seed}`} left={y.left} top={y.top} size={y.size} seed={y.seed} emerge={smoothstep(y.born, y.born + 0.12, f)} range={9} period={6500}>
-            <YeastCell size={y.size} seed={y.seed} vigor={yeastVigor} />
-          </Floater>
-        ))}
-      {bulk &&
-        RODS.map((r) => (
-          <Floater key={`r-${r.seed}`} left={r.left} top={r.top} size={r.size} seed={r.seed} emerge={smoothstep(r.born, r.born + 0.14, f)} range={11} period={5800}>
-            <LabRod size={r.size} chain={r.chain} seed={r.seed} />
-          </Floater>
-        ))}
+      {/* yeast */}
+      {bulk && YEAST.map((y) => (
+        <Floater key={`y-${y.seed}`} left={y.left} top={y.top} size={y.size} seed={y.seed} emerge={smoothstep(y.born, y.born + 0.12, f)} range={9} period={6500}>
+          <YeastCell size={y.size} seed={y.seed} vigor={yeastVigor} />
+        </Floater>
+      ))}
 
-      {/* acetic-acid flecks (late tang) */}
-      {bulk &&
-        aceticEmerge > 0.01 &&
-        ACETICS.map((a) => (
-          <Floater key={`a-${a.seed}`} left={a.left} top={a.top} size={16} seed={a.seed} emerge={aceticEmerge} range={16} period={5200}>
-            <AceticMolecule size={16} />
-          </Floater>
-        ))}
+      {/* LAB rods */}
+      {bulk && RODS.map((r) => (
+        <Floater key={`r-${r.seed}`} left={r.left} top={r.top} size={r.size} seed={r.seed} emerge={smoothstep(r.born, r.born + 0.14, f)} range={11} period={5800}>
+          <LabRod size={r.size} chain={r.chain} />
+        </Floater>
+      ))}
 
-      {/* CO₂ bubbles — life-cycle morphs with fraction */}
-      {bulk &&
-        BUBBLES.filter((b) => f >= b.born - 0.02).map((b, i) => <Bubble key={`b-${i}`} left={b.left} seed={b.seed} fraction={f} />)}
+      {/* acetic flecks */}
+      {bulk && aceticEmerge > 0.01 && ACETICS.map((a) => (
+        <Floater key={`a-${a.seed}`} left={a.left} top={a.top} size={16} seed={a.seed} emerge={aceticEmerge} range={16} period={5200}>
+          <AceticMolecule size={16} />
+        </Floater>
+      ))}
+
+      {/* CO2 bubbles */}
+      {bulk && BUBBLES.filter((b) => f >= b.born - 0.02).map((b, i) => (
+        <Bubble key={`b-${i}`} left={b.left} seed={b.seed} fraction={f} />
+      ))}
     </View>
   );
 }

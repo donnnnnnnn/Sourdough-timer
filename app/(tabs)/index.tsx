@@ -5,8 +5,17 @@ import * as Haptics from 'expo-haptics';
 import { useBakeStore } from '@/store/useBakeStore';
 import { suggestBulk } from '@/lib/bulkCoach';
 import { router } from 'expo-router';
-import { Sparkles, Hand, BellRing, Thermometer, Wand2, ArrowUp } from 'lucide-react-native';
+import { Sparkles, Hand, BellRing, Thermometer, Wand2, ArrowUp, FlaskConical, X } from 'lucide-react-native';
 import { C, fonts, label } from '@/components/theme';
+import {
+  FermentationScene,
+  PHASE_SCRIPT,
+  AUTOLYSE_COPY,
+  bulkPhaseIndex,
+  type PhaseCopy,
+} from '@/components/FermentationScene';
+
+const AUTOLYSE_OPTIONS = [20, 30, 45, 60];
 
 const FOLD_INTERVALS = [30, 45, 60];
 const TARGET_STEP = 30;       // adjust expected bulk time in 30-min steps
@@ -77,15 +86,7 @@ function PulseDot() {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Fermentation field — CO2 bubbles rising through the dough.
-// Three layers give it depth: a warm glow at the base (the active dough), a
-// few large slow "deep" bubbles far away, and crisp foreground bubbles with
-// a glassy rim + specular highlight that sway side to side as they rise.
-// ---------------------------------------------------------------------------
-
-// Bubble tints: mostly honey (CO2 catching warm light), some cream, and the
-// occasional sage fleck for the lactic acid bacteria.
+// Bubble tints used by the end-of-bulk celebration burst.
 const TINTS = [
   { fill: 'rgba(232,163,61,0.16)', rim: 'rgba(232,163,61,0.65)' },
   { fill: 'rgba(232,163,61,0.16)', rim: 'rgba(232,163,61,0.65)' },
@@ -110,8 +111,6 @@ function makeBubbles(count: number): BubbleSpec[] {
     size: 5 + Math.random() * 11,
     rise: 130 + Math.random() * 110,
     duration: 4200 + Math.random() * 3600,
-    // quick stagger for the first wave (the "cultures waking up" burst),
-    // then each bubble loops on its own rhythm
     delay: i * 130 + Math.random() * 300,
     drift: 8 + Math.random() * 14,
     peak: 0.55 + Math.random() * 0.4,
@@ -137,7 +136,6 @@ function Bubble({ spec }: { spec: BubbleSpec }) {
   }, [t, spec]);
 
   const translateY = t.interpolate({ inputRange: [0, 1], outputRange: [0, -spec.rise] });
-  // S-curve sway: drift right, back through center, drift left, recenter.
   const translateX = t.interpolate({
     inputRange: [0, 0.25, 0.5, 0.75, 1],
     outputRange: [0, spec.drift, 0, -spec.drift, 0],
@@ -146,7 +144,6 @@ function Bubble({ spec }: { spec: BubbleSpec }) {
     inputRange: [0, 0.12, 0.7, 1],
     outputRange: [0, spec.peak, spec.peak, 0],
   });
-  // Bubbles grow as they rise (gas expanding, pressure dropping).
   const scale = t.interpolate({ inputRange: [0, 1], outputRange: [0.45, 1.2] });
 
   const hl = spec.size * 0.3; // specular highlight
@@ -181,108 +178,6 @@ function Bubble({ spec }: { spec: BubbleSpec }) {
         />
       </View>
     </Animated.View>
-  );
-}
-
-/** Large, faint, slow bubbles far behind the foreground — depth cue. */
-function DeepBubble({ index }: { index: number }) {
-  const spec = useMemo(
-    () => ({
-      left: `${10 + Math.random() * 80}%`,
-      size: 26 + Math.random() * 22,
-      rise: 150 + Math.random() * 70,
-      duration: 9000 + Math.random() * 6000,
-      delay: index * 1700,
-    }),
-    [index],
-  );
-  const t = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    const loop = Animated.loop(
-      Animated.timing(t, {
-        toValue: 1,
-        duration: spec.duration,
-        delay: spec.delay,
-        easing: Easing.inOut(Easing.sin),
-        useNativeDriver: true,
-      }),
-      { resetBeforeIteration: true },
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [t, spec]);
-
-  return (
-    <Animated.View
-      style={{
-        position: 'absolute',
-        bottom: -spec.size / 2,
-        left: spec.left as `${number}%`,
-        width: spec.size,
-        height: spec.size,
-        borderRadius: spec.size / 2,
-        backgroundColor: 'rgba(232,163,61,0.07)',
-        opacity: t.interpolate({ inputRange: [0, 0.2, 0.75, 1], outputRange: [0, 1, 1, 0] }),
-        transform: [
-          { translateY: t.interpolate({ inputRange: [0, 1], outputRange: [0, -spec.rise] }) },
-          { scale: t.interpolate({ inputRange: [0, 1], outputRange: [0.7, 1.3] }) },
-        ],
-      }}
-    />
-  );
-}
-
-/** Warm pulsing glow at the base — the dough itself, alive and working. */
-function DoughGlow() {
-  const breath = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(breath, { toValue: 1, duration: 2600, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
-        Animated.timing(breath, { toValue: 0, duration: 2600, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
-      ]),
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [breath]);
-  return (
-    <Animated.View
-      style={{
-        position: 'absolute',
-        bottom: -70,
-        alignSelf: 'center',
-        width: 300,
-        height: 130,
-        borderRadius: 150,
-        backgroundColor: 'rgba(232,163,61,0.10)',
-        opacity: breath.interpolate({ inputRange: [0, 1], outputRange: [0.5, 1] }),
-        transform: [{ scale: breath.interpolate({ inputRange: [0, 1], outputRange: [1, 1.1] }) }],
-      }}
-    />
-  );
-}
-
-function FermentationField({ ambient = false }: { ambient?: boolean }) {
-  // Ambient mode (idle screen): fewer, fainter, slower bubbles — a quiet
-  // promise of what happens when you hit Start.
-  const bubbles = useMemo(() => {
-    const specs = makeBubbles(ambient ? 8 : 18);
-    if (ambient) {
-      for (const s of specs) {
-        s.peak *= 0.4;
-        s.duration *= 1.6;
-      }
-    }
-    return specs;
-  }, [ambient]);
-  return (
-    <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, overflow: 'hidden' }}>
-      {!ambient && <DoughGlow />}
-      {!ambient && [0, 1, 2, 3].map((i) => <DeepBubble key={`deep-${i}`} index={i} />)}
-      {bubbles.map((spec, i) => (
-        <Bubble key={i} spec={spec} />
-      ))}
-    </View>
   );
 }
 
@@ -659,9 +554,57 @@ function BulkProgressBar({
   );
 }
 
+/**
+ * Two-line caption beneath the scene: a science line (the mechanism) and a
+ * sensory line (what you'd feel in the bowl). Crossfades when the copy changes
+ * so the words update gently while the animation keeps morphing underneath.
+ */
+function PhaseCaption({ copy, phaseLabel }: { copy: PhaseCopy; phaseLabel?: string }) {
+  const fade = useRef(new Animated.Value(1)).current;
+  const shown = useRef(copy);
+  const [, force] = useState(0);
+  useEffect(() => {
+    if (shown.current.title === copy.title) return;
+    Animated.timing(fade, { toValue: 0, duration: 260, easing: Easing.in(Easing.quad), useNativeDriver: true }).start(() => {
+      shown.current = copy;
+      force((n) => n + 1);
+      Animated.timing(fade, { toValue: 1, duration: 360, easing: Easing.out(Easing.quad), useNativeDriver: true }).start();
+    });
+  }, [copy, fade]);
+  const c = shown.current;
+  return (
+    <Animated.View
+      style={{
+        opacity: fade,
+        backgroundColor: C.card,
+        borderWidth: 1,
+        borderColor: C.cardBorder,
+        borderRadius: 20,
+        padding: 18,
+      }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+        <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: C.accent }} />
+        <Text style={{ ...label, color: C.accent }}>
+          {phaseLabel ? `${phaseLabel} · ${c.title}` : c.title}
+        </Text>
+      </View>
+      <Text style={{ color: C.text, fontSize: 14.5, lineHeight: 21 }}>{c.science}</Text>
+      <View style={{ height: 1, backgroundColor: C.cardBorder, marginVertical: 12 }} />
+      <View style={{ flexDirection: 'row', gap: 8 }}>
+        <Text style={{ color: C.textDim, fontSize: 12, marginTop: 1 }}>IN THE BOWL</Text>
+      </View>
+      <Text style={{ color: C.textMuted, fontSize: 14, lineHeight: 20, marginTop: 4, fontStyle: 'italic' }}>
+        {c.sensory}
+      </Text>
+    </Animated.View>
+  );
+}
+
 export default function HomeScreen() {
   const {
     bulkStartTimestamp,
+    autolyseStartTimestamp,
+    autolyseDurationMinutes,
     foldIntervalMinutes,
     completedFolds,
     foldTimestamps,
@@ -670,6 +613,8 @@ export default function HomeScreen() {
     doughTempF,
     risePercent,
     bakeLogs,
+    startAutolyse,
+    cancelAutolyse,
     startBulk,
     recordFold,
     endBulk,
@@ -683,6 +628,7 @@ export default function HomeScreen() {
   const [foldCount, setFoldCount] = useState(defaultFoldCount);
   const [plannedTarget, setPlannedTarget] = useState(targetDurationMinutes);
   const [celebrating, setCelebrating] = useState(false);
+  const [showAutolysePicker, setShowAutolysePicker] = useState(false);
   const [now, setNow] = useState(Date.now());
 
   // Coach: suggested bulk time from kitchen temp + the user's own history.
@@ -691,6 +637,10 @@ export default function HomeScreen() {
   const endNotificationId = useRef<string | null>(null);
 
   const isActive = bulkStartTimestamp !== null;
+  const autolyseEndTs = autolyseStartTimestamp !== null ? autolyseStartTimestamp + autolyseDurationMinutes * 60000 : 0;
+  const autolyseRunning = autolyseStartTimestamp !== null && now < autolyseEndTs;
+  const autolyseDone = autolyseStartTimestamp !== null && now >= autolyseEndTs;
+  const autolyseNotificationId = useRef<string | null>(null);
 
   // Entrance for the active view: fades/slides in when bulk starts.
   const enter = useRef(new Animated.Value(0)).current;
@@ -717,8 +667,10 @@ export default function HomeScreen() {
     prevFolds.current = completedFolds;
   }, [completedFolds, foldPop]);
 
+  // Tick every second while a bulk OR an autolyse rest is in progress.
+  const ticking = isActive || autolyseStartTimestamp !== null;
   useEffect(() => {
-    if (isActive) {
+    if (ticking) {
       tickRef.current = setInterval(() => setNow(Date.now()), 1000);
     } else {
       if (tickRef.current) clearInterval(tickRef.current);
@@ -726,7 +678,25 @@ export default function HomeScreen() {
     return () => {
       if (tickRef.current) clearInterval(tickRef.current);
     };
-  }, [isActive]);
+  }, [ticking]);
+
+  // Heavier pulse to "arm" the Start Bulk button once autolyse is done.
+  const armPulse = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (!autolyseDone) {
+      armPulse.setValue(0);
+      return;
+    }
+    if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(armPulse, { toValue: 1, duration: 900, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+        Animated.timing(armPulse, { toValue: 0, duration: 900, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [autolyseDone, armPulse]);
 
   async function scheduleFoldReminders(intervalMins: number) {
     if (Platform.OS === 'web') return;
@@ -769,16 +739,54 @@ export default function HomeScreen() {
     } catch {}
   }
 
+  /** Alert when the autolyse rest is up — time to add the levain. */
+  async function scheduleAutolyseAlert(secondsFromNow: number) {
+    if (Platform.OS === 'web') return;
+    try {
+      await Notifications.requestPermissionsAsync();
+      autolyseNotificationId.current = await Notifications.scheduleNotificationAsync({
+        content: {
+          title: 'Autolyse done',
+          body: 'Add your levain and salt, then start bulk.',
+        },
+        trigger: {
+          type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+          seconds: secondsFromNow,
+          repeats: false,
+        },
+      });
+    } catch {}
+  }
+
   async function cancelNotifications() {
     if (Platform.OS === 'web') return;
     try {
       endNotificationId.current = null;
+      autolyseNotificationId.current = null;
       await Notifications.cancelAllScheduledNotificationsAsync();
     } catch {}
   }
 
+  function handleStartAutolyse(minutes: number) {
+    thump(Haptics.ImpactFeedbackStyle.Medium);
+    setShowAutolysePicker(false);
+    scheduleAutolyseAlert(minutes * 60);
+    startAutolyse(minutes);
+    setNow(Date.now());
+  }
+
+  function handleCancelAutolyse() {
+    thump(Haptics.ImpactFeedbackStyle.Light);
+    cancelNotifications();
+    cancelAutolyse();
+  }
+
   function handleStart() {
     thump(Haptics.ImpactFeedbackStyle.Heavy);
+    if (Platform.OS !== 'web' && autolyseNotificationId.current) {
+      Notifications.cancelScheduledNotificationAsync(autolyseNotificationId.current).catch(() => {});
+      autolyseNotificationId.current = null;
+    }
     if (foldCount !== defaultFoldCount) setDefaultFoldCount(foldCount);
     scheduleFoldReminders(selectedInterval);
     scheduleEndAlert(plannedTarget * 60);
@@ -877,15 +885,105 @@ export default function HomeScreen() {
 
       {!isActive ? (
         <View style={{ gap: 28 }}>
-          <View style={{ paddingVertical: 10 }}>
-            <FermentationField ambient />
-            <Text style={{ color: C.text, fontSize: 36, fontFamily: fonts.display, letterSpacing: 0.2 }}>
-              Ready to bake?
-            </Text>
-            <Text style={{ color: C.textMuted, fontSize: 16, marginTop: 6 }}>
-              Set your fold reminders and expected bulk time.
-            </Text>
-          </View>
+          {autolyseRunning ? (
+            <View style={{ alignItems: 'center', paddingVertical: 14, minHeight: 220, justifyContent: 'center' }}>
+              <FermentationScene mode="autolyse" />
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                <FlaskConical color={C.accent} size={14} />
+                <Text style={{ ...label, color: C.accent }}>Autolyse resting</Text>
+              </View>
+              <Text style={{ color: C.text, fontSize: 56, fontWeight: '200', fontFamily: fonts.mono, letterSpacing: -2 }}>
+                {(() => {
+                  const left = formatElapsed(Math.max(0, autolyseEndTs - now));
+                  return `${left.minutes}:${left.seconds}`;
+                })()}
+              </Text>
+              <Text style={{ color: C.textDim, fontSize: 13, marginTop: 2 }}>
+                until the levain goes in
+              </Text>
+              <TouchableOpacity
+                onPress={handleCancelAutolyse}
+                activeOpacity={0.7}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 14, paddingVertical: 6, paddingHorizontal: 12 }}>
+                <X color={C.textDim} size={13} />
+                <Text style={{ color: C.textDim, fontSize: 13 }}>cancel autolyse</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <View style={{ paddingVertical: 10 }}>
+              <FermentationScene mode="idle" />
+              <Text style={{ color: C.text, fontSize: 36, fontFamily: fonts.display, letterSpacing: 0.2 }}>
+                {autolyseDone ? 'Levain time.' : 'Ready to bake?'}
+              </Text>
+              <Text style={{ color: C.textMuted, fontSize: 16, marginTop: 6 }}>
+                {autolyseDone
+                  ? 'Autolyse done — mix in your levain, then start bulk.'
+                  : 'Set your fold reminders and expected bulk time.'}
+              </Text>
+
+              {!autolyseDone &&
+                (showAutolysePicker ? (
+                  <View
+                    style={{
+                      marginTop: 16,
+                      backgroundColor: C.card,
+                      borderWidth: 1,
+                      borderColor: C.cardBorder,
+                      borderRadius: 16,
+                      padding: 14,
+                    }}>
+                    <Text style={{ ...label, marginBottom: 10 }}>Autolyse for</Text>
+                    <View style={{ flexDirection: 'row', gap: 8 }}>
+                      {AUTOLYSE_OPTIONS.map((m) => (
+                        <View key={m} style={{ flex: 1 }}>
+                          <Springy
+                            onPress={() => handleStartAutolyse(m)}
+                            pressScale={0.93}
+                            style={{
+                              paddingVertical: 14,
+                              borderRadius: 12,
+                              alignItems: 'center',
+                              backgroundColor: m === autolyseDurationMinutes ? C.accentSoft : C.chip,
+                              borderWidth: 1,
+                              borderColor: m === autolyseDurationMinutes ? C.accent : C.cardBorder,
+                            }}>
+                            <Text style={{ fontSize: 20, fontWeight: '700', color: C.text }}>{m}</Text>
+                            <Text style={{ fontSize: 11, color: C.textDim }}>min</Text>
+                          </Springy>
+                        </View>
+                      ))}
+                    </View>
+                  </View>
+                ) : (
+                  <TouchableOpacity
+                    onPress={() => {
+                      thump(Haptics.ImpactFeedbackStyle.Light);
+                      setShowAutolysePicker(true);
+                    }}
+                    activeOpacity={0.7}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 6,
+                      marginTop: 16,
+                      alignSelf: 'flex-start',
+                      paddingVertical: 8,
+                      paddingHorizontal: 14,
+                      borderRadius: 12,
+                      borderWidth: 1,
+                      borderColor: C.cardBorder,
+                      backgroundColor: C.card,
+                    }}>
+                    <FlaskConical color={C.textMuted} size={14} />
+                    <Text style={{ color: C.textMuted, fontSize: 13, fontWeight: '600' }}>
+                      Autolyse first
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+            </View>
+          )}
+
+          {autolyseRunning && <PhaseCaption copy={AUTOLYSE_COPY} phaseLabel="Pre-ferment" />}
 
           {/* Coach: kitchen temp in, suggested bulk time out */}
           <View
@@ -1066,6 +1164,24 @@ export default function HomeScreen() {
           <View>
             <View>
               <StartGlow />
+              {/* Once autolyse is done, an extra honey ring pulses to "arm" the button. */}
+              {autolyseDone && (
+                <Animated.View
+                  pointerEvents="none"
+                  style={{
+                    position: 'absolute',
+                    left: -10,
+                    right: -10,
+                    top: -10,
+                    bottom: -10,
+                    borderRadius: 30,
+                    borderWidth: 2,
+                    borderColor: C.accent,
+                    opacity: armPulse.interpolate({ inputRange: [0, 1], outputRange: [0.25, 0.85] }),
+                    transform: [{ scale: armPulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.04] }) }],
+                  }}
+                />
+              )}
               <Springy
                 onPress={handleStart}
                 pressScale={0.97}
@@ -1085,8 +1201,15 @@ export default function HomeScreen() {
                 </Text>
               </Springy>
             </View>
-            <Text style={{ color: C.textDim, fontSize: 13, textAlign: 'center', marginTop: 10 }}>
-              starter mixed in?
+            <Text
+              style={{
+                color: autolyseDone ? C.accent : C.textDim,
+                fontSize: 13,
+                textAlign: 'center',
+                marginTop: 10,
+                fontWeight: autolyseDone ? '700' : '400',
+              }}>
+              {autolyseDone ? 'levain in? don’t forget the salt' : 'starter mixed in?'}
             </Text>
           </View>
         </View>
@@ -1099,12 +1222,12 @@ export default function HomeScreen() {
               translateY: enter.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }),
             }],
           }}>
-          <View style={{ alignItems: 'center', paddingTop: 8, paddingBottom: 12 }}>
-            <FermentationField />
+          <View style={{ alignItems: 'center', paddingTop: 8, paddingBottom: 12, minHeight: 280, justifyContent: 'center' }}>
+            <FermentationScene mode="bulk" fraction={bulkFraction} />
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
               <PulseDot />
               <Text style={{ ...label, color: C.accent }}>
-                {justStarted ? 'Cultures waking up' : 'Bulk fermenting'}
+                {justStarted ? 'Levain in' : 'Bulk fermenting'}
               </Text>
             </View>
             <Text
@@ -1127,12 +1250,13 @@ export default function HomeScreen() {
             }}>
               :{elapsed.seconds}
             </Text>
-            {justStarted && (
-              <Text style={{ color: C.textMuted, fontSize: 13, marginTop: 8, textAlign: 'center' }}>
-                Yeast and lactic acid bacteria are starting to raise your dough.
-              </Text>
-            )}
           </View>
+
+          {/* What's happening in the dough right now — science + sensory */}
+          <PhaseCaption
+            copy={PHASE_SCRIPT[bulkPhaseIndex(bulkFraction)]}
+            phaseLabel={`Phase ${bulkPhaseIndex(bulkFraction) + 1}/5`}
+          />
 
           {/* Whole-bulk progress toward the planned end time */}
           <View

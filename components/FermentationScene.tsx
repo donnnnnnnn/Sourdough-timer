@@ -1,8 +1,6 @@
 import { useEffect, useRef, type ReactNode } from 'react';
-import { View, Animated, Easing, Platform } from 'react-native';
+import { View, Animated, Easing } from 'react-native';
 import Svg, { Ellipse, Circle, Rect, Path, G, Defs, RadialGradient, Stop } from 'react-native-svg';
-
-const nativeDriver = Platform.OS !== 'web';
 
 // ---------------------------------------------------------------------------
 // Fermentation scene — one continuous, slowly-evolving tableau driven entirely
@@ -60,14 +58,14 @@ export const PHASE_SCRIPT: PhaseCopy[] = [
   {
     title: 'Levain In',
     science:
-      'Your ripe levain hits the dough at full strength — roughly 10:1 to 100:1 bacteria to yeast, all active from the first second. But the CO₂ they exhale dissolves into the dough’s water first; it must saturate before a bubble can grow.',
+      'Your ripe levain hits the dough at full strength — roughly 10:1 to 100:1 bacteria to yeast, all active from the first second. But the CO₂ they exhale dissolves into the dough's water first; it must saturate before a bubble can grow.',
     sensory:
-      'Looks like nothing is happening. The dough sits smooth and tight. Trust it — the engine is already running, you just can’t see it.',
+      'Looks like nothing is happening. The dough sits smooth and tight. Trust it — the engine is already running, you just can't see it.',
   },
   {
     title: 'First Rise',
     science:
-      'The dough water is saturated now, so CO₂ inflates the air pockets folded in during mixing. Kazachstania humilis can’t eat maltose, so it lives on glucose the bacteria leak — a quiet cross-feeding partnership blowing the first bubbles.',
+      'The dough water is saturated now, so CO₂ inflates the air pockets folded in during mixing. Kazachstania humilis can't eat maltose, so it lives on glucose the bacteria leak — a quiet cross-feeding partnership blowing the first bubbles.',
     sensory:
       'A faint dome and the first bubbles at the surface. Folded, the dough feels alive — pillowy, starting to billow instead of resist.',
   },
@@ -81,14 +79,14 @@ export const PHASE_SCRIPT: PhaseCopy[] = [
   {
     title: 'The Sweet Spot',
     science:
-      'Fructilactobacillus sanfranciscensis now diverts some output to acetic acid, layering a sharper note over the lactic. The gluten matrix is at peak gas-trapping strength — the maximum oven-spring window you’re chasing.',
+      'Fructilactobacillus sanfranciscensis now diverts some output to acetic acid, layering a sharper note over the lactic. The gluten matrix is at peak gas-trapping strength — the maximum oven-spring window you're chasing.',
     sensory:
       'Billowy and domed, jiggling like custard, pulling cleanly from the bowl with bubbles along the sides. The aroma turns tangy and ripe.',
   },
   {
-    title: 'The Knife’s Edge',
+    title: 'The Knife's Edge',
     science:
-      'Below pH ~4.5 the proteases outpace gluten synthesis and bacterial glutathione snips the disulfide bonds holding the net together. Gas escapes faster than it’s trapped — the structure is going slack.',
+      'Below pH ~4.5 the proteases outpace gluten synthesis and bacterial glutathione snips the disulfide bonds holding the net together. Gas escapes faster than it's trapped — the structure is going slack.',
     sensory:
       'Loose, sticky, over-billowed; bubbles popping at the surface and the dough slumping rather than holding its edge. Shape now — or pull it earlier next time.',
   },
@@ -129,7 +127,7 @@ function useDrift(seed: number, range = 10, period = 6000) {
         duration: period + (seed % 5) * 600,
         delay: (seed % 7) * 220,
         easing: Easing.inOut(Easing.sin),
-        useNativeDriver: nativeDriver,
+        useNativeDriver: false,
       }),
     );
     loop.start();
@@ -155,8 +153,8 @@ function YeastCell({ size, seed, vigor }: { size: number; seed: number; vigor: n
   useEffect(() => {
     const loop = Animated.loop(
       Animated.sequence([
-        Animated.timing(bud, { toValue: 1, duration: 3200, delay: (seed % 5) * 500, easing: Easing.inOut(Easing.ease), useNativeDriver: nativeDriver }),
-        Animated.timing(bud, { toValue: 0, duration: 700, easing: Easing.in(Easing.ease), useNativeDriver: nativeDriver }),
+        Animated.timing(bud, { toValue: 1, duration: 3200, delay: (seed % 5) * 500, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
+        Animated.timing(bud, { toValue: 0, duration: 700, easing: Easing.in(Easing.ease), useNativeDriver: false }),
       ]),
     );
     loop.start();
@@ -305,7 +303,7 @@ function Bubble({ left, seed, fraction }: { left: string; seed: number; fraction
         duration: 4200 + (seed % 6) * 500,
         delay: (seed % 9) * 260,
         easing: Easing.inOut(Easing.sin),
-        useNativeDriver: nativeDriver,
+        useNativeDriver: false,
       }),
       { resetBeforeIteration: true },
     );
@@ -372,8 +370,8 @@ function GlutenStrand({ top, seed, strength, fray }: { top: string; seed: number
   useEffect(() => {
     const loop = Animated.loop(
       Animated.sequence([
-        Animated.timing(t, { toValue: 1, duration: 3400 + (seed % 4) * 500, easing: Easing.inOut(Easing.sin), useNativeDriver: nativeDriver }),
-        Animated.timing(t, { toValue: 0, duration: 3400 + (seed % 4) * 500, easing: Easing.inOut(Easing.sin), useNativeDriver: nativeDriver }),
+        Animated.timing(t, { toValue: 1, duration: 3400 + (seed % 4) * 500, easing: Easing.inOut(Easing.sin), useNativeDriver: false }),
+        Animated.timing(t, { toValue: 0, duration: 3400 + (seed % 4) * 500, easing: Easing.inOut(Easing.sin), useNativeDriver: false }),
       ]),
     );
     loop.start();

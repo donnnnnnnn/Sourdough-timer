@@ -25,6 +25,10 @@ export interface BakeLog extends PendingSession {
 
 interface BakeState {
   bulkStartTimestamp: number | null;
+  /** When an autolyse rest was started (flour+water, pre-levain), or null. */
+  autolyseStartTimestamp: number | null;
+  /** Chosen autolyse length in minutes. */
+  autolyseDurationMinutes: number;
   foldIntervalMinutes: number;
   completedFolds: number;
   /** Clock time of each recorded fold — feeds the dough-story timeline. */
@@ -38,6 +42,8 @@ interface BakeState {
   risePercent: number;
   pendingSessions: PendingSession[];
   bakeLogs: BakeLog[];
+  startAutolyse: (minutes: number) => void;
+  cancelAutolyse: () => void;
   startBulk: (intervalMinutes: number, targetMinutes: number) => void;
   recordFold: () => void;
   endBulk: () => void;
@@ -52,6 +58,8 @@ export const useBakeStore = create<BakeState>()(
   persist(
     (set, get) => ({
       bulkStartTimestamp: null,
+      autolyseStartTimestamp: null,
+      autolyseDurationMinutes: 20,
       foldIntervalMinutes: 30,
       completedFolds: 0,
       foldTimestamps: [],
@@ -62,9 +70,15 @@ export const useBakeStore = create<BakeState>()(
       pendingSessions: [],
       bakeLogs: [],
 
+      startAutolyse: (minutes) =>
+        set({ autolyseStartTimestamp: Date.now(), autolyseDurationMinutes: minutes }),
+
+      cancelAutolyse: () => set({ autolyseStartTimestamp: null }),
+
       startBulk: (intervalMinutes, targetMinutes) =>
         set({
           bulkStartTimestamp: Date.now(),
+          autolyseStartTimestamp: null,
           foldIntervalMinutes: intervalMinutes,
           targetDurationMinutes: targetMinutes,
           completedFolds: 0,

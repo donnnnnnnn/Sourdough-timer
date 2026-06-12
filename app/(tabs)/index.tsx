@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, Platform, Animated, Easing } from 'react-native';
 import * as Notifications from 'expo-notifications';
+import * as Haptics from 'expo-haptics';
 import { useBakeStore } from '@/store/useBakeStore';
+import { suggestBulk } from '@/lib/bulkCoach';
 import { router } from 'expo-router';
-import { Sparkles, Hand, BellRing } from 'lucide-react-native';
+import { Sparkles, Hand, BellRing, Thermometer, Wand2, ArrowUp } from 'lucide-react-native';
 import { C, fonts, label } from '@/components/theme';
 
 const FOLD_INTERVALS = [30, 45, 60];
@@ -33,6 +35,20 @@ function formatMinutes(min: number) {
 
 function formatClock(timestamp: number) {
   return new Date(timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
+/** Soft physical feedback; silently does nothing on web. */
+function thump(style: Haptics.ImpactFeedbackStyle = Haptics.ImpactFeedbackStyle.Medium) {
+  if (Platform.OS === 'web') return;
+  Haptics.impactAsync(style).catch(() => {});
+}
+
+/** Mix two hex colors; t=0 gives a, t=1 gives b. */
+function lerpColor(a: string, b: string, t: number) {
+  const pa = [1, 3, 5].map((i) => parseInt(a.slice(i, i + 2), 16));
+  const pb = [1, 3, 5].map((i) => parseInt(b.slice(i, i + 2), 16));
+  const mix = pa.map((v, i) => Math.round(v + (pb[i] - v) * t));
+  return `rgb(${mix[0]},${mix[1]},${mix[2]})`;
 }
 
 /** Soft breathing dot shown while the dough is fermenting. */
@@ -357,6 +373,230 @@ function FoldDots({ completed, planned }: { completed: number; planned: number }
   );
 }
 
+type MilestoneState = 'done' | 'due' | 'future';
+
+/**
+ * The dough's story so far: starter mixed, each fold (actual time once
+ * recorded, due time until then), and shaping at the planned end.
+ */
+function DoughStory({
+  startTs,
+  foldTimestamps,
+  plannedFolds,
+  intervalMinutes,
+  targetEndTs,
+  now,
+}: {
+  startTs: number;
+  foldTimestamps: number[];
+  plannedFolds: number;
+  intervalMinutes: number;
+  targetEndTs: number;
+  now: number;
+}) {
+  const foldRows = Math.max(plannedFolds, foldTimestamps.length);
+  const rows: { label: string; time: string; state: MilestoneState }[] = [
+    { label: 'Starter mixed in', time: formatClock(startTs), state: 'done' },
+  ];
+  for (let i = 0; i < foldRows; i++) {
+    const done = i < foldTimestamps.length;
+    const due = startTs + (i + 1) * intervalMinutes * 60000;
+    rows.push({
+      label: `Fold ${i + 1}`,
+      time: formatClock(done ? foldTimestamps[i] : due),
+      state: done ? 'done' : now >= due ? 'due' : 'future',
+    });
+  }
+  rows.push({
+    label: 'Shape',
+    time: `~${formatClock(targetEndTs)}`,
+    state: now >= targetEndTs ? 'due' : 'future',
+  });
+
+  const dotColor = (s: MilestoneState) =>
+    s === 'done' ? C.accent : s === 'due' ? C.orange : C.textDim;
+
+  return (
+    <View>
+      {rows.map((row, i) => (
+        <View key={i} style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+          <View style={{ alignItems: 'center', width: 20 }}>
+            <View
+              style={{
+                width: 10,
+                height: 10,
+                borderRadius: 5,
+                marginTop: 4,
+                backgroundColor: row.state === 'done' ? C.accent : 'transparent',
+                borderWidth: 1.5,
+                borderColor: dotColor(row.state),
+              }}
+            />
+            {i < rows.length - 1 && (
+              <View style={{ width: 1.5, flex: 1, minHeight: 16, backgroundColor: C.cardBorder, marginVertical: 3 }} />
+            )}
+          </View>
+          <View
+            style={{
+              flex: 1,
+              flexDirection: 'row',
+              justifyContent: 'space-between',
+              paddingBottom: i < rows.length - 1 ? 14 : 0,
+              marginLeft: 10,
+            }}>
+            <Text
+              style={{
+                color: row.state === 'future' ? C.textMuted : C.text,
+                fontSize: 15,
+                fontWeight: row.state === 'due' ? '700' : '500',
+              }}>
+              {row.label}
+              {row.state === 'due' ? ' — due' : ''}
+            </Text>
+            <Text style={{ color: row.state === 'due' ? C.orange : C.textDim, fontSize: 14, fontFamily: fonts.mono }}>
+              {row.time}
+            </Text>
+          </View>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+const RISE_MAX = 150;
+const RISE_SWEET_LOW = 50;
+const RISE_SWEET_HIGH = 75;
+
+/**
+ * Manual rise tracker: the user marks how much the dough has grown since
+ * the start of bulk. The 50-75% band is the classic "ready to shape" zone.
+ */
+function RiseTracker({ pct, onChange }: { pct: number; onChange: (pct: number) => void }) {
+  const inZone = pct >= RISE_SWEET_LOW && pct <= RISE_SWEET_HIGH;
+  return (
+    <View
+      style={{
+        backgroundColor: C.card,
+        borderWidth: 1,
+        borderColor: C.cardBorder,
+        borderRadius: 20,
+        padding: 20,
+      }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <ArrowUp color={C.textMuted} size={13} />
+          <Text style={{ ...label }}>Dough rise</Text>
+        </View>
+        <Text style={{ color: C.textDim, fontSize: 12 }}>shape at 50–75%</Text>
+      </View>
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+        <TouchableOpacity
+          onPress={() => onChange(Math.max(0, pct - 5))}
+          activeOpacity={0.7}
+          style={{ paddingVertical: 8, paddingHorizontal: 24 }}>
+          <Text style={{ color: C.text, fontSize: 26, fontWeight: '300' }}>−</Text>
+        </TouchableOpacity>
+        <Text
+          style={{
+            color: inZone ? C.green : C.text,
+            fontSize: 44,
+            fontWeight: '200',
+            fontFamily: fonts.mono,
+            minWidth: 120,
+            textAlign: 'center',
+          }}>
+          {pct}%
+        </Text>
+        <TouchableOpacity
+          onPress={() => onChange(Math.min(RISE_MAX, pct + 5))}
+          activeOpacity={0.7}
+          style={{ paddingVertical: 8, paddingHorizontal: 24 }}>
+          <Text style={{ color: C.text, fontSize: 26, fontWeight: '300' }}>+</Text>
+        </TouchableOpacity>
+      </View>
+      {/* rise scale with the sweet zone marked */}
+      <View style={{ height: 10, borderRadius: 5, backgroundColor: C.chip, marginTop: 12, overflow: 'hidden' }}>
+        <View
+          style={{
+            position: 'absolute',
+            left: `${(RISE_SWEET_LOW / RISE_MAX) * 100}%`,
+            width: `${((RISE_SWEET_HIGH - RISE_SWEET_LOW) / RISE_MAX) * 100}%`,
+            top: 0,
+            bottom: 0,
+            backgroundColor: C.greenSoft,
+            borderLeftWidth: 1,
+            borderRightWidth: 1,
+            borderColor: C.greenBorder,
+          }}
+        />
+        <View
+          style={{
+            width: `${(Math.min(pct, RISE_MAX) / RISE_MAX) * 100}%`,
+            height: '100%',
+            borderRadius: 5,
+            backgroundColor: inZone ? C.green : C.accent,
+            opacity: 0.85,
+          }}
+        />
+      </View>
+      <Text style={{ color: inZone ? C.green : C.textDim, fontSize: 12, marginTop: 8, textAlign: 'center' }}>
+        {pct === 0
+          ? 'mark the dough level as it grows'
+          : inZone
+            ? 'in the zone — start watching for shape readiness'
+            : pct < RISE_SWEET_LOW
+              ? 'still building'
+              : 'past the zone — consider shaping now'}
+      </Text>
+    </View>
+  );
+}
+
+/**
+ * Full-screen send-off when bulk ends: one last burst of bubbles rushing up
+ * out of the dough, then on to shaping.
+ */
+function CelebrationOverlay({ durationLabel }: { durationLabel: string }) {
+  const bubbles = useMemo(() => {
+    const specs = makeBubbles(26);
+    for (const s of specs) {
+      s.duration = 900 + Math.random() * 900;
+      s.delay = Math.random() * 350;
+      s.rise = 260 + Math.random() * 240;
+      s.peak = Math.min(1, s.peak + 0.25);
+    }
+    return specs;
+  }, []);
+  const fade = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.timing(fade, { toValue: 1, duration: 250, easing: Easing.out(Easing.quad), useNativeDriver: true }).start();
+  }, [fade]);
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={{
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        top: 0,
+        bottom: 0,
+        backgroundColor: 'rgba(23,18,16,0.94)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        opacity: fade,
+        zIndex: 10,
+      }}>
+      <View style={{ position: 'absolute', left: 0, right: 0, top: '30%', bottom: 0, overflow: 'hidden' }}>
+        {bubbles.map((spec, i) => (
+          <Bubble key={i} spec={spec} />
+        ))}
+      </View>
+      <Text style={{ color: C.text, fontSize: 34, fontFamily: fonts.display }}>Beautiful bulk.</Text>
+      <Text style={{ color: C.textMuted, fontSize: 15, marginTop: 8 }}>{durationLabel} — on to shaping</Text>
+    </Animated.View>
+  );
+}
+
 /**
  * Whole-bulk progress bar: fill = elapsed / expected total, with a notch at
  * every scheduled fold time. Turns orange once the target is passed.
@@ -424,20 +664,29 @@ export default function HomeScreen() {
     bulkStartTimestamp,
     foldIntervalMinutes,
     completedFolds,
+    foldTimestamps,
     defaultFoldCount,
     targetDurationMinutes,
+    doughTempF,
+    risePercent,
     bakeLogs,
     startBulk,
     recordFold,
     endBulk,
     setDefaultFoldCount,
     setTargetDuration,
+    setDoughTemp,
+    setRisePercent,
   } = useBakeStore();
 
   const [selectedInterval, setSelectedInterval] = useState(30);
   const [foldCount, setFoldCount] = useState(defaultFoldCount);
   const [plannedTarget, setPlannedTarget] = useState(targetDurationMinutes);
+  const [celebrating, setCelebrating] = useState(false);
   const [now, setNow] = useState(Date.now());
+
+  // Coach: suggested bulk time from kitchen temp + the user's own history.
+  const suggestion = useMemo(() => suggestBulk(doughTempF, bakeLogs), [doughTempF, bakeLogs]);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const endNotificationId = useRef<string | null>(null);
 
@@ -509,7 +758,7 @@ export default function HomeScreen() {
       endNotificationId.current = await Notifications.scheduleNotificationAsync({
         content: {
           title: 'Bulk ferment is up',
-          body: "You planned to end bulk now — check your dough and shape if it’s ready.",
+          body: 'You planned to end bulk now — check your dough and shape if it’s ready.',
         },
         trigger: {
           type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
@@ -529,6 +778,7 @@ export default function HomeScreen() {
   }
 
   function handleStart() {
+    thump(Haptics.ImpactFeedbackStyle.Heavy);
     if (foldCount !== defaultFoldCount) setDefaultFoldCount(foldCount);
     scheduleFoldReminders(selectedInterval);
     scheduleEndAlert(plannedTarget * 60);
@@ -536,10 +786,24 @@ export default function HomeScreen() {
     setNow(Date.now());
   }
 
+  function handleFold() {
+    thump(Haptics.ImpactFeedbackStyle.Medium);
+    recordFold();
+  }
+
   function handleEnd() {
+    if (celebrating) return;
+    if (Platform.OS !== 'web') {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    }
     cancelNotifications();
-    endBulk();
-    router.push('/log');
+    // One last bubble burst before moving on to shaping.
+    setCelebrating(true);
+    setTimeout(() => {
+      setCelebrating(false);
+      endBulk();
+      router.push('/log');
+    }, 1600);
   }
 
   function changeFoldCount(delta: number) {
@@ -574,11 +838,16 @@ export default function HomeScreen() {
 
   const targetEndTimestamp = (bulkStartTimestamp ?? 0) + targetDurationMinutes * 60000;
 
+  // The timer digits warm from cream toward honey as bulk approaches target.
+  const bulkFraction = isActive ? Math.min(1, elapsedMs / (targetDurationMinutes * 60000)) : 0;
+  const timerColor = lerpColor('#F2E8DC', '#E8A33D', bulkFraction);
+
   const recentLog = bakeLogs.length > 0 ? bakeLogs[0] : null;
 
   return (
+    <View style={{ flex: 1, backgroundColor: C.bg }}>
     <ScrollView
-      style={{ flex: 1, backgroundColor: C.bg }}
+      style={{ flex: 1 }}
       contentContainerStyle={{ padding: 24, paddingBottom: 48 }}>
 
       {recentLog && !isActive && (
@@ -616,6 +885,75 @@ export default function HomeScreen() {
             <Text style={{ color: C.textMuted, fontSize: 16, marginTop: 6 }}>
               Set your fold reminders and expected bulk time.
             </Text>
+          </View>
+
+          {/* Coach: kitchen temp in, suggested bulk time out */}
+          <View
+            style={{
+              backgroundColor: C.card,
+              borderWidth: 1,
+              borderColor: C.cardBorder,
+              borderRadius: 20,
+              padding: 20,
+            }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 14 }}>
+              <Thermometer color={C.textMuted} size={13} />
+              <Text style={{ ...label }}>Kitchen temp</Text>
+            </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+              <TouchableOpacity
+                onPress={() => setDoughTemp(Math.max(58, doughTempF - 1))}
+                activeOpacity={0.7}
+                style={{ paddingVertical: 8, paddingHorizontal: 24 }}>
+                <Text style={{ color: C.text, fontSize: 26, fontWeight: '300' }}>−</Text>
+              </TouchableOpacity>
+              <Text style={{ color: C.text, fontSize: 40, fontWeight: '200', fontFamily: fonts.mono, minWidth: 110, textAlign: 'center' }}>
+                {doughTempF}°F
+              </Text>
+              <TouchableOpacity
+                onPress={() => setDoughTemp(Math.min(90, doughTempF + 1))}
+                activeOpacity={0.7}
+                style={{ paddingVertical: 8, paddingHorizontal: 24 }}>
+                <Text style={{ color: C.text, fontSize: 26, fontWeight: '300' }}>+</Text>
+              </TouchableOpacity>
+            </View>
+            <View
+              style={{
+                marginTop: 14,
+                backgroundColor: C.accentSoft,
+                borderWidth: 1,
+                borderColor: C.accentBorder,
+                borderRadius: 14,
+                padding: 14,
+              }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                  <Wand2 color={C.accent} size={16} />
+                  <Text style={{ color: C.text, fontSize: 16, fontWeight: '700' }}>
+                    Suggested bulk: {formatMinutes(suggestion.minutes)}
+                  </Text>
+                </View>
+                {plannedTarget !== suggestion.minutes && (
+                  <TouchableOpacity
+                    onPress={() => {
+                      thump(Haptics.ImpactFeedbackStyle.Light);
+                      setPlannedTarget(suggestion.minutes);
+                    }}
+                    activeOpacity={0.7}
+                    style={{
+                      backgroundColor: C.accent,
+                      borderRadius: 10,
+                      paddingVertical: 7,
+                      paddingHorizontal: 14,
+                    }}>
+                    <Text style={{ color: C.onAccent, fontSize: 13, fontWeight: '800' }}>Use</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+              <Text style={{ color: C.textMuted, fontSize: 12.5, marginTop: 6, lineHeight: 17 }}>
+                {suggestion.reason}
+              </Text>
+            </View>
           </View>
 
           <View>
@@ -676,7 +1014,7 @@ export default function HomeScreen() {
                   {formatMinutes(plannedTarget)}
                 </Text>
                 <Text style={{ color: C.textDim, fontSize: 12, marginTop: 2 }}>
-                  we'll alert you when it's time to end bulk
+                  we’ll alert you when it’s time to end bulk
                 </Text>
               </View>
               <TouchableOpacity
@@ -771,7 +1109,7 @@ export default function HomeScreen() {
             </View>
             <Text
               style={{
-                color: C.text,
+                color: timerColor,
                 fontSize: 88,
                 fontWeight: '200',
                 lineHeight: 96,
@@ -882,8 +1220,30 @@ export default function HomeScreen() {
             </Text>
           </View>
 
+          {/* The dough's story so far */}
+          <View
+            style={{
+              backgroundColor: C.card,
+              borderWidth: 1,
+              borderColor: C.cardBorder,
+              borderRadius: 20,
+              padding: 20,
+            }}>
+            <Text style={{ ...label, marginBottom: 16 }}>Dough story</Text>
+            <DoughStory
+              startTs={bulkStartTimestamp ?? now}
+              foldTimestamps={foldTimestamps}
+              plannedFolds={defaultFoldCount}
+              intervalMinutes={foldIntervalMinutes}
+              targetEndTs={targetEndTimestamp}
+              now={now}
+            />
+          </View>
+
+          <RiseTracker pct={risePercent} onChange={setRisePercent} />
+
           <Springy
-            onPress={recordFold}
+            onPress={handleFold}
             pressScale={0.97}
             style={{
               backgroundColor: C.accentSoft,
@@ -934,5 +1294,10 @@ export default function HomeScreen() {
         </Animated.View>
       )}
     </ScrollView>
+
+    {celebrating && (
+      <CelebrationOverlay durationLabel={`${formatMinutes(Math.round(elapsedMs / 60000))} of bulk`} />
+    )}
+    </View>
   );
 }

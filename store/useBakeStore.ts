@@ -27,9 +27,15 @@ interface BakeState {
   bulkStartTimestamp: number | null;
   foldIntervalMinutes: number;
   completedFolds: number;
+  /** Clock time of each recorded fold — feeds the dough-story timeline. */
+  foldTimestamps: number[];
   defaultFoldCount: number;
   /** Expected total bulk length in minutes; drives the progress bar and end alert. */
   targetDurationMinutes: number;
+  /** Kitchen/dough temperature °F — drives the suggested bulk time. */
+  doughTempF: number;
+  /** Latest user-marked dough rise, as % growth from start (0 = none). */
+  risePercent: number;
   pendingSessions: PendingSession[];
   bakeLogs: BakeLog[];
   startBulk: (intervalMinutes: number, targetMinutes: number) => void;
@@ -38,6 +44,8 @@ interface BakeState {
   saveLog: (sessionId: string, diagnosis: Diagnosis) => void;
   setDefaultFoldCount: (n: number) => void;
   setTargetDuration: (minutes: number) => void;
+  setDoughTemp: (tempF: number) => void;
+  setRisePercent: (pct: number) => void;
 }
 
 export const useBakeStore = create<BakeState>()(
@@ -46,8 +54,11 @@ export const useBakeStore = create<BakeState>()(
       bulkStartTimestamp: null,
       foldIntervalMinutes: 30,
       completedFolds: 0,
+      foldTimestamps: [],
       defaultFoldCount: 3,
       targetDurationMinutes: 240,
+      doughTempF: 76,
+      risePercent: 0,
       pendingSessions: [],
       bakeLogs: [],
 
@@ -57,10 +68,15 @@ export const useBakeStore = create<BakeState>()(
           foldIntervalMinutes: intervalMinutes,
           targetDurationMinutes: targetMinutes,
           completedFolds: 0,
+          foldTimestamps: [],
+          risePercent: 0,
         }),
 
       recordFold: () =>
-        set((state) => ({ completedFolds: state.completedFolds + 1 })),
+        set((state) => ({
+          completedFolds: state.completedFolds + 1,
+          foldTimestamps: [...state.foldTimestamps, Date.now()],
+        })),
 
       endBulk: () => {
         const { bulkStartTimestamp, completedFolds, pendingSessions } = get();
@@ -76,6 +92,8 @@ export const useBakeStore = create<BakeState>()(
         set({
           bulkStartTimestamp: null,
           completedFolds: 0,
+          foldTimestamps: [],
+          risePercent: 0,
           pendingSessions: [newSession, ...pendingSessions],
         });
       },
@@ -94,6 +112,10 @@ export const useBakeStore = create<BakeState>()(
       setDefaultFoldCount: (n) => set({ defaultFoldCount: n }),
 
       setTargetDuration: (minutes) => set({ targetDurationMinutes: minutes }),
+
+      setDoughTemp: (tempF) => set({ doughTempF: tempF }),
+
+      setRisePercent: (pct) => set({ risePercent: pct }),
     }),
     {
       name: 'bake-store',

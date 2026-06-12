@@ -240,6 +240,9 @@ function AceticMolecule({ size }: { size: number }) {
 
 // ---------------------------------------------------------------------------
 // Floater — positions and drifts an organism, emerging it smoothly.
+// Static styles (opacity, scale) go on the outer View; only animated
+// interpolations go on the inner Animated.View. Mixing the two in one
+// style object causes React Native Web to silently drop all styles.
 // ---------------------------------------------------------------------------
 function Floater({
   left, top, size, seed, emerge, range = 10, period = 6000, children,
@@ -250,16 +253,22 @@ function Floater({
   const t = useSweep(seed, period);
   if (emerge <= 0.001) return null;
   const dir = seed % 2 === 0 ? 1 : -1;
-  const e = Math.max(0.15, emerge); // ensure minimum visibility once emerged
+  const e = Math.max(0.15, emerge);
   return (
-    <View pointerEvents="none" style={{ position: 'absolute', left: left as `${number}%`, top: top as `${number}%`, width: size, height: size }}>
+    <View style={{
+      position: 'absolute',
+      left: left as `${number}%`,
+      top: top as `${number}%`,
+      width: size,
+      height: size,
+      opacity: 0.4 + 0.6 * e,
+      transform: [{ scale: 0.5 + 0.5 * e }],
+    }}>
       <Animated.View style={{
-        opacity: 0.4 + 0.6 * e,
         transform: [
           { translateX: t.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, range * dir, 0] }) },
           { translateY: t.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, -range * 0.7, 0] }) },
           { rotate: t.interpolate({ inputRange: [0, 1], outputRange: ['0deg', `${dir * 10}deg`] }) },
-          { scale: 0.5 + 0.5 * e },
         ],
       }}>
         {children}
@@ -276,7 +285,7 @@ function GlutenStrand({ top, seed, strength }: { top: string; seed: number; stre
   if (strength <= 0.001) return null;
   const h = 2 + strength * 3;
   return (
-    <Animated.View pointerEvents="none" style={{
+    <Animated.View style={{
       position: 'absolute', left: '6%', right: '6%', top: top as `${number}%`,
       height: h, borderRadius: h / 2,
       backgroundColor: `rgba(${GLUTEN},0.45)`,
@@ -299,7 +308,7 @@ function Bubble({ left, seed, fraction }: { left: string; seed: number; fraction
   const drift = 5 + (seed % 4) * 4;
   const hl = size * 0.3;
   return (
-    <Animated.View pointerEvents="none" style={{
+    <Animated.View style={{
       position: 'absolute', bottom: 0, left: left as `${number}%`,
       opacity: t.interpolate({ inputRange: [0, 0.12, 0.78, 1], outputRange: [0, peak, peak, 0] }),
       transform: [
@@ -371,7 +380,7 @@ export function FermentationScene({ mode, fraction = 0 }: { mode: SceneMode; fra
     : Math.max(1 - smoothstep(0.04, 0.16, f), 0.6 * smoothstep(0.82, 0.96, f));
 
   return (
-    <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, overflow: 'hidden' }}>
+    <View style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, overflow: 'hidden' }}>
       {/* warm dough glow */}
       <View style={{
         position: 'absolute', bottom: -60, alignSelf: 'center',

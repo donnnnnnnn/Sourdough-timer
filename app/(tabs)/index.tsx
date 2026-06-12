@@ -910,7 +910,7 @@ export default function HomeScreen() {
               </TouchableOpacity>
             </View>
           ) : (
-            <View style={{ paddingVertical: 10 }}>
+            <View style={{ paddingVertical: 10, minHeight: 200, position: 'relative' }}>
               <FermentationScene mode="idle" />
               <Text style={{ color: C.text, fontSize: 36, fontFamily: fonts.display, letterSpacing: 0.2 }}>
                 {autolyseDone ? 'Levain time.' : 'Ready to bake?'}
@@ -1112,7 +1112,7 @@ export default function HomeScreen() {
                   {formatMinutes(plannedTarget)}
                 </Text>
                 <Text style={{ color: C.textDim, fontSize: 12, marginTop: 2 }}>
-                  we’ll alert you when it’s time to end bulk
+                  we'll alert you when it's time to end bulk
                 </Text>
               </View>
               <TouchableOpacity

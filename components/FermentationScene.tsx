@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useRef, type ReactNode } from 'react';
-import { View, Animated, Easing } from 'react-native';
+import { useEffect, useRef, type ReactNode } from 'react';
+import { View, Animated, Easing, Platform } from 'react-native';
 import Svg, { Ellipse, Circle, Rect, Path, G, Defs, RadialGradient, Stop } from 'react-native-svg';
+
+const nativeDriver = Platform.OS !== 'web';
 
 // ---------------------------------------------------------------------------
 // Fermentation scene — one continuous, slowly-evolving tableau driven entirely
@@ -127,7 +129,7 @@ function useDrift(seed: number, range = 10, period = 6000) {
         duration: period + (seed % 5) * 600,
         delay: (seed % 7) * 220,
         easing: Easing.inOut(Easing.sin),
-        useNativeDriver: true,
+        useNativeDriver: nativeDriver,
       }),
     );
     loop.start();
@@ -153,8 +155,8 @@ function YeastCell({ size, seed, vigor }: { size: number; seed: number; vigor: n
   useEffect(() => {
     const loop = Animated.loop(
       Animated.sequence([
-        Animated.timing(bud, { toValue: 1, duration: 3200, delay: (seed % 5) * 500, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-        Animated.timing(bud, { toValue: 0, duration: 700, easing: Easing.in(Easing.ease), useNativeDriver: true }),
+        Animated.timing(bud, { toValue: 1, duration: 3200, delay: (seed % 5) * 500, easing: Easing.inOut(Easing.ease), useNativeDriver: nativeDriver }),
+        Animated.timing(bud, { toValue: 0, duration: 700, easing: Easing.in(Easing.ease), useNativeDriver: nativeDriver }),
       ]),
     );
     loop.start();
@@ -303,7 +305,7 @@ function Bubble({ left, seed, fraction }: { left: string; seed: number; fraction
         duration: 4200 + (seed % 6) * 500,
         delay: (seed % 9) * 260,
         easing: Easing.inOut(Easing.sin),
-        useNativeDriver: true,
+        useNativeDriver: nativeDriver,
       }),
       { resetBeforeIteration: true },
     );
@@ -370,8 +372,8 @@ function GlutenStrand({ top, seed, strength, fray }: { top: string; seed: number
   useEffect(() => {
     const loop = Animated.loop(
       Animated.sequence([
-        Animated.timing(t, { toValue: 1, duration: 3400 + (seed % 4) * 500, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
-        Animated.timing(t, { toValue: 0, duration: 3400 + (seed % 4) * 500, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+        Animated.timing(t, { toValue: 1, duration: 3400 + (seed % 4) * 500, easing: Easing.inOut(Easing.sin), useNativeDriver: nativeDriver }),
+        Animated.timing(t, { toValue: 0, duration: 3400 + (seed % 4) * 500, easing: Easing.inOut(Easing.sin), useNativeDriver: nativeDriver }),
       ]),
     );
     loop.start();

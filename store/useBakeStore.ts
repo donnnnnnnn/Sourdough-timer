@@ -28,13 +28,16 @@ interface BakeState {
   foldIntervalMinutes: number;
   completedFolds: number;
   defaultFoldCount: number;
+  /** Expected total bulk length in minutes; drives the progress bar and end alert. */
+  targetDurationMinutes: number;
   pendingSessions: PendingSession[];
   bakeLogs: BakeLog[];
-  startBulk: (intervalMinutes: number) => void;
+  startBulk: (intervalMinutes: number, targetMinutes: number) => void;
   recordFold: () => void;
   endBulk: () => void;
   saveLog: (sessionId: string, diagnosis: Diagnosis) => void;
   setDefaultFoldCount: (n: number) => void;
+  setTargetDuration: (minutes: number) => void;
 }
 
 export const useBakeStore = create<BakeState>()(
@@ -44,13 +47,15 @@ export const useBakeStore = create<BakeState>()(
       foldIntervalMinutes: 30,
       completedFolds: 0,
       defaultFoldCount: 3,
+      targetDurationMinutes: 240,
       pendingSessions: [],
       bakeLogs: [],
 
-      startBulk: (intervalMinutes) =>
+      startBulk: (intervalMinutes, targetMinutes) =>
         set({
           bulkStartTimestamp: Date.now(),
           foldIntervalMinutes: intervalMinutes,
+          targetDurationMinutes: targetMinutes,
           completedFolds: 0,
         }),
 
@@ -87,6 +92,8 @@ export const useBakeStore = create<BakeState>()(
       },
 
       setDefaultFoldCount: (n) => set({ defaultFoldCount: n }),
+
+      setTargetDuration: (minutes) => set({ targetDurationMinutes: minutes }),
     }),
     {
       name: 'bake-store',

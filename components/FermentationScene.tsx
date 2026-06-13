@@ -3,8 +3,9 @@ import { View, Animated, Easing } from 'react-native';
 
 // ---------------------------------------------------------------------------
 // Fermentation scene — one continuous, slowly-evolving tableau driven entirely
-// by `fraction` (elapsed / target bulk time, 0..1+). All organisms are drawn
-// with plain Views (no SVG) so they work identically on web and native.
+// by `fraction` (elapsed / target bulk time, 0..1+). Organisms are drawn as
+// soft, luminous orbs (translucent fills + blurred boxShadow halos, no SVG) so
+// they work identically on web and native. Each one drifts and gently breathes.
 // Looping animations use recursive callbacks instead of Animated.loop to avoid
 // a React Native Web bug where loops stop after the first iteration.
 // ---------------------------------------------------------------------------
@@ -17,15 +18,22 @@ export interface PhaseCopy {
   sensory: string;
 }
 
-// Palette
-const YEAST_BODY = '#E8A33D';
-const YEAST_CORE = '#F6D08A';
-const LAB_BODY = '#C9A8D6';
-const LAB_CORE = '#E4CCEC';
-const AMYLASE = '#6FB8A8';
-const PROTEASE = '#E58C76';
-const ACETIC = '#9FB36B';
+// Palette — rgb tuples so we can compose translucent fills and glow halos.
+const RGB = {
+  yeast: '232,163,61',
+  yeastCore: '246,208,138',
+  lab: '201,168,214',
+  labCore: '228,204,236',
+  amylase: '111,184,168',
+  protease: '229,140,118',
+  acetic: '159,179,107',
+};
 const GLUTEN = '232,163,61';
+
+/** Soft blurred halo string for the `boxShadow` style prop. */
+function glow(rgb: string, blur: number, alpha: number, spread = 0) {
+  return `0px 0px ${blur}px ${spread}px rgba(${rgb},${alpha})`;
+}
 
 export const AUTOLYSE_COPY: PhaseCopy = {
   title: 'Autolyse',
@@ -140,59 +148,67 @@ function useSweep(seed: number, duration = 6000) {
 }
 
 // ---------------------------------------------------------------------------
-// Organism shapes — all plain Views, no SVG dependency.
+// Organism shapes — soft luminous orbs built from translucent Views + blurred
+// boxShadow halos. No SVG dependency.
 // ---------------------------------------------------------------------------
 
-/** Kazachstania humilis: amber oval body + budding daughter cell. */
+/** Kazachstania humilis: a glowing amber cell with a bright core and a budding daughter. */
 function YeastCell({ size, seed, vigor }: { size: number; seed: number; vigor: number }) {
   const bud = usePingPong(seed, 3000);
-  const budMaxScale = lerp(0.28, 0.65, vigor);
+  const budMaxScale = lerp(0.3, 0.62, vigor);
   return (
     <View style={{ width: size, height: size }}>
-      {/* body */}
+      {/* luminous body */}
       <View style={{
-        position: 'absolute', left: size * 0.1, top: size * 0.05,
-        width: size * 0.7, height: size * 0.85,
-        borderRadius: size * 0.4,
-        backgroundColor: YEAST_BODY, opacity: 0.55,
-        borderWidth: 1.5, borderColor: YEAST_BODY,
+        position: 'absolute', left: size * 0.1, top: size * 0.08,
+        width: size * 0.74, height: size * 0.8, borderRadius: size * 0.4,
+        backgroundColor: `rgba(${RGB.yeast},0.28)`,
+        borderWidth: 1, borderColor: `rgba(${RGB.yeast},0.45)`,
+        boxShadow: glow(RGB.yeast, size * 0.42, 0.45, size * 0.04),
       }} />
-      {/* nucleus highlight */}
+      {/* inner glow core */}
       <View style={{
-        position: 'absolute', left: size * 0.38, top: size * 0.20,
-        width: size * 0.22, height: size * 0.22,
-        borderRadius: size * 0.11, backgroundColor: YEAST_CORE, opacity: 0.9,
+        position: 'absolute', left: size * 0.24, top: size * 0.22,
+        width: size * 0.34, height: size * 0.34, borderRadius: size * 0.17,
+        backgroundColor: `rgba(${RGB.yeastCore},0.5)`,
+        boxShadow: glow(RGB.yeastCore, size * 0.22, 0.6),
       }} />
-      {/* bud */}
+      {/* specular highlight */}
+      <View style={{
+        position: 'absolute', left: size * 0.29, top: size * 0.2,
+        width: size * 0.12, height: size * 0.12, borderRadius: size * 0.06,
+        backgroundColor: 'rgba(255,251,240,0.75)',
+      }} />
+      {/* budding daughter */}
       <Animated.View style={{
-        position: 'absolute', right: 0, top: 0,
-        width: size * 0.45, height: size * 0.45,
-        borderRadius: size * 0.225,
-        backgroundColor: YEAST_BODY, opacity: 0.5,
-        borderWidth: 1, borderColor: YEAST_BODY,
-        transform: [{ scale: bud.interpolate({ inputRange: [0, 1], outputRange: [0.1, budMaxScale] }) }],
+        position: 'absolute', right: size * 0.02, top: size * 0.02,
+        width: size * 0.4, height: size * 0.4, borderRadius: size * 0.2,
+        backgroundColor: `rgba(${RGB.yeast},0.24)`,
+        borderWidth: 1, borderColor: `rgba(${RGB.yeast},0.4)`,
+        boxShadow: glow(RGB.yeast, size * 0.2, 0.4),
+        transform: [{ scale: bud.interpolate({ inputRange: [0, 1], outputRange: [0.12, budMaxScale] }) }],
       }} />
     </View>
   );
 }
 
-/** F. sanfranciscensis: chain of lavender capsules. */
+/** F. sanfranciscensis: a chain of glowing lavender capsules. */
 function LabRod({ size, chain }: { size: number; chain: number }) {
   const capsuleW = Math.floor(size / chain) - 2;
-  const capsuleH = Math.max(10, Math.floor(capsuleW * 0.45));
+  const capsuleH = Math.max(11, Math.floor(capsuleW * 0.5));
   return (
-    <View style={{ flexDirection: 'row', gap: 2, alignItems: 'center' }}>
+    <View style={{ flexDirection: 'row', gap: 3, alignItems: 'center' }}>
       {Array.from({ length: chain }).map((_, i) => (
         <View key={i} style={{
-          width: capsuleW, height: capsuleH,
-          borderRadius: capsuleH / 2,
-          backgroundColor: LAB_BODY, opacity: 0.6,
-          borderWidth: 1, borderColor: LAB_CORE,
+          width: capsuleW, height: capsuleH, borderRadius: capsuleH / 2,
+          backgroundColor: `rgba(${RGB.lab},0.3)`,
+          borderWidth: 1, borderColor: `rgba(${RGB.lab},0.48)`,
+          boxShadow: glow(RGB.lab, capsuleH * 0.8, 0.4),
           justifyContent: 'center', alignItems: 'center',
         }}>
           <View style={{
-            width: capsuleW * 0.55, height: capsuleH * 0.3,
-            borderRadius: capsuleH * 0.15, backgroundColor: LAB_CORE, opacity: 0.5,
+            width: capsuleW * 0.5, height: capsuleH * 0.34,
+            borderRadius: capsuleH * 0.17, backgroundColor: `rgba(${RGB.labCore},0.6)`,
           }} />
         </View>
       ))}
@@ -200,46 +216,102 @@ function LabRod({ size, chain }: { size: number; chain: number }) {
   );
 }
 
-/** Amylase: teal torus (ring shape). */
+/** Amylase: a softly glowing teal ring with a faint inner fill. */
 function AmylaseEnzyme({ size }: { size: number }) {
   return (
-    <View style={{
-      width: size, height: size, borderRadius: size / 2,
-      borderWidth: size * 0.22, borderColor: AMYLASE,
-      opacity: 0.7,
-    }} />
-  );
-}
-
-/** Protease: two coral lobes. */
-function ProteaseEnzyme({ size }: { size: number }) {
-  const lobeSize = size * 0.6;
-  return (
-    <View style={{ width: size, height: size, justifyContent: 'center', alignItems: 'center' }}>
-      <View style={{ flexDirection: 'row' }}>
-        <View style={{ width: lobeSize, height: lobeSize, borderRadius: lobeSize / 2, backgroundColor: PROTEASE, opacity: 0.55 }} />
-        <View style={{ width: lobeSize * 0.8, height: lobeSize * 0.8, marginTop: lobeSize * 0.1, marginLeft: -lobeSize * 0.2, borderRadius: lobeSize * 0.4, backgroundColor: PROTEASE, opacity: 0.5 }} />
-      </View>
-    </View>
-  );
-}
-
-/** Acetic acid: green angular chevron. */
-function AceticMolecule({ size }: { size: number }) {
-  return (
-    <View style={{ width: size, height: size, justifyContent: 'center', alignItems: 'center' }}>
+    <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
       <View style={{
-        width: size * 0.7, height: size * 0.7,
-        borderLeftWidth: size * 0.12, borderBottomWidth: size * 0.12,
-        borderColor: ACETIC, opacity: 0.8,
-        transform: [{ rotate: '-45deg' }],
+        width: size, height: size, borderRadius: size / 2,
+        borderWidth: size * 0.16, borderColor: `rgba(${RGB.amylase},0.6)`,
+        boxShadow: glow(RGB.amylase, size * 0.32, 0.5),
+      }} />
+      <View style={{
+        position: 'absolute', width: size * 0.5, height: size * 0.5, borderRadius: size * 0.25,
+        backgroundColor: `rgba(${RGB.amylase},0.12)`,
       }} />
     </View>
   );
 }
 
+/** Protease: two soft glowing coral lobes. */
+function ProteaseEnzyme({ size }: { size: number }) {
+  const lobe = size * 0.58;
+  return (
+    <View style={{ width: size, height: size, justifyContent: 'center', alignItems: 'center' }}>
+      <View style={{ flexDirection: 'row' }}>
+        <View style={{
+          width: lobe, height: lobe, borderRadius: lobe / 2,
+          backgroundColor: `rgba(${RGB.protease},0.38)`,
+          boxShadow: glow(RGB.protease, lobe * 0.5, 0.45),
+        }} />
+        <View style={{
+          width: lobe * 0.82, height: lobe * 0.82, marginTop: lobe * 0.12, marginLeft: -lobe * 0.22,
+          borderRadius: lobe * 0.41,
+          backgroundColor: `rgba(${RGB.protease},0.33)`,
+          boxShadow: glow(RGB.protease, lobe * 0.42, 0.4),
+        }} />
+      </View>
+    </View>
+  );
+}
+
+/** Acetic acid: a small luminous green diamond fleck. */
+function AceticMolecule({ size }: { size: number }) {
+  const d = size * 0.52;
+  return (
+    <View style={{ width: size, height: size, justifyContent: 'center', alignItems: 'center' }}>
+      <View style={{
+        width: d, height: d, borderRadius: d * 0.28,
+        backgroundColor: `rgba(${RGB.acetic},0.48)`,
+        borderWidth: 1, borderColor: `rgba(${RGB.acetic},0.6)`,
+        boxShadow: glow(RGB.acetic, d * 0.7, 0.5),
+        transform: [{ rotate: '45deg' }],
+      }} />
+    </View>
+  );
+}
+
+/**
+ * Sugar speck — a tiny drifting fuel mote for the maltose↔glucose cross-feed.
+ * It travels from `fromL/fromT` to `toL/toT` on a loop, so a row of them reads
+ * as sugar streaming between a yeast cell and a bacterial chain. `tone` picks
+ * the color: warm gold for maltose (yeast→LAB), pale cream for glucose (back).
+ */
+function SugarSpeck({
+  fromL, fromT, toL, toT, seed, emerge, tone,
+}: {
+  fromL: string; fromT: string; toL: string; toT: string;
+  seed: number; emerge: number; tone: 'maltose' | 'glucose';
+}) {
+  const t = useSweep(seed, 5200 + (seed % 5) * 600);
+  if (emerge <= 0.01) return null;
+  const rgb = tone === 'maltose' ? RGB.yeastCore : '243,233,214';
+  const e = Math.max(0.2, emerge);
+  return (
+    <Animated.View pointerEvents="none" style={{
+      position: 'absolute', left: fromL as `${number}%`, top: fromT as `${number}%`,
+      width: 4, height: 4, borderRadius: 2,
+      backgroundColor: `rgba(${rgb},0.9)`,
+      boxShadow: glow(rgb, 5, 0.7),
+      opacity: t.interpolate({ inputRange: [0, 0.15, 0.85, 1], outputRange: [0, 0.85 * e, 0.85 * e, 0] }),
+      transform: [
+        { translateX: t.interpolate({ inputRange: [0, 1], outputRange: [0, pctToPx(toL) - pctToPx(fromL)] }) },
+        { translateY: t.interpolate({ inputRange: [0, 1], outputRange: [0, pctToPx(toT, true) - pctToPx(fromT, true)] }) },
+      ],
+    }} />
+  );
+}
+// Rough %→px for the small drift deltas above (scene ~ 320×260 on phone).
+function pctToPx(pct: string, vertical = false) {
+  const n = parseFloat(pct) / 100;
+  return n * (vertical ? 260 : 320);
+}
+
 // ---------------------------------------------------------------------------
-// Floater — positions and drifts an organism, emerging it smoothly.
+// Floater — positions an organism, drifts it on a slow loop, and adds a gentle
+// breathing pulse (scale + opacity shimmer) so the scene feels alive.
+// Static emerge styling lives on the outer View; only animated interpolations
+// touch the Animated.View (mixing the two makes React Native Web drop styles).
 // ---------------------------------------------------------------------------
 function Floater({
   left, top, size, seed, emerge, range = 10, period = 6000, children,
@@ -248,6 +320,7 @@ function Floater({
   emerge: number; range?: number; period?: number; children: ReactNode;
 }) {
   const t = useSweep(seed, period);
+  const breath = useSweep(seed + 3, Math.round(period * 0.6));
   if (emerge <= 0.001) return null;
   const dir = seed % 2 === 0 ? 1 : -1;
   const e = Math.max(0.15, emerge);
@@ -258,14 +331,16 @@ function Floater({
       top: top as `${number}%`,
       width: size,
       height: size,
-      opacity: 0.4 + 0.6 * e,
-      transform: [{ scale: 0.5 + 0.5 * e }],
+      opacity: 0.45 + 0.55 * e,
+      transform: [{ scale: 0.55 + 0.45 * e }],
     }}>
       <Animated.View style={{
+        opacity: breath.interpolate({ inputRange: [0, 1], outputRange: [0.8, 1] }),
         transform: [
           { translateX: t.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, range * dir, 0] }) },
           { translateY: t.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, -range * 0.7, 0] }) },
-          { rotate: t.interpolate({ inputRange: [0, 1], outputRange: ['0deg', `${dir * 10}deg`] }) },
+          { rotate: t.interpolate({ inputRange: [0, 1], outputRange: ['0deg', `${dir * 8}deg`] }) },
+          { scale: breath.interpolate({ inputRange: [0, 1], outputRange: [0.93, 1.05] }) },
         ],
       }}>
         {children}
@@ -275,25 +350,42 @@ function Floater({
 }
 
 // ---------------------------------------------------------------------------
-// Gluten strand — a horizontal wave that thickens then goes dashed (fraying).
+// Gluten strand — one thread of the network. `organize` (0..1) pulls the
+// strand from a slack, randomly-tilted fiber toward its taut, aligned angle
+// (the "windowpane" state); `fray` (0..1) thins and dims it as proteases and
+// acidity cut the disulfide bonds late in the bake.
 // ---------------------------------------------------------------------------
-function GlutenStrand({ top, seed, strength }: { top: string; seed: number; strength: number }) {
-  const t = usePingPong(seed, 3200);
-  if (strength <= 0.001) return null;
-  const h = 2 + strength * 3;
+function GlutenStrand({
+  left, top, width, angle, seed, organize, fray,
+}: {
+  left: string; top: string; width: number; angle: number;
+  seed: number; organize: number; fray: number;
+}) {
+  const t = usePingPong(seed, 3200 + (seed % 5) * 300);
+  const vis = organize * (1 - 0.85 * fray);
+  if (vis <= 0.001) return null;
+  // Slack fibers sit at a random tilt; as the net organizes they swing toward
+  // their intended (aligned) angle. Fraying adds a thin, broken look.
+  const slackTilt = ((seed % 7) - 3) * 9;
+  const restAngle = lerp(slackTilt, angle, organize);
+  const h = lerp(1.5, 3.2, organize) * (1 - 0.5 * fray);
   return (
     <Animated.View pointerEvents="none" style={{
-      position: 'absolute', left: '6%', right: '6%', top: top as `${number}%`,
-      height: h, borderRadius: h / 2,
-      backgroundColor: `rgba(${GLUTEN},0.45)`,
-      opacity: t.interpolate({ inputRange: [0, 1], outputRange: [0.25 * strength, 0.55 * strength] }),
-      transform: [{ scaleY: t.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1.0] }) }],
+      position: 'absolute', left: left as `${number}%`, top: top as `${number}%`,
+      width, height: h, borderRadius: h / 2,
+      backgroundColor: `rgba(${GLUTEN},${lerp(0.28, 0.5, organize)})`,
+      boxShadow: glow(GLUTEN, lerp(4, 7, organize), 0.3 * (1 - fray)),
+      opacity: t.interpolate({ inputRange: [0, 1], outputRange: [0.3 * vis, 0.62 * vis] }),
+      transform: [
+        { rotate: `${restAngle}deg` },
+        { scaleX: t.interpolate({ inputRange: [0, 1], outputRange: [0.9, 1.0] }) },
+      ],
     }} />
   );
 }
 
 // ---------------------------------------------------------------------------
-// CO2 Bubble — lifecycle driven by fraction.
+// CO2 Bubble — lifecycle driven by fraction, with a soft luminous rim.
 // ---------------------------------------------------------------------------
 function Bubble({ left, seed, fraction }: { left: string; seed: number; fraction: number }) {
   const t = useSweep(seed, 4200 + (seed % 6) * 400);
@@ -318,11 +410,12 @@ function Bubble({ left, seed, fraction }: { left: string; seed: number; fraction
         width: size, height: size, borderRadius: size / 2,
         backgroundColor: `rgba(${GLUTEN},${lerp(0.08, 0.16, grown)})`,
         borderWidth: 1, borderColor: `rgba(${GLUTEN},${lerp(0.4, 0.65, grown)})`,
+        boxShadow: glow(GLUTEN, size * 0.6, 0.3),
       }}>
         <View style={{
           position: 'absolute', top: size * 0.15, left: size * 0.20,
           width: hl, height: hl, borderRadius: hl / 2,
-          backgroundColor: 'rgba(255,255,255,0.45)',
+          backgroundColor: 'rgba(255,255,255,0.55)',
         }} />
       </View>
     </Animated.View>
@@ -337,13 +430,50 @@ const YEAST = [
   { left: '82%', top: '54%', size: 30, seed: 4, born: 0.3 },
   { left: '30%', top: '18%', size: 32, seed: 5, born: 0.5 },
 ];
+// LAB outnumber yeast ~10:1 in a ripe culture, and the gap widens as the bulk
+// progresses — so the roster is rod-heavy and most rods are born late, making
+// the field visibly bacteria-dominated by peak.
 const RODS = [
   { left: '20%', top: '68%', size: 64, chain: 3, seed: 11, born: 0.0 },
   { left: '60%', top: '74%', size: 46, chain: 2, seed: 12, born: 0.0 },
-  { left: '8%',  top: '28%', size: 50, chain: 2, seed: 13, born: 0.12 },
-  { left: '78%', top: '42%', size: 58, chain: 3, seed: 14, born: 0.3 },
-  { left: '44%', top: '34%', size: 42, chain: 2, seed: 15, born: 0.45 },
-  { left: '64%', top: '12%', size: 54, chain: 3, seed: 16, born: 0.6 },
+  { left: '8%',  top: '28%', size: 50, chain: 2, seed: 13, born: 0.1 },
+  { left: '78%', top: '42%', size: 58, chain: 3, seed: 14, born: 0.18 },
+  { left: '44%', top: '34%', size: 42, chain: 2, seed: 15, born: 0.26 },
+  { left: '64%', top: '12%', size: 54, chain: 3, seed: 16, born: 0.32 },
+  { left: '30%', top: '50%', size: 48, chain: 2, seed: 17, born: 0.4 },
+  { left: '86%', top: '70%', size: 52, chain: 3, seed: 18, born: 0.46 },
+  { left: '12%', top: '52%', size: 44, chain: 2, seed: 19, born: 0.52 },
+  { left: '52%', top: '22%', size: 56, chain: 3, seed: 20, born: 0.58 },
+  { left: '70%', top: '58%', size: 46, chain: 2, seed: 26, born: 0.64 },
+  { left: '38%', top: '84%', size: 50, chain: 3, seed: 27, born: 0.7 },
+  { left: '6%',  top: '78%', size: 44, chain: 2, seed: 28, born: 0.76 },
+  { left: '82%', top: '24%', size: 48, chain: 2, seed: 29, born: 0.8 },
+];
+
+// Gluten network — strands fan across the field at varied angles so that, once
+// organized, they read as an aligned, taut mesh rather than stacked lines.
+const GLUTEN_MESH = [
+  { left: '6%',  top: '24%', width: 150, angle: 8,   seed: 1 },
+  { left: '40%', top: '20%', width: 170, angle: -6,  seed: 2 },
+  { left: '10%', top: '44%', width: 200, angle: 4,   seed: 3 },
+  { left: '48%', top: '48%', width: 160, angle: -10, seed: 4 },
+  { left: '4%',  top: '64%', width: 180, angle: 7,   seed: 5 },
+  { left: '46%', top: '70%', width: 190, angle: -5,  seed: 6 },
+  { left: '24%', top: '34%', width: 120, angle: 64,  seed: 7 },
+  { left: '66%', top: '30%', width: 130, angle: -58, seed: 8 },
+  { left: '34%', top: '58%', width: 120, angle: 70,  seed: 9 },
+  { left: '74%', top: '56%', width: 110, angle: -66, seed: 10 },
+];
+
+// Maltose↔glucose cross-feed: yeast can't eat maltose, so it streams to the
+// bacteria (gold), which leak glucose back to the yeast (cream). Each pair sits
+// between a yeast cell and a nearby rod chain.
+const CROSSFEED = [
+  { fromL: '17%', fromT: '46%', toL: '24%', toT: '66%', seed: 41, tone: 'maltose' as const },
+  { fromL: '24%', fromT: '66%', toL: '17%', toT: '46%', seed: 42, tone: 'glucose' as const },
+  { fromL: '70%', fromT: '32%', toL: '78%', toT: '44%', seed: 43, tone: 'maltose' as const },
+  { fromL: '78%', fromT: '44%', toL: '70%', toT: '32%', seed: 44, tone: 'glucose' as const },
+  { fromL: '50%', fromT: '58%', toL: '44%', toT: '36%', seed: 45, tone: 'maltose' as const },
 ];
 const ENZYMES = [
   { left: '18%', top: '22%', size: 26, kind: 'amylase', seed: 21 },
@@ -367,14 +497,21 @@ export function FermentationScene({ mode, fraction = 0 }: { mode: SceneMode; fra
   const f = bulk ? fraction : 0;
 
   const yeastVigor = smoothstep(0.1, 0.45, f) * (1 - 0.35 * smoothstep(0.7, 1, f));
-  const glutenForm = smoothstep(0.15, 0.55, f);
-  const glutenFray = smoothstep(0.8, 1.05, f);
-  const glutenStrength = glutenForm * (1 - 0.45 * glutenFray);
+  // Gluten: organizes through early/mid bulk (slack fibers → aligned net), then
+  // frays as proteases + falling pH cut the bonds past the peak.
+  const glutenOrganize = autolyse ? 0.32 : smoothstep(0.12, 0.55, f);
+  const glutenFray = smoothstep(0.82, 1.08, f);
+  // Acidity: pH falls through the second half — a deepening warm-red wash.
+  const acidify = bulk ? smoothstep(0.5, 1.08, f) : 0;
   const aceticEmerge = smoothstep(0.58, 0.8, f);
-  const glowOpacity = autolyse ? 0.045 : 0.04 + 0.13 * clamp01(f);
-  const enzymeEmerge = autolyse
-    ? 1
-    : Math.max(1 - smoothstep(0.04, 0.16, f), 0.6 * smoothstep(0.82, 0.96, f));
+  // Maltose↔glucose hand-off is busiest in early fermentation, then quiets as
+  // the sugars are consumed and the partnership settles into steady state.
+  const crossfeedEmerge = bulk ? smoothstep(0.12, 0.28, f) * (1 - smoothstep(0.5, 0.74, f)) : 0;
+  const glowOpacity = autolyse ? 0.05 : 0.05 + 0.14 * clamp01(f);
+  // Amylase is the autolyse workhorse and fades once microbes take over;
+  // protease only shows up near the peak as the structure starts to break down.
+  const amylaseEmerge = autolyse ? 1 : 1 - smoothstep(0.04, 0.2, f);
+  const proteaseEmerge = autolyse ? 0 : smoothstep(0.56, 0.78, f);
 
   return (
     <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, overflow: 'hidden' }}>
@@ -383,18 +520,45 @@ export function FermentationScene({ mode, fraction = 0 }: { mode: SceneMode; fra
         position: 'absolute', bottom: -60, alignSelf: 'center',
         width: 320, height: 140, borderRadius: 160,
         backgroundColor: `rgba(${GLUTEN},${glowOpacity})`,
+        boxShadow: glow(GLUTEN, 80, glowOpacity * 1.4, 20),
       }} />
 
-      {/* gluten strands */}
-      {bulk && ['26%', '44%', '62%', '78%'].map((top, i) => (
-        <GlutenStrand key={`g-${i}`} top={top} seed={i + 1} strength={glutenStrength} />
+      {/* acidity wash — deepens as pH drops in the back half of the bulk */}
+      {acidify > 0.01 && (
+        <View style={{
+          position: 'absolute', left: 0, right: 0, top: 0, bottom: 0,
+          backgroundColor: `rgba(150,38,22,${0.16 * acidify})`,
+        }} />
+      )}
+
+      {/* gluten network */}
+      {(bulk || autolyse) && GLUTEN_MESH.map((g) => (
+        <GlutenStrand
+          key={`g-${g.seed}`} left={g.left} top={g.top} width={g.width} angle={g.angle}
+          seed={g.seed} organize={glutenOrganize} fray={glutenFray}
+        />
       ))}
 
-      {/* enzymes */}
-      {enzymeEmerge > 0.01 && ENZYMES.map((e) => (
-        <Floater key={`e-${e.seed}`} left={e.left} top={e.top} size={e.size} seed={e.seed} emerge={enzymeEmerge} range={14} period={7000}>
-          {e.kind === 'amylase' ? <AmylaseEnzyme size={e.size} /> : <ProteaseEnzyme size={e.size} />}
+      {/* amylase enzymes */}
+      {amylaseEmerge > 0.01 && ENZYMES.filter((e) => e.kind === 'amylase').map((e) => (
+        <Floater key={`am-${e.seed}`} left={e.left} top={e.top} size={e.size} seed={e.seed} emerge={amylaseEmerge} range={14} period={7000}>
+          <AmylaseEnzyme size={e.size} />
         </Floater>
+      ))}
+
+      {/* protease enzymes */}
+      {proteaseEmerge > 0.01 && ENZYMES.filter((e) => e.kind === 'protease').map((e) => (
+        <Floater key={`pr-${e.seed}`} left={e.left} top={e.top} size={e.size} seed={e.seed} emerge={proteaseEmerge} range={14} period={7000}>
+          <ProteaseEnzyme size={e.size} />
+        </Floater>
+      ))}
+
+      {/* maltose↔glucose cross-feed specks */}
+      {crossfeedEmerge > 0.01 && CROSSFEED.map((c) => (
+        <SugarSpeck
+          key={`cf-${c.seed}`} fromL={c.fromL} fromT={c.fromT} toL={c.toL} toT={c.toT}
+          seed={c.seed} emerge={crossfeedEmerge} tone={c.tone}
+        />
       ))}
 
       {/* yeast */}

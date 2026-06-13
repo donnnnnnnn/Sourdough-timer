@@ -378,16 +378,6 @@ export function FermentationScene({ mode, fraction = 0 }: { mode: SceneMode; fra
 
   return (
     <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, overflow: 'hidden' }}>
-      {/* DEBUG: plain marker (tests container). Solid red square, top-left. */}
-      {bulk && (
-        <View style={{ position: 'absolute', left: '2%', top: '2%', width: 30, height: 30, backgroundColor: 'red' }} />
-      )}
-      {/* DEBUG: Floater marker (tests organism path). Solid blue square, center. */}
-      {bulk && (
-        <Floater left="46%" top="46%" size={30} seed={99} emerge={1} range={12} period={5000}>
-          <View style={{ width: 30, height: 30, backgroundColor: 'blue' }} />
-        </Floater>
-      )}
       {/* warm dough glow */}
       <View style={{
         position: 'absolute', bottom: -60, alignSelf: 'center',

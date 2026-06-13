@@ -240,9 +240,6 @@ function AceticMolecule({ size }: { size: number }) {
 
 // ---------------------------------------------------------------------------
 // Floater — positions and drifts an organism, emerging it smoothly.
-// Static styles (opacity, scale) go on the outer View; only animated
-// interpolations go on the inner Animated.View. Mixing the two in one
-// style object causes React Native Web to silently drop all styles.
 // ---------------------------------------------------------------------------
 function Floater({
   left, top, size, seed, emerge, range = 10, period = 6000, children,
@@ -285,7 +282,7 @@ function GlutenStrand({ top, seed, strength }: { top: string; seed: number; stre
   if (strength <= 0.001) return null;
   const h = 2 + strength * 3;
   return (
-    <Animated.View style={{
+    <Animated.View pointerEvents="none" style={{
       position: 'absolute', left: '6%', right: '6%', top: top as `${number}%`,
       height: h, borderRadius: h / 2,
       backgroundColor: `rgba(${GLUTEN},0.45)`,
@@ -308,7 +305,7 @@ function Bubble({ left, seed, fraction }: { left: string; seed: number; fraction
   const drift = 5 + (seed % 4) * 4;
   const hl = size * 0.3;
   return (
-    <Animated.View style={{
+    <Animated.View pointerEvents="none" style={{
       position: 'absolute', bottom: 0, left: left as `${number}%`,
       opacity: t.interpolate({ inputRange: [0, 0.12, 0.78, 1], outputRange: [0, peak, peak, 0] }),
       transform: [
@@ -380,7 +377,17 @@ export function FermentationScene({ mode, fraction = 0 }: { mode: SceneMode; fra
     : Math.max(1 - smoothstep(0.04, 0.16, f), 0.6 * smoothstep(0.82, 0.96, f));
 
   return (
-    <View style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, overflow: 'hidden' }}>
+    <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, overflow: 'hidden' }}>
+      {/* DEBUG: plain marker (tests container). Solid red square, top-left. */}
+      {bulk && (
+        <View style={{ position: 'absolute', left: '2%', top: '2%', width: 30, height: 30, backgroundColor: 'red' }} />
+      )}
+      {/* DEBUG: Floater marker (tests organism path). Solid blue square, center. */}
+      {bulk && (
+        <Floater left="46%" top="46%" size={30} seed={99} emerge={1} range={12} period={5000}>
+          <View style={{ width: 30, height: 30, backgroundColor: 'blue' }} />
+        </Floater>
+      )}
       {/* warm dough glow */}
       <View style={{
         position: 'absolute', bottom: -60, alignSelf: 'center',

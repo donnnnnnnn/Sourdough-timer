@@ -728,7 +728,7 @@ export default function HomeScreen() {
       endNotificationId.current = await Notifications.scheduleNotificationAsync({
         content: {
           title: 'Bulk ferment is up',
-          body: 'You planned to end bulk now — check your dough and shape if it’s ready.',
+          body: 'You planned to end bulk now — check your dough and shape if it\'s ready.',
         },
         trigger: {
           type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
@@ -886,7 +886,7 @@ export default function HomeScreen() {
       {!isActive ? (
         <View style={{ gap: 28 }}>
           {autolyseRunning ? (
-            <View style={{ alignItems: 'center', paddingVertical: 14, minHeight: 220, justifyContent: 'center' }}>
+            <View style={{ position: 'relative', alignItems: 'center', paddingVertical: 14, minHeight: 220, justifyContent: 'center' }}>
               <FermentationScene mode="autolyse" />
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                 <FlaskConical color={C.accent} size={14} />
@@ -1222,7 +1222,7 @@ export default function HomeScreen() {
               translateY: enter.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }),
             }],
           }}>
-          <View style={{ alignItems: 'center', paddingTop: 8, paddingBottom: 12, minHeight: 280, justifyContent: 'center' }}>
+          <View style={{ position: 'relative', alignItems: 'center', paddingTop: 8, paddingBottom: 12, minHeight: 280, justifyContent: 'center' }}>
             <FermentationScene mode="bulk" fraction={bulkFraction} />
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
               <PulseDot />

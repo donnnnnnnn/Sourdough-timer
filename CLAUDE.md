@@ -43,6 +43,31 @@ python3 tools/curate_dataset.py --in dataset --out dataset_clean \
 python3 tools/train_crumb_model.py --data dataset_clean # train + export TFLite
 ```
 
+## References: Science-based authority
+
+For any code, captions, algorithms, or diagnostic advice that claims fermentation
+science, **read the books in `docs/references/`** (or the README there if PDFs
+haven't been uploaded yet). These are the canonical sources:
+
+- **Bread Science** (Buehler) — Use for: Q10 kinetics, yeast growth curves,
+  rise trajectory modeling, temperature corrections
+- **Modernist Bread** (Myhrvold & Migoya) — Use for: biochemistry details,
+  temperature tables, fermentation byproducts, diagnostic reasoning
+- **The Rye Baker** (Ginsberg) — Use for: long fermentation, wild yeast & LAB
+  population dynamics, starter strength indicators
+- **The Sourdough School** (Kimbell) — Use for: microbiome health,
+  fermentation markers (windowpane, oven spring), starter diagnostics
+
+**Primary research links** (check alongside the books for latest studies):
+- Q10 Rule: ~2× fermentation rate per 15°F. Base source: biochemistry texts
+  on enzyme kinetics (Michaelis-Menten, temperature coefficient).
+- Wild yeast & LAB kinetics: See Kimbell, Ginsberg, or ResearchGate studies
+  on *Saccharomyces cerevisiae* and *Lactobacillus* population dynamics in
+  sourdough.
+
+**When in doubt:** Trust explicit numbers in the books over general knowledge.
+If the books conflict, cite which one and explain the disagreement.
+
 ## Working principles (lessons from this project)
 
 These exist because we lost real time to each failure below. Follow them.

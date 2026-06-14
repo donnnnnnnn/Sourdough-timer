@@ -3,7 +3,7 @@ import { View, Text, TouchableOpacity, ScrollView, Platform, Animated, Easing } 
 import * as Notifications from 'expo-notifications';
 import * as Haptics from 'expo-haptics';
 import { useBakeStore } from '@/store/useBakeStore';
-import { suggestBulk } from '@/lib/bulkCoach';
+import { suggestBulk, estimatedRise } from '@/lib/bulkCoach';
 import { router } from 'expo-router';
 import { Sparkles, Hand, BellRing, Thermometer, Wand2, ArrowUp, FlaskConical, X } from 'lucide-react-native';
 import { C, fonts, label } from '@/components/theme';
@@ -366,8 +366,18 @@ const RISE_SWEET_HIGH = 75;
  * Manual rise tracker: the user marks how much the dough has grown since
  * the start of bulk. The 50-75% band is the classic "ready to shape" zone.
  */
-function RiseTracker({ pct, onChange }: { pct: number; onChange: (pct: number) => void }) {
-  const inZone = pct >= RISE_SWEET_LOW && pct <= RISE_SWEET_HIGH;
+function RiseTracker({
+  pct,
+  onChange,
+  estimated,
+}: {
+  pct: number;
+  onChange: (pct: number) => void;
+  estimated?: number;
+}) {
+  const display = pct > 0 ? pct : (estimated ?? 0);
+  const isManual = pct > 0;
+  const inZone = display >= RISE_SWEET_LOW && display <= RISE_SWEET_HIGH;
   return (
     <View
       style={{
@@ -386,24 +396,28 @@ function RiseTracker({ pct, onChange }: { pct: number; onChange: (pct: number) =
       </View>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
         <TouchableOpacity
-          onPress={() => onChange(Math.max(0, pct - 5))}
+          onPress={() => onChange(Math.max(0, (pct > 0 ? pct : display) - 5))}
           activeOpacity={0.7}
           style={{ paddingVertical: 8, paddingHorizontal: 24 }}>
           <Text style={{ color: C.text, fontSize: 26, fontWeight: '300' }}>−</Text>
         </TouchableOpacity>
-        <Text
-          style={{
-            color: inZone ? C.green : C.text,
-            fontSize: 44,
-            fontWeight: '200',
-            fontFamily: fonts.mono,
-            minWidth: 120,
-            textAlign: 'center',
-          }}>
-          {pct}%
-        </Text>
+        <View style={{ alignItems: 'center', minWidth: 120 }}>
+          <Text
+            style={{
+              color: inZone ? C.green : C.text,
+              fontSize: 44,
+              fontWeight: '200',
+              fontFamily: fonts.mono,
+              opacity: isManual ? 1 : 0.55,
+            }}>
+            {display}%
+          </Text>
+          {!isManual && display > 0 && (
+            <Text style={{ color: C.textDim, fontSize: 11, marginTop: -4 }}>estimated</Text>
+          )}
+        </View>
         <TouchableOpacity
-          onPress={() => onChange(Math.min(RISE_MAX, pct + 5))}
+          onPress={() => onChange(Math.min(RISE_MAX, (pct > 0 ? pct : display) + 5))}
           activeOpacity={0.7}
           style={{ paddingVertical: 8, paddingHorizontal: 24 }}>
           <Text style={{ color: C.text, fontSize: 26, fontWeight: '300' }}>+</Text>
@@ -426,20 +440,20 @@ function RiseTracker({ pct, onChange }: { pct: number; onChange: (pct: number) =
         />
         <View
           style={{
-            width: `${(Math.min(pct, RISE_MAX) / RISE_MAX) * 100}%`,
+            width: `${(Math.min(display, RISE_MAX) / RISE_MAX) * 100}%`,
             height: '100%',
             borderRadius: 5,
             backgroundColor: inZone ? C.green : C.accent,
-            opacity: 0.85,
+            opacity: isManual ? 0.85 : 0.4,
           }}
         />
       </View>
       <Text style={{ color: inZone ? C.green : C.textDim, fontSize: 12, marginTop: 8, textAlign: 'center' }}>
-        {pct === 0
-          ? 'mark the dough level as it grows'
+        {display === 0
+          ? 'tap +/− to mark actual rise, or watch the estimate build'
           : inZone
             ? 'in the zone — start watching for shape readiness'
-            : pct < RISE_SWEET_LOW
+            : display < RISE_SWEET_LOW
               ? 'still building'
               : 'past the zone — consider shaping now'}
       </Text>
@@ -706,11 +720,14 @@ export default function HomeScreen() {
         content: {
           title: 'Time to fold!',
           body: 'Stretch and fold your dough now.',
+          sound: true,
+          ...(Platform.OS === 'ios' && { interruptionLevel: 'timeSensitive' as const }),
         },
         trigger: {
           type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
           seconds: intervalMins * 60,
           repeats: true,
+          ...(Platform.OS === 'android' && { channelId: 'bake-alerts' }),
         },
       });
     } catch {}
@@ -728,12 +745,15 @@ export default function HomeScreen() {
       endNotificationId.current = await Notifications.scheduleNotificationAsync({
         content: {
           title: 'Bulk ferment is up',
-          body: 'You planned to end bulk now — check your dough and shape if it\'s ready.',
+          body: "Check your dough and shape if it's ready.",
+          sound: true,
+          ...(Platform.OS === 'ios' && { interruptionLevel: 'timeSensitive' as const }),
         },
         trigger: {
           type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
           seconds: secondsFromNow,
           repeats: false,
+          ...(Platform.OS === 'android' && { channelId: 'bake-alerts' }),
         },
       });
     } catch {}
@@ -748,11 +768,14 @@ export default function HomeScreen() {
         content: {
           title: 'Autolyse done',
           body: 'Add your levain and salt, then start bulk.',
+          sound: true,
+          ...(Platform.OS === 'ios' && { interruptionLevel: 'timeSensitive' as const }),
         },
         trigger: {
           type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
           seconds: secondsFromNow,
           repeats: false,
+          ...(Platform.OS === 'android' && { channelId: 'bake-alerts' }),
         },
       });
     } catch {}
@@ -1364,7 +1387,11 @@ export default function HomeScreen() {
             />
           </View>
 
-          <RiseTracker pct={risePercent} onChange={setRisePercent} />
+          <RiseTracker
+            pct={risePercent}
+            onChange={setRisePercent}
+            estimated={estimatedRise(elapsedMs / 60000, targetDurationMinutes)}
+          />
 
           <Springy
             onPress={handleFold}

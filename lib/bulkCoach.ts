@@ -1,5 +1,24 @@
 import type { BakeLog } from '@/store/useBakeStore';
 
+/**
+ * Estimates dough rise % from how far through bulk fermentation we are.
+ *
+ * Because targetMinutes is already temperature-corrected by suggestBulk,
+ * the fraction elapsed/target captures temperature implicitly — a hot kitchen
+ * shortens the target the same way it shortens actual fermentation. The curve
+ * is a sigmoid (slow lag phase → rapid CO2 production → plateau) calibrated
+ * so that elapsed == target lands at ~65%, the centre of the 50–75% shape zone.
+ */
+export function estimatedRise(elapsedMinutes: number, targetMinutes: number): number {
+  if (targetMinutes <= 0 || elapsedMinutes <= 0) return 0;
+  const f = Math.min(1.3, elapsedMinutes / targetMinutes);
+  const sigmoid = (x: number) => 1 / (1 + Math.exp(-9 * (x - 0.52)));
+  const base = sigmoid(0);
+  const atOne = sigmoid(1) - base;
+  const pct = ((sigmoid(f) - base) / atOne) * 65;
+  return Math.round(Math.max(0, pct));
+}
+
 // A typical sourdough at ~78°F finishes bulk in about 4 hours. Fermentation
 // rate roughly doubles for every 15°F of warmth (Q10 ≈ 2 over ~8°C), which is
 // the rule behind every baker's temperature table.

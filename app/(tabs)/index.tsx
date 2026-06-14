@@ -363,6 +363,38 @@ const RISE_SWEET_LOW = 50;
 const RISE_SWEET_HIGH = 75;
 
 /**
+ * Contextual tip shown when the user's actual rise reading diverges more
+ * than 15 percentage points from the temperature-model estimate.
+ * Differences that big usually point to something correctable next bake.
+ */
+function RiseAdvisory({ actual, estimated }: { actual: number; estimated: number }) {
+  const delta = actual - estimated;
+  if (Math.abs(delta) < 15) return null;
+  const fast = delta > 0;
+  return (
+    <View
+      style={{
+        marginTop: 14,
+        backgroundColor: fast ? 'rgba(232,163,61,0.08)' : 'rgba(100,130,220,0.08)',
+        borderWidth: 1,
+        borderColor: fast ? C.accentBorder : 'rgba(100,130,220,0.3)',
+        borderRadius: 12,
+        padding: 12,
+        gap: 4,
+      }}>
+      <Text style={{ color: fast ? C.accent : C.textMuted, fontSize: 12, fontWeight: '700' }}>
+        {fast ? 'Rising faster than expected' : 'Rising slower than expected'}
+      </Text>
+      <Text style={{ color: C.textMuted, fontSize: 12, lineHeight: 17 }}>
+        {fast
+          ? 'Your dough is ahead of the model — watch it closely and shape earlier if the windowpane looks good. Next bake: try water a few degrees cooler, or reduce your levain % slightly.'
+          : 'Your dough is behind the model — give it more time and check the windowpane before shaping. Next bake: try warmer water, a larger levain %, or check that your starter doubled reliably before mixing.'}
+      </Text>
+    </View>
+  );
+}
+
+/**
  * Manual rise tracker: the user marks how much the dough has grown since
  * the start of bulk. The 50-75% band is the classic "ready to shape" zone.
  */
@@ -457,6 +489,9 @@ function RiseTracker({
               ? 'still building'
               : 'past the zone — consider shaping now'}
       </Text>
+      {isManual && estimated !== undefined && estimated > 0 && (
+        <RiseAdvisory actual={pct} estimated={estimated} />
+      )}
     </View>
   );
 }
@@ -712,24 +747,29 @@ export default function HomeScreen() {
     return () => loop.stop();
   }, [autolyseDone, armPulse]);
 
-  async function scheduleFoldReminders(intervalMins: number) {
-    if (Platform.OS === 'web') return;
+  async function scheduleFoldReminders(intervalMins: number, count: number) {
+    if (Platform.OS === 'web' || count === 0) return;
     try {
       await Notifications.requestPermissionsAsync();
-      await Notifications.scheduleNotificationAsync({
-        content: {
-          title: 'Time to fold!',
-          body: 'Stretch and fold your dough now.',
-          sound: true,
-          ...(Platform.OS === 'ios' && { interruptionLevel: 'timeSensitive' as const }),
-        },
-        trigger: {
-          type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
-          seconds: intervalMins * 60,
-          repeats: true,
-          ...(Platform.OS === 'android' && { channelId: 'bake-alerts' }),
-        },
-      });
+      for (let i = 1; i <= count; i++) {
+        const isLast = i === count;
+        await Notifications.scheduleNotificationAsync({
+          content: {
+            title: count === 1 ? 'Time to fold!' : `Fold ${i} of ${count}`,
+            body: isLast
+              ? 'Last fold — start watching the dough for shape readiness.'
+              : 'Stretch and fold your dough now.',
+            sound: true,
+            ...(Platform.OS === 'ios' && { interruptionLevel: 'timeSensitive' as const }),
+          },
+          trigger: {
+            type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+            seconds: i * intervalMins * 60,
+            repeats: false,
+            ...(Platform.OS === 'android' && { channelId: 'bake-alerts' }),
+          },
+        });
+      }
     } catch {}
   }
 
@@ -811,7 +851,7 @@ export default function HomeScreen() {
       autolyseNotificationId.current = null;
     }
     if (foldCount !== defaultFoldCount) setDefaultFoldCount(foldCount);
-    scheduleFoldReminders(selectedInterval);
+    scheduleFoldReminders(selectedInterval, foldCount);
     scheduleEndAlert(plannedTarget * 60);
     startBulk(selectedInterval, plannedTarget);
     setNow(Date.now());

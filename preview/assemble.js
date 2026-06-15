@@ -92,12 +92,7 @@ html,body{margin:0;padding:0;background:#000;height:100%;}
 </div>
 <div id="testHeader" style="display:none;"></div>
 <div id="exportPanel" style="display:none;">
-  <button class="exportBtn" id="expCompareModes">⬇ compareModes sheet</button>
-  <button class="exportBtn" id="expLargeFull">⬇ large full sheet</button>
-  <button class="exportBtn" id="expYeast">⬇ yeast close-up sheet</button>
-  <button class="exportBtn" id="expLAB">⬇ LAB close-up sheet</button>
-  <button class="exportBtn" id="expGlutenFilm">⬇ gluten film sheet</button>
-  <button class="exportBtn" id="expGasCell">⬇ gas cell sheet</button>
+  <button class="exportBtn" id="expAllSheets">⬇ Export All PNGs</button>
   <div id="exportStatus"></div>
 </div>
 <div id="contactSheet" style="display:none;"></div>
@@ -288,13 +283,6 @@ function downloadPNG(dataURL,filename){
 function setExportStatus(msg){
   const el=document.getElementById('exportStatus');if(el)el.textContent=msg;
 }
-function withBusy(btn,label,fn){
-  btn.disabled=true;btn.textContent='rendering…';setExportStatus('');
-  requestAnimationFrame(()=>{
-    try{fn();}catch(e){setExportStatus('error: '+e.message);}
-    btn.disabled=false;btn.textContent=label;
-  });
-}
 
 // compareModes sheet: 9 time steps x 6 modes, 440x280 per panel, 6 cols x 9 rows
 function exportCompareModes(){
@@ -354,19 +342,33 @@ function exportTestSheet(testFn,filename){
   setExportStatus('saved '+filename);
 }
 
-function wireExportButtons(){
-  const defs=[
-    ['expCompareModes','⬇ compareModes sheet',()=>exportCompareModes()],
-    ['expLargeFull',   '⬇ large full sheet',  ()=>exportLargeFull()],
-    ['expYeast',       '⬇ yeast close-up sheet',    ()=>exportTestSheet(renderYeastTest,'fermentation-yeast.png')],
-    ['expLAB',         '⬇ LAB close-up sheet',      ()=>exportTestSheet(renderLABTest,'fermentation-lab.png')],
-    ['expGlutenFilm',  '⬇ gluten film sheet',        ()=>exportTestSheet(renderGlutenFilmTest,'fermentation-glutenfilm.png')],
-    ['expGasCell',     '⬇ gas cell sheet',           ()=>exportTestSheet(renderGasCellTest,'fermentation-gascell.png')],
+function exportAllSheets(){
+  const exports=[
+    ['compareModes',()=>exportCompareModes()],
+    ['largeFull',()=>exportLargeFull()],
+    ['yeast',()=>exportTestSheet(renderYeastTest,'fermentation-yeast.png')],
+    ['lab',()=>exportTestSheet(renderLABTest,'fermentation-lab.png')],
+    ['glutenFilm',()=>exportTestSheet(renderGlutenFilmTest,'fermentation-glutenfilm.png')],
+    ['gasCell',()=>exportTestSheet(renderGasCellTest,'fermentation-gascell.png')],
   ];
-  for(const[id,label,fn]of defs){
-    const btn=document.getElementById(id);
-    if(btn)btn.addEventListener('click',()=>withBusy(btn,label,fn));
+  let done=0;
+  for(const[name,fn]of exports){
+    setExportStatus('rendering '+name+'… ('+(done+1)+'/'+exports.length+')');
+    try{fn();}catch(e){setExportStatus('error: '+e.message);return;}
+    done++;
   }
+  setExportStatus('✓ saved 6 PNG files');
+}
+
+function wireExportButtons(){
+  const btn=document.getElementById('expAllSheets');
+  if(btn)btn.addEventListener('click',()=>{
+    btn.disabled=true;btn.textContent='exporting…';setExportStatus('');
+    requestAnimationFrame(()=>{
+      try{exportAllSheets();}catch(e){setExportStatus('error: '+e.message);}
+      btn.disabled=false;btn.textContent='⬇ Export All PNGs';
+    });
+  });
 }
 
 // ───────────────────────────────────────────────────────────────────────────────

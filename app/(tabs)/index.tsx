@@ -874,7 +874,7 @@ export default function HomeScreen() {
       setCelebrating(false);
       endBulk();
       router.push('/log');
-    }, 1600);
+    }, 2400);
   }
 
   function changeFoldCount(delta: number) {

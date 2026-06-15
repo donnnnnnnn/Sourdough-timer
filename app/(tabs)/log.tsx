@@ -103,24 +103,11 @@ function BakeCard({ item }: { item: BakeLog }) {
           </Text>
         </View>
         <View style={{ alignItems: 'flex-end', gap: 6, marginTop: 4 }}>
-          {copy ? (
+          {copy && (
             <View style={{ backgroundColor: C.chip, borderRadius: 10, paddingVertical: 5, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
               <Text style={{ fontSize: 13 }}>{copy.emoji}</Text>
               <Text style={{ color: C.accent, fontSize: 13, fontWeight: '600' }}>{copy.title}</Text>
             </View>
-          ) : (
-            <>
-              {item.crumbType && (
-                <View style={{ backgroundColor: C.chip, borderRadius: 10, paddingVertical: 5, paddingHorizontal: 12 }}>
-                  <Text style={{ color: C.accent, fontSize: 13, fontWeight: '600' }}>{item.crumbType}</Text>
-                </View>
-              )}
-              {item.shapeType && (
-                <View style={{ backgroundColor: C.chip, borderRadius: 10, paddingVertical: 5, paddingHorizontal: 12 }}>
-                  <Text style={{ color: C.textMuted, fontSize: 13, fontWeight: '600' }}>{item.shapeType}</Text>
-                </View>
-              )}
-            </>
           )}
         </View>
       </View>

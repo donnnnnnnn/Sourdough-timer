@@ -152,6 +152,11 @@ visible immediately, not discovered at training time.
 
 ## Git
 
+- **At the start of each session:** Run `git fetch origin && git branch -r` to
+  see all remote branches. Previous sessions may have created feature branches
+  (e.g. `claude/focused-babbage-KKUnX`) that contain work not yet on `main`
+  or the current session's branch. Check if there's unmerged work and merge it
+  in with `git merge origin/<branch-name> --no-edit` if needed.
 - Work happens on `claude/...` feature branches, pushed via the GitHub MCP
   tools (this cloud environment has no local git credentials).
 - Never push directly to `main` without being asked.

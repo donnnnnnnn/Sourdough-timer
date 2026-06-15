@@ -63,6 +63,11 @@ html,body{margin:0;padding:0;background:#000;height:100%;}
 #downloadBtn:hover{background:rgba(200,160,60,0.12);}
 #downloadStatus{color:rgba(200,160,60,0.6);font:11px monospace;}
 #testHeader{color:rgba(200,160,60,0.8);font:13px monospace;padding:12px;text-align:center;}
+#exportPanel{position:fixed;right:14px;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:7px;z-index:99;}
+.exportBtn{color:rgba(200,160,60,0.82);background:rgba(0,0,0,0.72);border:1px solid rgba(255,200,80,0.28);border-radius:9px;padding:5px 11px;font:10px monospace;cursor:pointer;white-space:nowrap;text-align:left;}
+.exportBtn:hover{background:rgba(255,200,80,0.10);border-color:rgba(255,200,80,0.55);}
+.exportBtn:disabled{opacity:0.38;cursor:default;}
+#exportStatus{color:rgba(200,160,60,0.55);font:9px monospace;text-align:right;max-width:160px;word-break:break-word;}
 </style>
 </head>
 <body>
@@ -86,6 +91,15 @@ html,body{margin:0;padding:0;background:#000;height:100%;}
   </div>
 </div>
 <div id="testHeader" style="display:none;"></div>
+<div id="exportPanel" style="display:none;">
+  <button class="exportBtn" id="expCompareModes">⬇ compareModes sheet</button>
+  <button class="exportBtn" id="expLargeFull">⬇ large full sheet</button>
+  <button class="exportBtn" id="expYeast">⬇ yeast close-up sheet</button>
+  <button class="exportBtn" id="expLAB">⬇ LAB close-up sheet</button>
+  <button class="exportBtn" id="expGlutenFilm">⬇ gluten film sheet</button>
+  <button class="exportBtn" id="expGasCell">⬇ gas cell sheet</button>
+  <div id="exportStatus"></div>
+</div>
 <div id="contactSheet" style="display:none;"></div>
 <div id="downloadSection" style="display:none;text-align:center;">
   <button id="downloadBtn">Download Contact Sheet PNG</button>
@@ -266,6 +280,96 @@ function downloadContactSheetPNG(){
 }
 
 // ───────────────────────────────────────────────────────────────────────────────
+//  ONE-CLICK PNG EXPORTS
+// ───────────────────────────────────────────────────────────────────────────────
+function downloadPNG(dataURL,filename){
+  const a=document.createElement('a');a.download=filename;a.href=dataURL;a.click();
+}
+function setExportStatus(msg){
+  const el=document.getElementById('exportStatus');if(el)el.textContent=msg;
+}
+function withBusy(btn,label,fn){
+  btn.disabled=true;btn.textContent='rendering…';setExportStatus('');
+  requestAnimationFrame(()=>{
+    try{fn();}catch(e){setExportStatus('error: '+e.message);}
+    btn.disabled=false;btn.textContent=label;
+  });
+}
+
+// compareModes sheet: 9 time steps x 6 modes, 440x280 per panel, 6 cols x 9 rows
+function exportCompareModes(){
+  const CW=440,CH=280,cols=6,rows=REVIEW_FRAMES.length;
+  const out=document.createElement('canvas');
+  out.width=CW*cols;out.height=CH*rows;
+  const oc=out.getContext('2d');oc.fillStyle='#000';oc.fillRect(0,0,out.width,out.height);
+  const tmp=document.createElement('canvas');tmp.width=CW;tmp.height=CH;
+  const tc=tmp.getContext('2d');
+  for(let r=0;r<rows;r++){
+    for(let ci=0;ci<cols;ci++){
+      render(tc,REVIEW_FRAMES[r],DIAG_MODES[ci]);
+      oc.drawImage(tmp,ci*CW,r*CH);
+      oc.fillStyle='rgba(200,160,60,0.7)';oc.font='11px monospace';
+      oc.fillText(DIAG_MODES[ci]+' t='+REVIEW_FRAMES[r].toFixed(2),ci*CW+5,r*CH+14);
+    }
+  }
+  downloadPNG(out.toDataURL('image/png'),'fermentation-compare-modes.png');
+  setExportStatus('saved compare-modes.png');
+}
+
+// large full sheet: 9 frames at 880x560, stacked vertically
+function exportLargeFull(){
+  const FW=880,FH=560,rows=REVIEW_FRAMES.length;
+  const out=document.createElement('canvas');
+  out.width=FW;out.height=FH*rows;
+  const oc=out.getContext('2d');oc.fillStyle='#000';oc.fillRect(0,0,out.width,out.height);
+  const tmp=document.createElement('canvas');tmp.width=FW;tmp.height=FH;
+  const tc=tmp.getContext('2d');
+  for(let r=0;r<rows;r++){
+    render(tc,REVIEW_FRAMES[r],'full');
+    oc.drawImage(tmp,0,r*FH);
+    oc.fillStyle='rgba(200,160,60,0.75)';oc.font='12px monospace';
+    const s=getStateSummary(REVIEW_FRAMES[r]);
+    oc.fillText(FRAME_LABELS[r]+'  '+summaryLine(s),6,r*FH+16);
+  }
+  downloadPNG(out.toDataURL('image/png'),'fermentation-large-full.png');
+  setExportStatus('saved large-full.png');
+}
+
+// close-up test sheet: 9 frames at 880x560 using one of the test render functions
+function exportTestSheet(testFn,filename){
+  const FW=880,FH=560,rows=REVIEW_FRAMES.length;
+  const out=document.createElement('canvas');
+  out.width=FW;out.height=FH*rows;
+  const oc=out.getContext('2d');oc.fillStyle='#000';oc.fillRect(0,0,out.width,out.height);
+  const tmp=document.createElement('canvas');tmp.width=FW;tmp.height=FH;
+  const tc=tmp.getContext('2d');
+  for(let r=0;r<rows;r++){
+    tc.clearRect(0,0,FW,FH);
+    testFn(tc,FW,FH,REVIEW_FRAMES[r]);
+    oc.drawImage(tmp,0,r*FH);
+    oc.fillStyle='rgba(200,160,60,0.65)';oc.font='11px monospace';
+    oc.fillText(FRAME_LABELS[r],6,r*FH+14);
+  }
+  downloadPNG(out.toDataURL('image/png'),filename);
+  setExportStatus('saved '+filename);
+}
+
+function wireExportButtons(){
+  const defs=[
+    ['expCompareModes','⬇ compareModes sheet',()=>exportCompareModes()],
+    ['expLargeFull',   '⬇ large full sheet',  ()=>exportLargeFull()],
+    ['expYeast',       '⬇ yeast close-up sheet',    ()=>exportTestSheet(renderYeastTest,'fermentation-yeast.png')],
+    ['expLAB',         '⬇ LAB close-up sheet',      ()=>exportTestSheet(renderLABTest,'fermentation-lab.png')],
+    ['expGlutenFilm',  '⬇ gluten film sheet',        ()=>exportTestSheet(renderGlutenFilmTest,'fermentation-glutenfilm.png')],
+    ['expGasCell',     '⬇ gas cell sheet',           ()=>exportTestSheet(renderGasCellTest,'fermentation-gascell.png')],
+  ];
+  for(const[id,label,fn]of defs){
+    const btn=document.getElementById(id);
+    if(btn)btn.addEventListener('click',()=>withBusy(btn,label,fn));
+  }
+}
+
+// ───────────────────────────────────────────────────────────────────────────────
 //  TEST MODE RENDERERS (close-up diagnostic)
 // ───────────────────────────────────────────────────────────────────────────────
 function runTestMode(testName,largeMode){
@@ -343,6 +447,10 @@ function runTestMode(testName,largeMode){
 
   FOAM=buildFoam(canvas.width,canvas.height);
 
+  // Export panel — visible in all modes
+  document.getElementById('exportPanel').style.display='flex';
+  wireExportButtons();
+
   // expose API for external scripts
   function captureFrame(t,mode){
     mode=mode||renderMode;
@@ -399,7 +507,6 @@ function runTestMode(testName,largeMode){
     }
     drawReview();
 
-    // set correct radio to checked
     const radios=document.querySelectorAll('input[name="reviewMode"]');
     radios.forEach(r=>{if(r.value===renderMode)r.checked=true;});
     radios.forEach(radio=>{
@@ -422,7 +529,6 @@ function runTestMode(testName,largeMode){
       pauseBtn.textContent='play';
     }
     pauseBtn.addEventListener('click',()=>{
-      // allow resuming animation
       let paused=true,startTime=null;
       pauseBtn.addEventListener('click',function toggle(){
         paused=!paused;pauseBtn.textContent=paused?'play':'pause';

@@ -8,11 +8,18 @@ import type { BakeLog } from '@/store/useBakeStore';
  * shortens the target the same way it shortens actual fermentation. Up to
  * the target, the curve is a sigmoid (slow lag phase → rapid CO2 production)
  * calibrated so elapsed == target lands at ~65%, the centre of the 50–75%
- * shape zone. Past the target the sigmoid itself is already nearly flat, so
- * we switch to a slower linear climb toward ~110% — representing dough that
- * keeps overproofing (gas escaping faster than it's trapped, see Buehler's
- * "Bread Science" on post-peak structural collapse) rather than freezing at
- * the sigmoid's saturation point.
+ * shape zone.
+ *
+ * Past the target, yeast keep exhaling CO2 well after the ideal pull time —
+ * Buehler's "Bread Science" describes severely overproofed dough continuing
+ * to swell for hours, long past any "100% risen" notion, before the gluten
+ * net (weakened by falling pH and protease activity) finally fails and the
+ * structure collapses. Each extra multiple of the target time still adds
+ * volume, but with steeply diminishing returns as gas escapes through the
+ * failing net nearly as fast as it's produced — modeled as a log curve so it
+ * keeps climbing for severe overproofing instead of flattening out near 100%.
+ * Capped at 350%, roughly the volume a dough reaches just before structural
+ * collapse, past which "rise" stops being a meaningful measurement.
  */
 export function estimatedRise(elapsedMinutes: number, targetMinutes: number): number {
   if (targetMinutes <= 0 || elapsedMinutes <= 0) return 0;
@@ -24,10 +31,9 @@ export function estimatedRise(elapsedMinutes: number, targetMinutes: number): nu
     const pct = ((sigmoid(f) - base) / atOne) * 65;
     return Math.round(Math.max(0, pct));
   }
-  // Past target: keep climbing (slumping/overproofing), capping at 2x target.
-  const over = Math.min(1, (f - 1) / 1);
-  const pct = 65 + over * 45;
-  return Math.round(Math.min(110, pct));
+  const overTime = f - 1; // multiples of target spent overproofing
+  const pct = 65 + 70 * Math.log2(1 + overTime);
+  return Math.round(Math.min(350, pct));
 }
 
 export interface FoldLatenessAdvice {

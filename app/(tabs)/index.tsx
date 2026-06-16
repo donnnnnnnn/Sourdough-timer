@@ -1000,9 +1000,14 @@ export default function HomeScreen() {
 
   const targetEndTimestamp = (bulkStartTimestamp ?? 0) + targetDurationMinutes * 60000;
 
-  // The timer digits warm from cream toward honey as bulk approaches target.
+  // The timer digits warm from cream toward honey as bulk approaches target —
+  // capped at 1 so the color stops at full honey instead of extrapolating.
   const bulkFraction = isActive ? Math.min(1, elapsedMs / (targetDurationMinutes * 60000)) : 0;
   const timerColor = lerpColor('#F2E8DC', '#E8A33D', bulkFraction);
+  // Uncapped fraction for the scene/phase caption, so overproofing keeps
+  // visibly progressing (and is correctly labeled) past the planned target
+  // instead of freezing at whatever the dough looked like right at fraction 1.
+  const sceneFraction = isActive ? elapsedMs / (targetDurationMinutes * 60000) : 0;
 
   const recentLog = bakeLogs.length > 0 ? bakeLogs[0] : null;
 
@@ -1377,7 +1382,7 @@ export default function HomeScreen() {
             }],
           }}>
           <View style={{ position: 'relative', alignItems: 'center', paddingTop: 8, paddingBottom: 12, minHeight: 280, justifyContent: 'center' }}>
-            <FermentationScene mode="bulk" fraction={bulkFraction} />
+            <FermentationScene mode="bulk" fraction={sceneFraction} />
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
               <PulseDot />
               <Text style={{ ...label, color: C.accent }}>
@@ -1408,8 +1413,8 @@ export default function HomeScreen() {
 
           {/* What's happening in the dough right now — science + sensory */}
           <PhaseCaption
-            copy={PHASE_SCRIPT[bulkPhaseIndex(bulkFraction)]}
-            phaseLabel={`Phase ${bulkPhaseIndex(bulkFraction) + 1}/5`}
+            copy={PHASE_SCRIPT[bulkPhaseIndex(sceneFraction)]}
+            phaseLabel={`Phase ${bulkPhaseIndex(sceneFraction) + 1}/5`}
           />
 
           {/* Whole-bulk progress toward the planned end time */}

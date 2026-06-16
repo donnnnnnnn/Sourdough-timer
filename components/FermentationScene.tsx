@@ -81,7 +81,11 @@ export const PHASE_SCRIPT: PhaseCopy[] = [
   },
 ];
 
-const PHASE_BOUNDS = [0.15, 0.4, 0.65, 0.85];
+// Boundaries are fractions of the *planned* bulk time. The last boundary
+// sits at 1.0 (not before it) so "The Knife's Edge" — the overproofing
+// caption — only appears once the dough has actually reached its target
+// time, not while it's still approaching a properly-fermented finish.
+const PHASE_BOUNDS = [0.12, 0.38, 0.65, 1.0];
 
 export function bulkPhaseIndex(fraction: number): number {
   for (let i = 0; i < PHASE_BOUNDS.length; i++) if (fraction < PHASE_BOUNDS[i]) return i;

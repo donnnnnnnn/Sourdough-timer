@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, Image, ActivityIndicator, Alert } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
-import { Camera } from 'lucide-react-native';
+import { Camera, RotateCcw } from 'lucide-react-native';
+import { router } from 'expo-router';
 import { useBakeStore, type Diagnosis, type PendingSession, type BakeLog } from '@/store/useBakeStore';
 import { diagnose, type ClassifierInput, type ShoulderProfile } from '@/model/classifier';
 import { analyzeCrumbPhoto, type CrumbVisionFeatures } from '@/model/visionAnalyzer';
@@ -118,7 +119,7 @@ function BakeCard({ item }: { item: BakeLog }) {
 type Step = 'sessions' | 'quick' | 'photo' | 'analysing' | 'result' | 'tiebreaker';
 
 export default function LogScreen() {
-  const { pendingSessions, bakeLogs, saveLog } = useBakeStore();
+  const { pendingSessions, bakeLogs, saveLog, lastEndedBulk, undoEndBulk } = useBakeStore();
   const [step, setStep] = useState<Step>('sessions');
   const [activeSession, setActiveSession] = useState<PendingSession | null>(null);
   const [photoUri, setPhotoUri] = useState<string | null>(null);
@@ -223,6 +224,34 @@ export default function LogScreen() {
         <Text style={{ color: C.textMuted, fontSize: 15, marginBottom: 28 }}>
           How'd it turn out?
         </Text>
+
+        {lastEndedBulk && (
+          <TouchableOpacity
+            onPress={() => {
+              undoEndBulk();
+              router.push('/');
+            }}
+            activeOpacity={0.7}
+            style={{
+              backgroundColor: C.chip,
+              borderRadius: 16,
+              padding: 16,
+              marginBottom: 24,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 12,
+            }}>
+            <RotateCcw color={C.accent} size={18} />
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: C.text, fontSize: 15, fontWeight: '700' }}>
+                Tapped End Bulk by mistake?
+              </Text>
+              <Text style={{ color: C.textDim, fontSize: 13, marginTop: 2 }}>
+                Jump back into the timer right where it left off
+              </Text>
+            </View>
+          </TouchableOpacity>
+        )}
 
         {pendingSessions.length > 0 && (
           <>

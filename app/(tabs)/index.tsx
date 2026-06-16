@@ -3,9 +3,9 @@ import { View, Text, TouchableOpacity, ScrollView, Platform, Animated, Easing } 
 import * as Notifications from 'expo-notifications';
 import * as Haptics from 'expo-haptics';
 import { useBakeStore } from '@/store/useBakeStore';
-import { suggestBulk, estimatedRise } from '@/lib/bulkCoach';
+import { suggestBulk, estimatedRise, foldLatenessAdvice } from '@/lib/bulkCoach';
 import { router } from 'expo-router';
-import { Sparkles, Hand, BellRing, Thermometer, Wand2, ArrowUp, FlaskConical, X } from 'lucide-react-native';
+import { Sparkles, Hand, BellRing, Thermometer, Wand2, ArrowUp, FlaskConical, X, Clock, CheckCircle2 } from 'lucide-react-native';
 import { C, fonts, label } from '@/components/theme';
 import {
   FermentationScene,
@@ -18,6 +18,7 @@ import {
 const AUTOLYSE_OPTIONS = [20, 30, 45, 60];
 
 const FOLD_INTERVALS = [30, 45, 60];
+const FOLD_LATE_THRESHOLD_MIN = 5;
 const TARGET_STEP = 30;       // adjust expected bulk time in 30-min steps
 const TARGET_MIN = 60;
 const TARGET_MAX = 720;
@@ -279,6 +280,7 @@ function DoughStory({
   foldTimestamps,
   plannedFolds,
   intervalMinutes,
+  nextFoldDueTimestamp,
   targetEndTs,
   now,
 }: {
@@ -286,6 +288,8 @@ function DoughStory({
   foldTimestamps: number[];
   plannedFolds: number;
   intervalMinutes: number;
+  /** Actual due time for the next undone fold — reflects any reschedule, not just startTs + i*interval. */
+  nextFoldDueTimestamp: number | null;
   targetEndTs: number;
   now: number;
 }) {
@@ -295,7 +299,10 @@ function DoughStory({
   ];
   for (let i = 0; i < foldRows; i++) {
     const done = i < foldTimestamps.length;
-    const due = startTs + (i + 1) * intervalMinutes * 60000;
+    // Steps beyond the immediate next fold project forward from the actual
+    // next-due time (which may have been rescheduled), not the original plan.
+    const stepsAhead = i - foldTimestamps.length;
+    const due = (nextFoldDueTimestamp ?? startTs + intervalMinutes * 60000) + stepsAhead * intervalMinutes * 60000;
     rows.push({
       label: `Fold ${i + 1}`,
       time: formatClock(done ? foldTimestamps[i] : due),
@@ -542,6 +549,71 @@ function CelebrationOverlay({ durationLabel }: { durationLabel: string }) {
 }
 
 /**
+ * Shown when a fold is recorded more than FOLD_LATE_THRESHOLD_MIN late: asks
+ * whether the next fold should stay on the original fixed cadence (so a late
+ * tap doesn't compound into every later fold also running late) or restart
+ * the interval from right now.
+ */
+function LateFoldConfirmOverlay({
+  lateMinutes,
+  intervalMinutes,
+  onKeepSchedule,
+  onRestartFromNow,
+  onDismiss,
+}: {
+  lateMinutes: number;
+  intervalMinutes: number;
+  onKeepSchedule: () => void;
+  onRestartFromNow: () => void;
+  onDismiss: () => void;
+}) {
+  const fade = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.timing(fade, { toValue: 1, duration: 200, easing: Easing.out(Easing.quad), useNativeDriver: true }).start();
+  }, [fade]);
+  return (
+    <Animated.View
+      style={{
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        top: 0,
+        bottom: 0,
+        backgroundColor: 'rgba(23,18,16,0.88)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        opacity: fade,
+        zIndex: 10,
+        padding: 28,
+      }}>
+      <View style={{ backgroundColor: C.card, borderWidth: 1, borderColor: C.cardBorder, borderRadius: 22, padding: 24, width: '100%', maxWidth: 360 }}>
+        <Text style={{ color: C.text, fontSize: 20, fontWeight: '700', marginBottom: 8 }}>
+          {lateMinutes} min late on this fold
+        </Text>
+        <Text style={{ color: C.textMuted, fontSize: 14, lineHeight: 20, marginBottom: 20 }}>
+          Should the next fold stay on the original {intervalMinutes}-min schedule, or start counting from right now?
+        </Text>
+        <TouchableOpacity
+          onPress={onKeepSchedule}
+          activeOpacity={0.8}
+          style={{ backgroundColor: C.accentSoft, borderWidth: 1, borderColor: C.accentBorder, borderRadius: 16, paddingVertical: 14, alignItems: 'center', marginBottom: 10 }}>
+          <Text style={{ color: C.accent, fontSize: 15, fontWeight: '700' }}>Keep original schedule</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={onRestartFromNow}
+          activeOpacity={0.8}
+          style={{ backgroundColor: C.chip, borderRadius: 16, paddingVertical: 14, alignItems: 'center', marginBottom: 10 }}>
+          <Text style={{ color: C.text, fontSize: 15, fontWeight: '700' }}>Restart {intervalMinutes} min from now</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={onDismiss} activeOpacity={0.7} style={{ alignItems: 'center', paddingVertical: 6 }}>
+          <Text style={{ color: C.textDim, fontSize: 13 }}>cancel</Text>
+        </TouchableOpacity>
+      </View>
+    </Animated.View>
+  );
+}
+
+/**
  * Whole-bulk progress bar: fill = elapsed / expected total, with a notch at
  * every scheduled fold time. Turns orange once the target is passed.
  */
@@ -657,6 +729,7 @@ export default function HomeScreen() {
     foldIntervalMinutes,
     completedFolds,
     foldTimestamps,
+    nextFoldDueTimestamp,
     defaultFoldCount,
     targetDurationMinutes,
     doughTempF,
@@ -679,6 +752,7 @@ export default function HomeScreen() {
   const [celebrating, setCelebrating] = useState(false);
   const [showAutolysePicker, setShowAutolysePicker] = useState(false);
   const [now, setNow] = useState(Date.now());
+  const [lateFoldConfirm, setLateFoldConfirm] = useState<{ lateMinutes: number } | null>(null);
 
   // Coach: suggested bulk time from kitchen temp + the user's own history.
   const suggestion = useMemo(() => suggestBulk(doughTempF, bakeLogs), [doughTempF, bakeLogs]);
@@ -858,8 +932,21 @@ export default function HomeScreen() {
   }
 
   function handleFold() {
+    const lateMinutes = nextFoldDueTimestamp ? Math.floor((Date.now() - nextFoldDueTimestamp) / 60000) : 0;
+    if (lateMinutes >= FOLD_LATE_THRESHOLD_MIN) {
+      thump(Haptics.ImpactFeedbackStyle.Light);
+      setLateFoldConfirm({ lateMinutes });
+      return;
+    }
     thump(Haptics.ImpactFeedbackStyle.Medium);
     recordFold();
+  }
+
+  /** keepSchedule=true: next fold stays on the original cadence. Otherwise the interval restarts from now. */
+  function resolveLateFold(keepSchedule: boolean) {
+    thump(Haptics.ImpactFeedbackStyle.Medium);
+    setLateFoldConfirm(null);
+    recordFold({ keepSchedule });
   }
 
   function handleEnd() {
@@ -899,10 +986,14 @@ export default function HomeScreen() {
 
   const elapsedSecs = Math.floor(elapsedMs / 1000);
   const intervalSecs = foldIntervalMinutes * 60;
-  const elapsedInCurrentInterval = elapsedSecs % intervalSecs;
-  const secondsUntilNextFold = intervalSecs - elapsedInCurrentInterval;
-  const nextFold = formatElapsed(secondsUntilNextFold * 1000);
-  const intervalProgress = elapsedInCurrentInterval / intervalSecs;
+  const foldsComplete = nextFoldDueTimestamp === null && defaultFoldCount > 0 && completedFolds >= defaultFoldCount;
+  const secondsUntilNextFold = nextFoldDueTimestamp ? Math.round((nextFoldDueTimestamp - now) / 1000) : 0;
+  const nextFold = formatElapsed(Math.max(0, secondsUntilNextFold) * 1000);
+  const intervalProgress = nextFoldDueTimestamp
+    ? 1 - Math.max(0, Math.min(1, secondsUntilNextFold / intervalSecs))
+    : 0;
+  const lateMinutes = nextFoldDueTimestamp && secondsUntilNextFold < 0 ? Math.floor(-secondsUntilNextFold / 60) : 0;
+  const foldIsLate = lateMinutes >= FOLD_LATE_THRESHOLD_MIN;
 
   // First couple of minutes: caption acknowledges the starter just went in.
   const justStarted = isActive && elapsedSecs < 120;
@@ -1366,46 +1457,83 @@ export default function HomeScreen() {
             </View>
           </View>
 
-          <View
-            style={{
-              backgroundColor: C.card,
-              borderWidth: 1,
-              borderColor: C.cardBorder,
-              borderRadius: 20,
-              padding: 20,
-              alignItems: 'center',
-            }}>
-            <Text style={{ ...label, marginBottom: 6 }}>
-              Next fold in
-            </Text>
-            <Text style={{
-              color: C.text,
-              fontSize: 38,
-              fontWeight: '300',
-              fontFamily: fonts.mono,
-            }}>
-              {nextFold.minutes}:{nextFold.seconds}
-            </Text>
-            {/* progress through the current fold interval */}
-            <View style={{
-              width: '100%',
-              height: 6,
-              borderRadius: 3,
-              backgroundColor: C.chip,
-              marginTop: 14,
-              overflow: 'hidden',
-            }}>
-              <View style={{
-                width: `${Math.min(100, intervalProgress * 100)}%`,
-                height: '100%',
-                borderRadius: 3,
-                backgroundColor: C.accent,
-              }} />
+          {foldsComplete ? (
+            <View
+              style={{
+                backgroundColor: C.card,
+                borderWidth: 1,
+                borderColor: C.cardBorder,
+                borderRadius: 20,
+                paddingVertical: 14,
+                paddingHorizontal: 20,
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 10,
+              }}>
+              <CheckCircle2 color={C.accent} size={18} />
+              <Text style={{ color: C.text, fontSize: 15, fontWeight: '600' }}>
+                All {defaultFoldCount} folds done — watch the dough for shape readiness
+              </Text>
             </View>
-            <Text style={{ color: C.textDim, fontSize: 13, marginTop: 10 }}>
-              every {foldIntervalMinutes} min
-            </Text>
-          </View>
+          ) : foldIsLate ? (
+            <View
+              style={{
+                backgroundColor: C.card,
+                borderWidth: 1,
+                borderColor: C.cardBorder,
+                borderRadius: 20,
+                padding: 20,
+              }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                <Clock color={C.orange} size={16} />
+                <Text style={{ ...label, color: C.orange }}>{foldLatenessAdvice(lateMinutes, doughTempF).title}</Text>
+              </View>
+              <Text style={{ color: C.textMuted, fontSize: 14, lineHeight: 20 }}>
+                {foldLatenessAdvice(lateMinutes, doughTempF).body}
+              </Text>
+            </View>
+          ) : (
+            <View
+              style={{
+                backgroundColor: C.card,
+                borderWidth: 1,
+                borderColor: C.cardBorder,
+                borderRadius: 20,
+                padding: 20,
+                alignItems: 'center',
+              }}>
+              <Text style={{ ...label, marginBottom: 6 }}>
+                Next fold in
+              </Text>
+              <Text style={{
+                color: C.text,
+                fontSize: 38,
+                fontWeight: '300',
+                fontFamily: fonts.mono,
+              }}>
+                {nextFold.minutes}:{nextFold.seconds}
+              </Text>
+              {/* progress through the current fold interval */}
+              <View style={{
+                width: '100%',
+                height: 6,
+                borderRadius: 3,
+                backgroundColor: C.chip,
+                marginTop: 14,
+                overflow: 'hidden',
+              }}>
+                <View style={{
+                  width: `${Math.min(100, intervalProgress * 100)}%`,
+                  height: '100%',
+                  borderRadius: 3,
+                  backgroundColor: C.accent,
+                }} />
+              </View>
+              <Text style={{ color: C.textDim, fontSize: 13, marginTop: 10 }}>
+                every {foldIntervalMinutes} min
+              </Text>
+            </View>
+          )}
 
           {/* The dough's story so far */}
           <View
@@ -1422,6 +1550,7 @@ export default function HomeScreen() {
               foldTimestamps={foldTimestamps}
               plannedFolds={defaultFoldCount}
               intervalMinutes={foldIntervalMinutes}
+              nextFoldDueTimestamp={nextFoldDueTimestamp}
               targetEndTs={targetEndTimestamp}
               now={now}
             />
@@ -1488,6 +1617,16 @@ export default function HomeScreen() {
 
     {celebrating && (
       <CelebrationOverlay durationLabel={`${formatMinutes(Math.round(elapsedMs / 60000))} of bulk`} />
+    )}
+
+    {lateFoldConfirm && (
+      <LateFoldConfirmOverlay
+        lateMinutes={lateFoldConfirm.lateMinutes}
+        intervalMinutes={foldIntervalMinutes}
+        onKeepSchedule={() => resolveLateFold(true)}
+        onRestartFromNow={() => resolveLateFold(false)}
+        onDismiss={() => setLateFoldConfirm(null)}
+      />
     )}
     </View>
   );

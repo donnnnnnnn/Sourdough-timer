@@ -5,18 +5,51 @@ import type { BakeLog } from '@/store/useBakeStore';
  *
  * Because targetMinutes is already temperature-corrected by suggestBulk,
  * the fraction elapsed/target captures temperature implicitly — a hot kitchen
- * shortens the target the same way it shortens actual fermentation. The curve
- * is a sigmoid (slow lag phase → rapid CO2 production → plateau) calibrated
- * so that elapsed == target lands at ~65%, the centre of the 50–75% shape zone.
+ * shortens the target the same way it shortens actual fermentation. Up to
+ * the target, the curve is a sigmoid (slow lag phase → rapid CO2 production)
+ * calibrated so elapsed == target lands at ~65%, the centre of the 50–75%
+ * shape zone. Past the target the sigmoid itself is already nearly flat, so
+ * we switch to a slower linear climb toward ~110% — representing dough that
+ * keeps overproofing (gas escaping faster than it's trapped, see Buehler's
+ * "Bread Science" on post-peak structural collapse) rather than freezing at
+ * the sigmoid's saturation point.
  */
 export function estimatedRise(elapsedMinutes: number, targetMinutes: number): number {
   if (targetMinutes <= 0 || elapsedMinutes <= 0) return 0;
-  const f = Math.min(1.3, elapsedMinutes / targetMinutes);
+  const f = elapsedMinutes / targetMinutes;
   const sigmoid = (x: number) => 1 / (1 + Math.exp(-9 * (x - 0.52)));
   const base = sigmoid(0);
   const atOne = sigmoid(1) - base;
-  const pct = ((sigmoid(f) - base) / atOne) * 65;
-  return Math.round(Math.max(0, pct));
+  if (f <= 1) {
+    const pct = ((sigmoid(f) - base) / atOne) * 65;
+    return Math.round(Math.max(0, pct));
+  }
+  // Past target: keep climbing (slumping/overproofing), capping at 2x target.
+  const over = Math.min(1, (f - 1) / 1);
+  const pct = 65 + over * 45;
+  return Math.round(Math.min(110, pct));
+}
+
+export interface FoldLatenessAdvice {
+  title: string;
+  body: string;
+}
+
+/**
+ * Reassurance + a sourced suggestion when a fold reminder has gone unanswered
+ * for a while — the push notification may have been delayed by Android/iOS
+ * background throttling, or the baker was just busy. Cites the Q10 rule
+ * (docs/references) since the natural fix is adjusting the planned interval
+ * for kitchen temperature, not panicking about the dough.
+ */
+export function foldLatenessAdvice(lateMinutes: number, kitchenTempF: number): FoldLatenessAdvice {
+  const warm = kitchenTempF >= 78;
+  return {
+    title: `Running ${lateMinutes} min late — that's okay`,
+    body: warm
+      ? `A few extra minutes won't hurt a fold — the dough keeps working the whole time. Since your kitchen's ${kitchenTempF}°F, fermentation runs faster than the 78°F baseline (the Q10 rule: roughly 2× faster per 15°F warmer), so if this keeps happening, try a shorter interval next bake.`
+      : `A few extra minutes won't hurt a fold — the dough keeps working the whole time. Since your kitchen's ${kitchenTempF}°F, fermentation runs slower than the 78°F baseline (the Q10 rule: roughly 2× slower per 15°F cooler), so a longer interval next bake may fit your schedule better.`,
+  };
 }
 
 // A typical sourdough at ~78°F finishes bulk in about 4 hours. Fermentation

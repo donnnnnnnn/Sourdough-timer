@@ -5,7 +5,9 @@
   "build": {
     "preview": {
       "android": {
-        "buildType": "apk"
+        "buildType": "apk",
+        "distribution": "internal",
+        "ndk": "26.1.10909125"
       }
     },
     "production": {

@@ -19,6 +19,12 @@ const AUTOLYSE_OPTIONS = [20, 30, 45, 60];
 
 const FOLD_INTERVALS = [30, 45, 60];
 const FOLD_LATE_THRESHOLD_MIN = 5;
+// A fold reminder re-alerts every FOLD_ALARM_GAP_SECONDS, FOLD_ALARM_REPEATS
+// extra times after the first, so it keeps making noise (~1 min) until you
+// record the fold — the record cancels the remaining alerts. This is the
+// closest expo-notifications gets to a native alarm that rings until dismissed.
+const FOLD_ALARM_GAP_SECONDS = 8;
+const FOLD_ALARM_REPEATS = 7;
 const TARGET_STEP = 30;       // adjust expected bulk time in 30-min steps
 const TARGET_MIN = 60;
 const TARGET_MAX = 720;
@@ -758,6 +764,10 @@ export default function HomeScreen() {
   const suggestion = useMemo(() => suggestBulk(doughTempF, bakeLogs), [doughTempF, bakeLogs]);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const endNotificationId = useRef<string | null>(null);
+  // Every notification id currently scheduled for fold reminders. Tracked
+  // separately so we can cancel/reschedule folds without disturbing the bulk-end
+  // or autolyse alerts.
+  const foldAlarmIds = useRef<string[]>([]);
 
   const isActive = bulkStartTimestamp !== null;
   const autolyseEndTs = autolyseStartTimestamp !== null ? autolyseStartTimestamp + autolyseDurationMinutes * 60000 : 0;
@@ -790,6 +800,52 @@ export default function HomeScreen() {
     prevFolds.current = completedFolds;
   }, [completedFolds, foldPop]);
 
+  // Keep the fold reminders in sync with what's actually been recorded. Runs
+  // whenever a fold is recorded, rescheduled (late-fold), or the bulk starts/
+  // ends — so a fold you've already logged never fires a reminder, and the
+  // alarm always lands on the true due time.
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    let superseded = false;
+    (async () => {
+      await cancelFoldAlarms();
+      if (superseded) return;
+      if (isActive && nextFoldDueTimestamp != null) {
+        await scheduleFoldAlarms(
+          nextFoldDueTimestamp,
+          completedFolds,
+          defaultFoldCount,
+          foldIntervalMinutes,
+        );
+      }
+    })();
+    return () => {
+      superseded = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isActive, nextFoldDueTimestamp, completedFolds, defaultFoldCount, foldIntervalMinutes]);
+
+  // Tapping the reminder (or its "I folded" button) silences the repeating
+  // alarm; the button also records the fold, which re-syncs to the next one.
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    const sub = Notifications.addNotificationResponseReceivedListener((response) => {
+      const isFoldReminder =
+        response.notification.request.content.categoryIdentifier === 'fold-reminder';
+      if (!isFoldReminder) return;
+      cancelFoldAlarms();
+      if (
+        response.actionIdentifier === 'FOLDED' &&
+        useBakeStore.getState().bulkStartTimestamp !== null &&
+        useBakeStore.getState().nextFoldDueTimestamp !== null
+      ) {
+        recordFold();
+      }
+    });
+    return () => sub.remove();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Tick every second while a bulk OR an autolyse rest is in progress.
   const ticking = isActive || autolyseStartTimestamp !== null;
   useEffect(() => {
@@ -821,29 +877,71 @@ export default function HomeScreen() {
     return () => loop.stop();
   }, [autolyseDone, armPulse]);
 
-  async function scheduleFoldReminders(intervalMins: number, count: number) {
-    if (Platform.OS === 'web' || count === 0) return;
+  /** Cancel only the fold reminders (leaves end/autolyse alerts alone). */
+  async function cancelFoldAlarms() {
+    if (Platform.OS === 'web') return;
+    const ids = foldAlarmIds.current;
+    foldAlarmIds.current = [];
+    await Promise.all(
+      ids.map((id) => Notifications.cancelScheduledNotificationAsync(id).catch(() => {})),
+    );
+  }
+
+  /**
+   * Schedule reminders for every fold that hasn't been recorded yet, at their
+   * absolute due times. The immediate next fold gets a repeating "alarm" burst
+   * (fires every few seconds until you record it); later folds get a single
+   * reminder as an app-was-killed safety net — they're upgraded to a full burst
+   * the moment they become the next fold (recording a fold re-syncs).
+   *
+   * Because this is driven off nextFoldDueTimestamp and completedFolds, a
+   * recorded fold never keeps a pending reminder, and a late-fold reschedule is
+   * reflected automatically — fixing both the "fires after I folded" and the
+   * drifted-timing bugs.
+   */
+  async function scheduleFoldAlarms(
+    nextDueTs: number,
+    doneFolds: number,
+    totalFolds: number,
+    intervalMins: number,
+  ) {
+    if (Platform.OS === 'web' || totalFolds === 0 || doneFolds >= totalFolds) return;
     try {
-      await Notifications.requestPermissionsAsync();
-      for (let i = 1; i <= count; i++) {
-        const isLast = i === count;
-        await Notifications.scheduleNotificationAsync({
-          content: {
-            title: count === 1 ? 'Time to fold!' : `Fold ${i} of ${count}`,
-            body: isLast
-              ? 'Last fold — start watching the dough for shape readiness.'
-              : 'Stretch and fold your dough now.',
-            sound: true,
-            ...(Platform.OS === 'ios' && { interruptionLevel: 'timeSensitive' as const }),
-          },
-          trigger: {
-            type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
-            seconds: i * intervalMins * 60,
-            repeats: false,
-            ...(Platform.OS === 'android' && { channelId: 'bake-alerts' }),
-          },
-        });
+      const perms = await Notifications.getPermissionsAsync();
+      if (!perms.granted) {
+        const req = await Notifications.requestPermissionsAsync();
+        if (!req.granted) return;
       }
+      const ids: string[] = [];
+      for (let n = doneFolds + 1; n <= totalFolds; n++) {
+        const isLast = n === totalFolds;
+        const isNext = n === doneFolds + 1;
+        const dueTs = nextDueTs + (n - (doneFolds + 1)) * intervalMins * 60000;
+        // The next fold nags repeatedly; the rest get one shot until re-synced.
+        const repeats = isNext ? FOLD_ALARM_REPEATS : 0;
+        for (let k = 0; k <= repeats; k++) {
+          const fireTs = dueTs + k * FOLD_ALARM_GAP_SECONDS * 1000;
+          if (fireTs <= Date.now() + 500) continue; // don't schedule times already past
+          const id = await Notifications.scheduleNotificationAsync({
+            content: {
+              title: totalFolds === 1 ? 'Time to fold!' : `Fold ${n} of ${totalFolds}`,
+              body: isLast
+                ? 'Last fold — stretch and fold, then watch the dough for shape readiness.'
+                : 'Stretch and fold your dough now.',
+              sound: true,
+              categoryIdentifier: 'fold-reminder',
+              ...(Platform.OS === 'ios' && { interruptionLevel: 'timeSensitive' as const }),
+            },
+            trigger: {
+              type: Notifications.SchedulableTriggerInputTypes.DATE,
+              date: fireTs,
+              ...(Platform.OS === 'android' && { channelId: 'bake-alerts' }),
+            },
+          });
+          ids.push(id);
+        }
+      }
+      foldAlarmIds.current = ids;
     } catch {}
   }
 
@@ -900,6 +998,7 @@ export default function HomeScreen() {
     try {
       endNotificationId.current = null;
       autolyseNotificationId.current = null;
+      foldAlarmIds.current = [];
       await Notifications.cancelAllScheduledNotificationsAsync();
     } catch {}
   }
@@ -925,7 +1024,8 @@ export default function HomeScreen() {
       autolyseNotificationId.current = null;
     }
     if (foldCount !== defaultFoldCount) setDefaultFoldCount(foldCount);
-    scheduleFoldReminders(selectedInterval, foldCount);
+    // Fold reminders are scheduled reactively by the sync effect once startBulk
+    // sets nextFoldDueTimestamp — no need to schedule them here.
     scheduleEndAlert(plannedTarget * 60);
     startBulk(selectedInterval, plannedTarget);
     setNow(Date.now());

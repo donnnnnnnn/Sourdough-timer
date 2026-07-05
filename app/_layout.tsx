@@ -19,6 +19,17 @@ Notifications.setNotificationHandler({
   }),
 });
 
+// A fold reminder carries an "I folded" action so the persistent alarm can be
+// silenced straight from the notification (recording the fold cancels the rest
+// of the repeating alerts). Registered once at startup.
+Notifications.setNotificationCategoryAsync('fold-reminder', [
+  {
+    identifier: 'FOLDED',
+    buttonTitle: 'I folded ✓',
+    options: { opensAppToForeground: true },
+  },
+]).catch(() => {});
+
 export { ErrorBoundary } from 'expo-router';
 
 export const unstable_settings = {

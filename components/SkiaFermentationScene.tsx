@@ -210,9 +210,19 @@ function drawYeast(canvas: any, st: DoughState, W: number, H: number, time: numb
   const rng = mulberry32(99);
   const count = Math.round(lerp(2, 7, m));
   const vigor = m;
+  // Blue-noise-ish spread via the plastic-number (R2) low-discrepancy sequence:
+  // deterministic, frame-stable, and guarantees the colony fills the frame
+  // instead of piling up like raw PRNG samples do. A small seeded jitter keeps
+  // it from reading as a lattice.
+  const R2A = 0.7548776662466927;
+  const R2B = 0.5698402909980532;
   for (let i = 0; i < count; i++) {
-    const bx0 = lerp(46, W - 46, rng());
-    const by0 = lerp(58, H - 64, rng());
+    const fx = (0.5 + R2A * (i + 1)) % 1;
+    const fy = (0.5 + R2B * (i + 1)) % 1;
+    const jx = (rng() * 2 - 1) * 24;
+    const jy = (rng() * 2 - 1) * 24;
+    const bx0 = clamp(lerp(52, W - 52, fx) + jx, 46, W - 46);
+    const by0 = clamp(lerp(66, H - 72, fy) + jy, 58, H - 64);
     const r0 = lerp(14, 22, rng()) * lerp(0.75, 1.05, vigor);
     const bright = lerp(0.55, 1.0, vigor);
     const d = drift(time, i + 1, 6, 5, 6.2);
@@ -380,40 +390,58 @@ function drawGluten(canvas: any, st: DoughState, W: number, H: number, time: num
   const y0 = 50;
   const y1 = H - 42;
   const slack = 1 - organize;
-  const nodes: { x: number; y: number }[] = [];
+  // Persistent per-node irregularity (kept even when fully organized) + extra
+  // slack wander when the network is relaxed. A protein mesh is aligned but
+  // never a perfect grid, so a baseline jitter always survives.
+  const jBase = 11;
+  const nodes: { x: number; y: number; v: number }[] = [];
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
       const gx = lerp(x0, x1, c / (COLS - 1));
       const gy = lerp(y0, y1, r / (ROWS - 1));
-      const jx = (rng() * 2 - 1) * 28 * slack;
-      const jy = (rng() * 2 - 1) * 24 * slack;
+      const jx = (rng() * 2 - 1) * (jBase + 26 * slack);
+      const jy = (rng() * 2 - 1) * (jBase * 0.85 + 22 * slack);
+      const nvar = lerp(0.8, 1.2, rng()); // node-size variety
       // gentle live shimmer of the mesh
       const sh = Math.sin((time * TAU) / 7 + c * 0.7 + r * 0.9) * 1.4 * (0.4 + organize * 0.6);
-      nodes.push({ x: gx + jx, y: gy + jy + sh });
+      nodes.push({ x: gx + jx, y: gy + jy + sh, v: nvar });
     }
   }
   const at = (c: number, r: number) => nodes[r * COLS + c];
   const strandA = lerp(0.14, 0.6, organize) * (1 - 0.8 * fray);
   const strandW = lerp(1.0, 4.0, organize) * (1 - 0.55 * fray);
   const srng = mulberry32(7013);
+  let idx = 0;
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
       const n = at(c, r);
-      const neigh: { x: number; y: number }[] = [];
-      if (c < COLS - 1) neigh.push(at(c + 1, r));
-      if (r < ROWS - 1) neigh.push(at(c, r + 1));
-      for (const nb of neigh) drawStrand(canvas, n, nb, strandW, strandA, fray, srng);
+      if (c < COLS - 1) drawStrand(canvas, n, at(c + 1, r), strandW, strandA, fray, organize, time, idx++, srng);
+      if (r < ROWS - 1) drawStrand(canvas, n, at(c, r + 1), strandW, strandA, fray, organize, time, idx++, srng);
+    }
+  }
+  // A few diagonal cross-links so the web reads tangled, not like graph paper.
+  const drng = mulberry32(9161);
+  for (let r = 0; r < ROWS - 1; r++) {
+    for (let c = 0; c < COLS - 1; c++) {
+      const pick = drng();
+      if (pick < 0.22)
+        drawStrand(canvas, at(c, r), at(c + 1, r + 1), strandW * 0.72, strandA * 0.62, fray, organize, time, idx++, srng);
+      else if (pick < 0.4)
+        drawStrand(canvas, at(c + 1, r), at(c, r + 1), strandW * 0.72, strandA * 0.62, fray, organize, time, idx++, srng);
     }
   }
   const alive = clamp(organize * (1 - fray), 0, 1);
   if (alive >= 0.04) {
     for (const n of nodes) {
-      const nr = lerp(2.0, 6.5, organize) * (1 - 0.6 * fray);
+      const nr = lerp(2.0, 6.5, organize) * (1 - 0.6 * fray) * n.v;
       halo(canvas, n.x, n.y, nr * 2.0, P.gluten, 0.16 * alive, nr * 1.1);
       glowOrb(canvas, n.x, n.y, nr, P.glutenHot, P.gluten, 0.9 * alive, 0.6 * alive);
     }
   }
 }
+// One strand a→b as a curved, sagging filament (not a straight lattice edge):
+// a quadratic bow perpendicular to the run, deterministic thickness variation,
+// and a live wobble. Frays into two recoiled curved stubs as damage rises.
 function drawStrand(
   canvas: any,
   a: { x: number; y: number },
@@ -421,30 +449,51 @@ function drawStrand(
   w: number,
   alpha: number,
   fray: number,
+  organize: number,
+  time: number,
+  idx: number,
   rng: () => number,
 ) {
   'worklet';
   if (alpha < 0.01) return;
+  const thick = w * lerp(0.6, 1.45, rng());
+  const bowSign = rng() < 0.5 ? -1 : 1;
+  const bowMag = lerp(5, 14, rng());
+  const snap = rng();
   const p = additivePaint();
   p.setStyle(PaintStyle.Stroke);
-  p.setStrokeWidth(w);
+  p.setStrokeWidth(thick);
   p.setStrokeCap(StrokeCap.Round);
   p.setColor(col(P.gluten, alpha));
   p.setMaskFilter(Skia.MaskFilter.MakeBlur(BlurStyle.Normal, lerp(0.6, 2.2, alpha), false));
-  if (fray > 0.35 && rng() < fray) {
-    const mx = lerp(a.x, b.x, 0.5);
-    const my = lerp(a.y, b.y, 0.5);
-    const g = lerp(0.12, 0.32, fray);
-    const recoil = (rng() * 2 - 1) * 8 * fray;
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const nx = -dy / len;
+  const ny = dx / len; // unit perpendicular
+  const mx = (a.x + b.x) / 2;
+  const my = (a.y + b.y) / 2;
+  // strands sag more when slack, tighten (but never fully straighten) when organized
+  const wob = Math.sin((time * TAU) / 6 + idx * 1.3) * 1.6 * (0.4 + organize * 0.6);
+  const off = bowSign * bowMag * (0.55 + 0.45 * (1 - organize)) + wob;
+  const cx = mx + nx * off;
+  const cy = my + ny * off;
+  if (fray > 0.35 && snap < fray) {
+    // snapped mid-strand: two curved stubs recoil apart along the normal
+    const g = lerp(0.12, 0.34, fray);
+    const recoil = bowSign * 9 * fray;
     p.setColor(col(P.gluten, alpha * 0.7));
     const path = Skia.Path.Make();
     path.moveTo(a.x, a.y);
-    path.quadTo(lerp(a.x, mx, 0.5), lerp(a.y, my, 0.5) + recoil, lerp(a.x, mx, 1 - g), lerp(a.y, my, 1 - g));
-    path.moveTo(lerp(mx, b.x, g), lerp(my, b.y, g));
-    path.quadTo(lerp(mx, b.x, 0.5), lerp(my, b.y, 0.5) - recoil, b.x, b.y);
+    path.quadTo(lerp(a.x, cx, 0.5), lerp(a.y, cy, 0.5), lerp(a.x, cx, 1 - g) + nx * recoil, lerp(a.y, cy, 1 - g) + ny * recoil);
+    path.moveTo(lerp(cx, b.x, g) - nx * recoil, lerp(cy, b.y, g) - ny * recoil);
+    path.quadTo(lerp(cx, b.x, 0.5), lerp(cy, b.y, 0.5), b.x, b.y);
     canvas.drawPath(path, p);
   } else {
-    canvas.drawLine(a.x, a.y, b.x, b.y, p);
+    const path = Skia.Path.Make();
+    path.moveTo(a.x, a.y);
+    path.quadTo(cx, cy, b.x, b.y);
+    canvas.drawPath(path, p);
   }
 }
 

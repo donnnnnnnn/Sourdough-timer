@@ -2,8 +2,13 @@
   "name": "sourdough-timer",
   "main": "expo-router/entry",
   "version": "1.0.0",
+  "expo": {
+    "install": {
+      "exclude": ["@shopify/react-native-skia"]
+    }
+  },
   "dependencies": {
-    "@shopify/react-native-skia": "^2.6.2",
+    "@shopify/react-native-skia": "^2.6.9",
     "@tailwindcss/postcss": "^4.3.0",
     "base-64": "^1.0.0",
     "expo": "~56.0.8",

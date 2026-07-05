@@ -13,10 +13,14 @@
  * reminder re-fires every few seconds for ~1 min and stops when the fold is
  * recorded or a reminder is tapped.
  *
- * HARD RULE (learned from a crash): the native path must never be able to crash
- * app startup. The previous attempt used the wrong (old-architecture) library
- * and called a native method that was `undefined` *outside* a try/catch, taking
- * the whole app down on launch. Here every native touch is guarded, and any
+ * HARD RULE (learned from two crashes): NOTHING in this module may be able to
+ * crash app startup — not the native path, and not the base expo-notifications
+ * calls either. One crash came from calling an old-architecture library whose
+ * native method was `undefined`; a second came from running initFoldAlarms()
+ * at module scope, where a synchronous throw from an expo-notifications call
+ * escaped a `.catch()` (promise .catch() cannot intercept a sync throw) and
+ * took the app down before any UI. Every native touch is now inside try/catch,
+ * init runs from a React effect instead of import time, and any native-alarm
  * throw permanently flips this module to the burst fallback.
  *
  * Scheduling is always on absolute times off nextFoldDueTimestamp, so a
@@ -54,7 +58,8 @@ if (Platform.OS === 'android') {
     if (
       mod?.default &&
       typeof mod.default.createTriggerNotification === 'function' &&
-      typeof mod.default.onForegroundEvent === 'function'
+      typeof mod.default.onForegroundEvent === 'function' &&
+      typeof mod.default.onBackgroundEvent === 'function'
     ) {
       nk = mod;
       nativeAndroidAlarm = true;
@@ -88,28 +93,70 @@ function recordFoldFromNotification() {
   if (s.bulkStartTimestamp !== null && s.nextFoldDueTimestamp !== null) s.recordFold();
 }
 
+/** The one place a fold-notification response is acted on. Deduped by response
+ *  identity because the same physical tap can reach us twice: once via the
+ *  live listener and once via the cold-start getLastNotificationResponse()
+ *  check in initFoldAlarms(). */
+let lastHandledResponseKey: string | null = null;
+function handleFoldResponse(response: Notifications.NotificationResponse) {
+  if (response.notification.request.content.categoryIdentifier !== FOLD_CATEGORY_ID) return;
+  const key = `${response.notification.request.identifier}:${response.actionIdentifier}`;
+  if (key === lastHandledResponseKey) return;
+  lastHandledResponseKey = key;
+  // Tapping the reminder (or "I folded") silences the remaining burst.
+  cancelFoldAlarms();
+  if (response.actionIdentifier === FOLDED_ACTION_ID) recordFoldFromNotification();
+}
+
 /**
- * One-time setup: notification channel + action + tap handlers. Call once at
- * startup from module scope so background action presses are handled even when
- * the app wasn't already open.
+ * One-time setup: notification category + action + tap handlers. Called from a
+ * React effect in the root layout (app/_layout.tsx), NOT at module scope.
+ *
+ * WHY NOT MODULE SCOPE (this crashed the app): the previous revision ran this
+ * at import time of the root layout. `setNotificationCategoryAsync(...).catch()`
+ * and `addNotificationResponseReceivedListener(...)` were assumed safe because
+ * of the `.catch()` — but `.catch()` only handles *async rejections*. A
+ * SYNCHRONOUS throw from either call (e.g. a native-module method that comes
+ * back `undefined` before the runtime is fully initialized) escaped uncaught at
+ * module load and took the whole app down on launch, before any UI. Two rules
+ * now apply to everything reachable from here:
+ *   1. Nothing on the startup path may throw uncaught — every native touch is
+ *      inside try/catch. Worst case is silently-degraded reminders, never a
+ *      crash-on-open.
+ *   2. Registration happens post-mount (React effect), when the native runtime
+ *      is verifiably up. Cold-start taps that launched the app before the
+ *      listener existed are recovered via getLastNotificationResponse() below.
  */
+let initialized = false;
 export function initFoldAlarms() {
-  if (Platform.OS === 'web') return;
+  if (initialized || Platform.OS === 'web') return;
+  initialized = true;
 
   // The expo-notifications category powers the burst-fallback "I folded" button
   // and its tap handler. Registered on every platform; harmless when unused.
-  Notifications.setNotificationCategoryAsync(FOLD_CATEGORY_ID, [
-    {
-      identifier: FOLDED_ACTION_ID,
-      buttonTitle: 'I folded ✓',
-      options: { opensAppToForeground: true },
-    },
-  ]).catch(() => {});
-  Notifications.addNotificationResponseReceivedListener((response) => {
-    if (response.notification.request.content.categoryIdentifier !== FOLD_CATEGORY_ID) return;
-    cancelFoldAlarms();
-    if (response.actionIdentifier === FOLDED_ACTION_ID) recordFoldFromNotification();
-  });
+  try {
+    Notifications.setNotificationCategoryAsync(FOLD_CATEGORY_ID, [
+      {
+        identifier: FOLDED_ACTION_ID,
+        buttonTitle: 'I folded ✓',
+        options: { opensAppToForeground: true },
+      },
+    ]).catch(() => {});
+  } catch (err) {
+    // Sync throw (see doc comment). Without the category the burst reminders
+    // still fire — they just lose the inline "I folded" button.
+    if (__DEV__) console.warn('[foldAlarm] category registration failed:', err);
+  }
+
+  try {
+    Notifications.addNotificationResponseReceivedListener(handleFoldResponse);
+    // If a fold notification's tap is what launched the app, the response
+    // happened before the listener above existed — pick it up here.
+    const launchResponse = Notifications.getLastNotificationResponse();
+    if (launchResponse) handleFoldResponse(launchResponse);
+  } catch (err) {
+    if (__DEV__) console.warn('[foldAlarm] response listener failed:', err);
+  }
 
   if (nativeAndroidAlarm && nk) {
     try {

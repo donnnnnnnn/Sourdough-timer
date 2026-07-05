@@ -809,7 +809,11 @@ export default function HomeScreen() {
           foldIntervalMinutes,
         );
       }
-    })();
+      // Both helpers trap their own errors, but a rejection escaping this IIFE
+      // would be an unhandled promise rejection — swallow it so a notification
+      // hiccup can never surface as an app error. Missing a reminder is the
+      // acceptable worst case; crashing is not.
+    })().catch(() => {});
     return () => {
       superseded = true;
     };

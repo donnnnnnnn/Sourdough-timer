@@ -7,6 +7,8 @@ import { useEffect } from 'react';
 import { Platform } from 'react-native';
 import 'react-native-reanimated';
 
+import { initFoldAlarms } from '@/lib/foldAlarm';
+
 SplashScreen.preventAutoHideAsync();
 
 // Show notifications as banners with sound even when the app is open.
@@ -18,6 +20,11 @@ Notifications.setNotificationHandler({
     shouldSetBadge: false,
   }),
 });
+
+// Fold-alarm setup (channel, "I folded" action, tap handlers) — at module
+// scope so notification presses are handled even when the app was in the
+// background. See lib/foldAlarm.ts for the per-platform behavior.
+initFoldAlarms();
 
 export { ErrorBoundary } from 'expo-router';
 

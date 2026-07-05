@@ -4,6 +4,7 @@ import * as Notifications from 'expo-notifications';
 import * as Haptics from 'expo-haptics';
 import { useBakeStore } from '@/store/useBakeStore';
 import { suggestBulk, estimatedRise, foldLatenessAdvice } from '@/lib/bulkCoach';
+import { scheduleFoldAlarms, cancelFoldAlarms, MAX_PLANNED_FOLDS } from '@/lib/foldAlarm';
 import { router } from 'expo-router';
 import { Sparkles, Hand, BellRing, Thermometer, Wand2, ArrowUp, FlaskConical, X, Clock, CheckCircle2 } from 'lucide-react-native';
 import { C, fonts, label } from '@/components/theme';
@@ -790,6 +791,30 @@ export default function HomeScreen() {
     prevFolds.current = completedFolds;
   }, [completedFolds, foldPop]);
 
+  // Keep the fold reminders in sync with what's actually been recorded. Runs
+  // whenever a fold is recorded, rescheduled (late-fold), or the bulk starts/
+  // ends — so a fold you've already logged never fires (or keeps ringing) a
+  // reminder, and the alarm always lands on the true due time.
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    let superseded = false;
+    (async () => {
+      await cancelFoldAlarms();
+      if (superseded) return;
+      if (isActive && nextFoldDueTimestamp != null) {
+        await scheduleFoldAlarms(
+          nextFoldDueTimestamp,
+          completedFolds,
+          defaultFoldCount,
+          foldIntervalMinutes,
+        );
+      }
+    })();
+    return () => {
+      superseded = true;
+    };
+  }, [isActive, nextFoldDueTimestamp, completedFolds, defaultFoldCount, foldIntervalMinutes]);
+
   // Tick every second while a bulk OR an autolyse rest is in progress.
   const ticking = isActive || autolyseStartTimestamp !== null;
   useEffect(() => {
@@ -820,32 +845,6 @@ export default function HomeScreen() {
     loop.start();
     return () => loop.stop();
   }, [autolyseDone, armPulse]);
-
-  async function scheduleFoldReminders(intervalMins: number, count: number) {
-    if (Platform.OS === 'web' || count === 0) return;
-    try {
-      await Notifications.requestPermissionsAsync();
-      for (let i = 1; i <= count; i++) {
-        const isLast = i === count;
-        await Notifications.scheduleNotificationAsync({
-          content: {
-            title: count === 1 ? 'Time to fold!' : `Fold ${i} of ${count}`,
-            body: isLast
-              ? 'Last fold — start watching the dough for shape readiness.'
-              : 'Stretch and fold your dough now.',
-            sound: true,
-            ...(Platform.OS === 'ios' && { interruptionLevel: 'timeSensitive' as const }),
-          },
-          trigger: {
-            type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
-            seconds: i * intervalMins * 60,
-            repeats: false,
-            ...(Platform.OS === 'android' && { channelId: 'bake-alerts' }),
-          },
-        });
-      }
-    } catch {}
-  }
 
   /** One-shot alert when the expected bulk time arrives. */
   async function scheduleEndAlert(secondsFromNow: number) {
@@ -900,6 +899,9 @@ export default function HomeScreen() {
     try {
       endNotificationId.current = null;
       autolyseNotificationId.current = null;
+      // Fold alarms may live outside expo-notifications (Notifee on Android),
+      // so cancelAll alone doesn't reach them.
+      await cancelFoldAlarms();
       await Notifications.cancelAllScheduledNotificationsAsync();
     } catch {}
   }
@@ -925,7 +927,8 @@ export default function HomeScreen() {
       autolyseNotificationId.current = null;
     }
     if (foldCount !== defaultFoldCount) setDefaultFoldCount(foldCount);
-    scheduleFoldReminders(selectedInterval, foldCount);
+    // Fold reminders are scheduled reactively by the sync effect once startBulk
+    // sets nextFoldDueTimestamp — no need to schedule them here.
     scheduleEndAlert(plannedTarget * 60);
     startBulk(selectedInterval, plannedTarget);
     setNow(Date.now());
@@ -965,7 +968,7 @@ export default function HomeScreen() {
   }
 
   function changeFoldCount(delta: number) {
-    setFoldCount((n) => Math.max(0, Math.min(12, n + delta)));
+    setFoldCount((n) => Math.max(0, Math.min(MAX_PLANNED_FOLDS, n + delta)));
   }
 
   function changePlannedTarget(delta: number) {
@@ -1315,7 +1318,7 @@ export default function HomeScreen() {
                 onPress={() => changeFoldCount(1)}
                 activeOpacity={0.7}
                 style={{ paddingVertical: 12, paddingHorizontal: 28 }}>
-                <Text style={{ color: foldCount < 12 ? C.text : C.textDim, fontSize: 28, fontWeight: '300' }}>+</Text>
+                <Text style={{ color: foldCount < MAX_PLANNED_FOLDS ? C.text : C.textDim, fontSize: 28, fontWeight: '300' }}>+</Text>
               </TouchableOpacity>
             </View>
           </View>

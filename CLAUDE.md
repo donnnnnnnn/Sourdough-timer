@@ -150,6 +150,11 @@ visible immediately, not discovered at training time.
 4. Train with `train_crumb_model.py`; wire the exported
    `crumb_classifier.tflite` + `labels.json` into `model/visionAnalyzer.ts`.
 
+**Known gaps deferred to public launch** (iOS AlarmKit alarms, store
+submission blockers, on-device verification steps) live in
+`docs/launch-checklist.md` — check it before release-related work, and keep
+it updated when a gap is fixed or a new one is deliberately deferred.
+
 ## Git
 
 - **At the start of each session:** Run `git fetch origin && git branch -r` to

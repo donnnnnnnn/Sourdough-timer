@@ -1,102 +1,98 @@
 #!/usr/bin/env python3
-"""Auto-label crumb photos from Reddit, sourdough blogs, and PDFs, then train.
+"""Collect CANDIDATE crumb photos. Labeling happens later, in curate_dataset.py.
 
-Run on your local machine (needs internet + optional PDFs in current dir):
+This is a deliberately *dumb* collector. It does NOT try to guess whether an
+image is under/over/properly fermented — every past attempt to label by page
+keywords or URL slugs produced garbage (logos, headshots, mislabeled crumbs).
+The rule we learned the hard way (see CLAUDE.md lessons #1 and #4): heuristics
+can't judge image *content*; a vision model can. So this stage's only job is to
+cast a wide, clean net of candidate images and hand them to Claude vision.
 
-    python3 -m pip install pymupdf beautifulsoup4 playwright tensorflow
+Pipeline:
+
+    1. tools/build_dataset.py   --out dataset_raw     # THIS FILE: collect candidates
+    2. tools/curate_dataset.py  --in dataset_raw \\
+                                --out dataset_clean \\
+                                --context-file dataset_raw/contexts.json
+                                                       # Claude vision labels into 5 buckets
+    3. tools/train_crumb_model.py --data dataset_clean # train + export TFLite
+
+Run this on your own machine (needs normal internet):
+
+    python3 -m pip install beautifulsoup4 playwright pymupdf
     python3 -m playwright install chromium
-    python3 tools/build_dataset.py --out dataset
+    python3 tools/build_dataset.py --out dataset_raw
 
-Stages:
-  1. Reddit   — query-based download + comment-consensus re-labeling
-  2. Blogs    — HTML scraping with heading/caption-based auto-labeling
-              — site search discovery finds real article URLs automatically
-  3. PDFs     — image extraction with nearby-text labeling
-  4. Train    — fine-tune MobileNetV3Small, export crumb_classifier.tflite
+Sources:
+  - Blogs : a hand-curated list of pages known to contain crumb photos and
+            proof-comparison charts. We download every substantial image on the
+            page with its alt text / caption / source URL as context. No slug
+            guessing, no site-search URL discovery — those were the bug factory.
+  - PDFs  : every image over a min size from the reference books. Text on the
+            page is saved as context so the curator can read printed labels.
+  - Reddit: OFF by default and OAuth-only. Reddit killed anonymous JSON search;
+            fighting it is a time sink for low yield. See --reddit below.
 
-After scraping, clean the dataset with tools/curate_dataset.py (Claude vision
-filters non-crumb images, splits labeled infographics, fixes labels).
-
-Skip stages with --no-reddit / --no-blogs / --no-pdf / --no-train
+Validate before scaling (CLAUDE.md lesson #1): run with --limit 2 first, open a
+few files under dataset_raw/, confirm they're real crumb photos, THEN run full.
 """
 import argparse
+import hashlib
 import json
 import os
 import re
-import shutil
 import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
 
-# ── label vocabulary ──────────────────────────────────────────────────────────────────────────────
-
-UNDER_WORDS = [
-    "underproofed", "under-proofed", "under proofed",
-    "underproved", "under-proved", "under proved",
-    "underfermented", "under-fermented", "under fermented",
-    "underdeveloped", "under developed",
-    "needs more time", "needs longer", "more time", "too short",
-    "dense crumb", "gummy crumb", "fools crumb", "fool's crumb",
-    "tight crumb", "not enough fermentation", "not ready",
-    "bulk too short",
-]
-
-OVER_WORDS = [
-    "overproofed", "over-proofed", "over proofed",
-    "overproved", "over-proved", "over proved",
-    "overfermented", "over-fermented", "over fermented",
-    "overdeveloped", "over developed",
-    "went too long", "too long", "pushed it", "too much fermentation",
-    "collapsed", "flat loaf", "gassy", "alcoholic smell",
-    "bulk too long",
-]
-
-GOOD_WORDS = [
-    "perfectly proofed", "properly proofed", "perfect proof",
-    "perfectly proved", "properly proved",
-    "perfectly fermented", "properly fermented", "well fermented",
-    "ideal fermentation", "spot on", "nailed it", "looks great",
-    "great crumb", "perfect crumb", "open crumb", "even crumb",
-    "beautiful crumb", "gorgeous crumb",
-]
-
-UNDER_SHORT = {"under", "underproofed", "underproved", "underfermented"}
-OVER_SHORT  = {"over",  "overproofed",  "overproved",  "overfermented"}
-GOOD_SHORT  = {"perfect", "nailed", "gorgeous", "beautiful"}
-
-
-def score_text(text: str) -> tuple[int, int, int]:
-    t = text.lower()
-    u = sum(1 for w in UNDER_WORDS if w in t)
-    o = sum(1 for w in OVER_WORDS  if w in t)
-    g = sum(1 for w in GOOD_WORDS  if w in t)
-    return u, o, g
-
-
-def score_words(text: str) -> tuple[int, int, int]:
-    tokens = set(re.findall(r"[a-z]+", text.lower()))
-    u = len(tokens & UNDER_SHORT)
-    o = len(tokens & OVER_SHORT)
-    g = len(tokens & GOOD_SHORT)
-    return u, o, g
-
-
-def majority_label(u: int, o: int, g: int) -> str | None:
-    top = max(u, o, g)
-    if top == 0:
-        return None
-    if [u, o, g].count(top) > 1:
-        return None
-    if u == top: return "under_fermented"
-    if o == top: return "over_fermented"
-    return "properly_fermented"
-
-
-# ── HTTP helpers ─────────────────────────────────────────────────────────────────────────────
-
 UA = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0"}
+MIN_BYTES = 15_000       # skip icons, sprites, tiny thumbnails
+MIN_DIM = 200            # (PDF images) skip anything smaller than this on a side
+_SKIP_SRC_RE = re.compile(r'\.(svg|gif|ico|css|js|woff2?|ttf|eot)(\?|$)', re.I)
 
+# ── curated image sources ──────────────────────────────────────────────────
+#
+# Every page below has been chosen because it actually shows sliced-crumb
+# photos, ideally side-by-side proof comparisons (which curate_dataset.py can
+# split into one labeled training image per panel — our highest-yield source).
+#
+# HOW TO GROW THIS LIST (do NOT let a script guess URLs):
+#   1. Open the site's proofing / troubleshooting / "how to read your crumb"
+#      guide in a browser and confirm with your own eyes it has crumb photos.
+#   2. Paste the exact, working URL here. A dead or redirecting URL just yields
+#      zero images and a log line — it can't poison the dataset — but keep the
+#      list honest so the per-source counts stay meaningful.
+#
+# Tag pages that contain a labeled comparison GRID with "# grid" so a human
+# skimming this file knows which sources feed the panel-splitter.
+BLOG_PAGES = [
+    # The Sourdough Journey — proof-progression photo grids (highest yield)
+    "https://thesourdoughjourney.com/the-ultimate-sourdough-bulk-fermentation-guide/",  # grid
+    "https://thesourdoughjourney.com/faq-over-under-proofed/",                          # grid
+    "https://thesourdoughjourney.com/what-is-a-good-sourdough-crumb/",
+    "https://thesourdoughjourney.com/how-to-read-sourdough-crumb/",
+    "https://thesourdoughjourney.com/the-mysteries-of-bulk-fermentation/",
+    # The Perfect Loaf
+    "https://www.theperfectloaf.com/guides/whats-the-difference-between-over-and-under-proofed-bread-dough/",  # grid
+    "https://www.theperfectloaf.com/guides/proofing-bread-dough/",
+    "https://www.theperfectloaf.com/how-to-use-the-dough-poke-test/",
+    "https://www.theperfectloaf.com/troubleshooting-sourdough-bread/",
+    # King Arthur Baking
+    "https://www.kingarthurbaking.com/blog/2021/10/01/sourdough-bread-common-mistakes",
+    "https://www.kingarthurbaking.com/blog/2023/03/21/sourdough-troubleshooting",
+    # Challenger Breadware
+    "https://challengerbreadware.com/bread-techniques/identifying-proofing-levels-in-baked-bread/",  # grid
+    # The Clever Carrot
+    "https://www.theclevercarrot.com/2019/03/sourdough-bread-troubleshooting-guide/",
+    # Brød & Taylor
+    "https://brodandtaylor.com/blogs/recipes/sourdough-bread-problems-and-solutions",
+    # The Fresh Loaf — community crumb-reading threads
+    "https://www.thefreshloaf.com/node/71162/read-my-crumb-please",
+    "https://www.thefreshloaf.com/node/68071/reading-crumb",
+]
+
+# ── Playwright (renders JS-heavy pages; falls back to urllib) ───────────────
 try:
     from playwright.sync_api import sync_playwright
     PLAYWRIGHT = True
@@ -104,6 +100,7 @@ except ImportError:
     PLAYWRIGHT = False
 
 _pw_browser = None
+
 
 def _get_browser():
     global _pw_browser
@@ -113,7 +110,7 @@ def _get_browser():
     return _pw_browser
 
 
-def fetch(url: str, *, is_json: bool = False, rendered: bool = False):
+def fetch_html(url: str, rendered: bool = True) -> str | None:
     if rendered and PLAYWRIGHT:
         try:
             browser = _get_browser()
@@ -124,144 +121,15 @@ def fetch(url: str, *, is_json: bool = False, rendered: bool = False):
             page.close()
             return html
         except Exception as e:
-            print(f"  playwright failed {url}: {e} — falling back to urllib")
-    req = urllib.request.Request(url, headers=UA)
-    with urllib.request.urlopen(req, timeout=25) as r:
-        data = r.read()
-    return json.loads(data) if is_json else data.decode("utf-8", "ignore")
-
-
-def download(url: str, dest: str) -> bool:
+            print(f"    playwright failed {url}: {e} — trying urllib")
     try:
         req = urllib.request.Request(url, headers=UA)
-        with urllib.request.urlopen(req, timeout=25) as r, open(dest, "wb") as f:
-            f.write(r.read())
-        return True
+        with urllib.request.urlopen(req, timeout=25) as r:
+            return r.read().decode("utf-8", "ignore")
     except Exception as e:
-        print(f"    dl failed {url}: {e}")
-        return False
-
-
-def save_image(url: str, label: str, outdir: str, seen: set) -> bool:
-    if url in seen:
-        return False
-    seen.add(url)
-    dest_dir = os.path.join(outdir, label)
-    os.makedirs(dest_dir, exist_ok=True)
-    name = re.sub(r"\W+", "_", url.split("?")[0].split("/")[-1])[:80]
-    if not re.search(r"\.(jpe?g|png|webp)$", name, re.I):
-        name += ".jpg"
-    dest = os.path.join(dest_dir, name)
-    if os.path.exists(dest):
-        return False
-    return download(url, dest)
-
-
-# ── Stage 1: Reddit ───────────────────────────────────────────────────────────────────────────
-
-REDDIT_SEARCHES: list[tuple[str, str]] = [
-    ("underproofed crumb",        "under_fermented"),
-    ("under proofed crumb",       "under_fermented"),
-    ("underfermented sourdough",  "under_fermented"),
-    ("underproved loaf",          "under_fermented"),
-    ("dense gummy crumb",         "under_fermented"),
-    ("fools crumb",               "under_fermented"),
-    ("overproofed crumb",         "over_fermented"),
-    ("over proofed crumb",        "over_fermented"),
-    ("overfermented sourdough",   "over_fermented"),
-    ("overproved loaf",           "over_fermented"),
-    ("flat collapsed loaf",       "over_fermented"),
-    ("too much bulk fermentation","over_fermented"),
-    ("perfect crumb",             "properly_fermented"),
-    ("great crumb sourdough",     "properly_fermented"),
-    ("open even crumb",           "properly_fermented"),
-    ("nailed my bulk",            "properly_fermented"),
-    ("rate my crumb",             None),
-    ("crumb shot",                None),
-    ("bulk fermentation result",  None),
-]
-
-SUBREDDITS = ["Sourdough", "Breadit", "SourdoughStarter"]
-
-
-def reddit_comment_label(permalink: str) -> str | None:
-    try:
-        url = f"https://old.reddit.com{permalink}.json?limit=20&sort=top"
-        data = fetch(url, is_json=True)
-        time.sleep(0.5)
-        comments = data[1]["data"]["children"]
-        u = o = g = 0
-        for c in comments:
-            cd = c.get("data", {})
-            body = cd.get("body", "")
-            cu, co, cg = score_text(body)
-            u += cu; o += co; g += cg
-            wu, wo, wg = score_words(body)
-            u += wu; o += wo; g += wg
-        return majority_label(u, o, g)
-    except Exception:
+        print(f"    fetch failed {url}: {e}")
         return None
 
-
-def image_urls_from_post(post: dict) -> list[str]:
-    data = post["data"]
-    urls = []
-    u = data.get("url_overridden_by_dest") or data.get("url") or ""
-    if re.search(r"\.(jpe?g|png)(\?|$)", u, re.I):
-        urls.append(u)
-    for item in (data.get("media_metadata") or {}).values():
-        src = (item.get("s") or {}).get("u", "")
-        if src:
-            urls.append(src.replace("&amp;", "&"))
-    return urls
-
-
-def run_reddit(outdir: str, per_query: int, seen: set) -> None:
-    print("\n=== Stage 1: Reddit ===")
-    counts: dict[str, int] = {}
-
-    for query, seed_label in REDDIT_SEARCHES:
-        for sub in SUBREDDITS:
-            url = (
-                f"https://old.reddit.com/r/{sub}/search.json"
-                f"?q={urllib.parse.quote(query)}&restrict_sr=1"
-                f"&limit={per_query}&sort=top&t=all"
-            )
-            try:
-                posts = fetch(url, is_json=True)["data"]["children"]
-            except Exception as e:
-                print(f"  skip r/{sub} '{query}': {e}")
-                continue
-
-            for post in posts:
-                imgs = image_urls_from_post(post)
-                if not imgs:
-                    continue
-                pd = post["data"]
-                post_text = (pd.get("selftext") or "") + " " + (pd.get("title") or "")
-                pu, po, pg = score_text(post_text)
-                permalink = pd.get("permalink", "")
-                comment_label = reddit_comment_label(permalink) if permalink else None
-                time.sleep(0.8)
-                if comment_label:
-                    label = comment_label
-                elif (pu + po + pg) > 0:
-                    label = majority_label(pu, po, pg)
-                else:
-                    label = seed_label
-                if label is None:
-                    continue
-                for img in imgs:
-                    if save_image(img, label, outdir, seen):
-                        counts[label] = counts.get(label, 0) + 1
-
-            print(f"  r/{sub} '{query}' done | counts: {counts}")
-            time.sleep(1)
-
-    print("Reddit totals:", counts)
-
-
-# ── Stage 2: Blogs ───────────────────────────────────────────────────────────────────────────
 
 try:
     from bs4 import BeautifulSoup
@@ -269,120 +137,11 @@ try:
 except ImportError:
     BS4 = False
 
-# Confirmed-working pages only — no guessed slugs
-BLOG_PAGES = [
-    "https://thesourdoughjourney.com/the-ultimate-sourdough-bulk-fermentation-guide/",
-    "https://thesourdoughjourney.com/faq-over-under-proofed/",
-    "https://thesourdoughjourney.com/what-is-a-good-sourdough-crumb/",
-    "https://thesourdoughjourney.com/how-to-read-sourdough-crumb/",
-    "https://www.theperfectloaf.com/guides/proofing-bread-dough/",
-    "https://www.theperfectloaf.com/how-to-use-the-dough-poke-test/",
-    "https://www.theperfectloaf.com/beginners-sourdough-bread/",
-    "https://www.theperfectloaf.com/guides/crumb-structure/",
-    "https://www.theperfectloaf.com/troubleshooting-sourdough-bread/",
-    "https://www.kingarthurbaking.com/learn/guides/sourdough",
-    "https://www.kingarthurbaking.com/recipes/sourdough-bread-recipe",
-    "https://www.kingarthurbaking.com/blog/2021/10/01/sourdough-bread-common-mistakes",
-    "https://challengerbreadware.com/bread-techniques/identifying-proofing-levels-in-baked-bread/",
-    "https://www.thefreshloaf.com/node/71162/read-my-crumb-please",
-    "https://www.theclevercarrot.com/2019/03/sourdough-bread-troubleshooting-guide/",
-    "https://brodandtaylor.com/blogs/recipes/proofing-bread",
-    "https://brodandtaylor.com/blogs/recipes/sourdough-bread-problems-and-solutions",
-]
 
-# Pages where keyword scoring is unreliable — label is certain from context.
-HARDCODED_PAGE_LABELS: dict[str, str | None] = {
-    "https://www.kingarthurbaking.com/learn/guides/sourdough": "properly_fermented",
-    "https://www.kingarthurbaking.com/recipes/sourdough-bread-recipe": "properly_fermented",
-    "https://www.theperfectloaf.com/beginners-sourdough-bread/": "properly_fermented",
-}
-
-# Sites to search dynamically — finds real article URLs instead of guessing slugs.
-# Format: (base_url, search_path_template, queries)
-# WordPress uses /?s={q}, Shopify uses /search?q={q}
-SEARCH_QUERIES = [
-    "overproofed", "overproved", "overfermented", "over fermented",
-    "underproofed", "underproved", "underfermented", "under fermented",
-    "dense crumb", "gummy crumb", "tight crumb",
-    "crumb evaluation", "crumb reading", "crumb debugging",
-    "crumb troubleshooting", "crumb chart", "crumb structure", "open crumb",
-    "bulk fermentation", "troubleshooting",
-]
-
-SEARCH_SITES: list[tuple[str, str, list[str]]] = [
-    ("https://www.pantrymama.com",      "/?s={q}",        SEARCH_QUERIES),
-    ("https://www.busbysbakery.com",    "/?s={q}",        SEARCH_QUERIES),
-    ("https://truesourdough.com",       "/?s={q}",        SEARCH_QUERIES),
-    ("https://www.theclevercarrot.com", "/?s={q}",        SEARCH_QUERIES),
-    ("https://littlespoonfarm.com",     "/?s={q}",        SEARCH_QUERIES),
-    ("https://thesourdoughjourney.com", "/?s={q}",        SEARCH_QUERIES),
-    ("https://brodandtaylor.com",       "/search?q={q}",  SEARCH_QUERIES),
-    ("https://www.theperfectloaf.com",  "/?s={q}",        SEARCH_QUERIES),
-]
-
-
-def discover_pages() -> list[tuple[str, str | None]]:
-    """Search each site and return (url, label) for relevant posts found."""
-    if not BS4:
-        print("  bs4 required for page discovery — skipping")
-        return []
-
-    discovered: list[tuple[str, str | None]] = []
-    seen_urls: set[str] = set()
-
-    for base, path_tpl, queries in SEARCH_SITES:
-        for q in queries:
-            search_url = base + path_tpl.replace("{q}", urllib.parse.quote(q))
-            try:
-                html = fetch(search_url, rendered=False)
-            except Exception as e:
-                print(f"  search failed {search_url}: {e}")
-                continue
-
-            soup = BeautifulSoup(html, "html.parser")
-            found = 0
-            for a in soup.find_all("a", href=True):
-                href = a["href"]
-                if not href.startswith("http"):
-                    href = urllib.parse.urljoin(base, href)
-                if not href.startswith(base):
-                    continue
-                path = urllib.parse.urlparse(href).path.rstrip("/")
-                if not path or path.count("/") < 1:
-                    continue
-                if any(x in href for x in ["/page/", "/tag/", "/category/", "/author/", "/feed", "?", "#"]):
-                    continue
-                if href in seen_urls:
-                    continue
-                seen_urls.add(href)
-
-                link_text = a.get_text(" ", strip=True)
-                u, o, g = score_text(link_text + " " + href)
-                label = majority_label(u, o, g)
-                if label:
-                    discovered.append((href, label))
-                    found += 1
-                elif re.search(r"crumb|proof|ferment|troubleshoot|bulk",
-                               link_text + " " + href, re.I):
-                    # neutral guide page — scrape with no preset label;
-                    # curate_dataset.py assigns per-image labels later
-                    discovered.append((href, None))
-                    found += 1
-
-            print(f"  search '{q}' @ {base} → {found} labeled links")
-            time.sleep(1)
-
-    print(f"  total discovered: {len(discovered)} labeled candidate pages")
-    return discovered
-
-
-IMG_RE = re.compile(r'<img[^>]+(?:src|data-src)=["\']([^"\']+)["\']', re.I)
-MIN_BYTES = 8_000
-_SKIP_SRC_RE = re.compile(r'\.(svg|gif|ico|css|js|woff2?|ttf|eot)(\?|$)', re.I)
-
-# filename -> page context (alt text, caption, page URL) for curate_dataset.py
-IMAGE_CONTEXTS: dict[str, str] = {}
-
+# ── dedup: by source URL AND by image content hash ─────────────────────────
+# CDNs serve the same photo at many sizes (?w=300, ?w=1024, /photo-768x512.jpg).
+# URL dedup alone lets the same crumb in 5x — which quietly biases training.
+# So we also hash the downloaded bytes and skip content we've already saved.
 
 def _img_srcs_from_tag(tag) -> list[str]:
     srcs = []
@@ -392,333 +151,276 @@ def _img_srcs_from_tag(tag) -> list[str]:
             srcs.append(v.strip())
     srcset = tag.get("srcset") or tag.get("data-srcset") or ""
     if srcset:
+        # last entry in a srcset is the highest-resolution variant
         parts = [p.strip().split()[0] for p in srcset.split(",") if p.strip()]
         if parts:
             srcs.append(parts[-1])
     return srcs
 
 
-def label_from_context(tag, page_url: str) -> str | None:
-    if not BS4:
-        return None
-    alt = (tag.get("alt") or "").lower()
-    u, o, g = score_text(alt)
-    if (l := majority_label(u, o, g)):
-        return l
+def _context_for(tag, page_url: str) -> str:
+    """Alt text + nearest caption + source page — everything the curator needs
+    to read a printed label or understand where the image came from."""
+    alt = (tag.get("alt") or "").strip()
+    cap = ""
     fig = tag.find_parent("figure")
-    if fig:
-        cap = fig.find("figcaption")
-        if cap:
-            u, o, g = score_text(cap.get_text())
-            if (l := majority_label(u, o, g)):
-                return l
-    node = tag.parent
-    for _ in range(4):
-        if node is None:
-            break
-        for heading in node.find_all_previous(["h1","h2","h3","h4","p"], limit=3):
-            u, o, g = score_text(heading.get_text())
-            if (l := majority_label(u, o, g)):
-                return l
-        node = node.parent
-    return None
+    if fig and fig.find("figcaption"):
+        cap = fig.find("figcaption").get_text(" ", strip=True)
+    return " | ".join(x for x in [alt, cap, f"from {page_url}"] if x)
 
 
-def scrape_page(page: str, page_default: str | None, outdir: str, seen: set, counts: dict) -> int:
-    """Fetch and scrape one page. Returns number of images saved."""
-    try:
-        html = fetch(page, rendered=True)
-    except Exception as e:
-        print(f"  skip {page}: {e}")
-        return 0
-
+def collect_blogs(outdir: str, limit: int | None,
+                  seen_urls: set, seen_hashes: set,
+                  contexts: dict) -> dict:
+    print("\n=== Blogs ===")
     if not BS4:
-        # regex fallback — no context labeling
-        if page_default is None:
-            page_u, page_o, page_g = score_text(html[:5000])
-            page_default = majority_label(page_u, page_o, page_g)
-        if page_default is None:
-            return 0
-        for src in IMG_RE.findall(html):
-            full = urllib.parse.urljoin(page, src)
-            if full in seen:
-                continue
-            seen.add(full)
-            dest_dir = os.path.join(outdir, page_default)
-            os.makedirs(dest_dir, exist_ok=True)
-            name = re.sub(r"\W+", "_", full.split("?")[0].split("/")[-1])[:80]
-            dest = os.path.join(dest_dir, name)
-            try:
-                req = urllib.request.Request(full, headers=UA)
-                data = urllib.request.urlopen(req, timeout=20).read()
-                if len(data) < MIN_BYTES:
+        print("  bs4 not installed — run: pip install beautifulsoup4")
+        return {}
+    dest_dir = os.path.join(outdir, "candidates")
+    os.makedirs(dest_dir, exist_ok=True)
+    per_source: dict[str, int] = {}
+
+    pages = BLOG_PAGES[:limit] if limit else BLOG_PAGES
+    for page in pages:
+        html = fetch_html(page, rendered=True)
+        if not html:
+            per_source[page] = 0
+            continue
+        soup = BeautifulSoup(html, "html.parser")
+        tags = soup.find_all("img") + soup.find_all("source")
+        saved = 0
+        for tag in tags:
+            for src in _img_srcs_from_tag(tag):
+                if not src or _SKIP_SRC_RE.search(src):
                     continue
-                with open(dest, "wb") as f:
-                    f.write(data)
-                counts[page_default] = counts.get(page_default, 0) + 1
-            except Exception:
-                pass
-            time.sleep(0.4)
-        return counts.get(page_default, 0)
-
-    soup = BeautifulSoup(html, "html.parser")
-    imgs = soup.find_all("img")
-
-    if page_default is None:
-        page_u, page_o, page_g = score_text(soup.get_text())
-        page_default = majority_label(page_u, page_o, page_g)
-        if page_default is None:
-            url_u, url_o, url_g = score_text(page)
-            page_default = majority_label(url_u, url_o, url_g)
-        print(f"    scored u={page_u} o={page_o} g={page_g} → default={page_default} | {len(imgs)} imgs")
-    else:
-        print(f"    hardcoded={page_default} | {len(imgs)} imgs")
-
-    if page_default is None:
-        print(f"  skip {page} — no label signal")
-        return 0
-
-    labeled = 0
-    all_tags = imgs + soup.find_all("source")
-    for tag in all_tags:
-        for src in _img_srcs_from_tag(tag):
-            if not src or _SKIP_SRC_RE.search(src):
-                continue
-            full = urllib.parse.urljoin(page, src)
-            if not full.startswith("http"):
-                continue
-            label = label_from_context(tag, page) or page_default
-            dest_dir = os.path.join(outdir, label)
-            os.makedirs(dest_dir, exist_ok=True)
-            name = re.sub(r"\W+", "_", full.split("?")[0].split("/")[-1])[:80]
-            if not re.search(r"\.(jpe?g|png|webp)$", name, re.I):
-                name += ".jpg"
-            dest = os.path.join(dest_dir, name)
-            if full in seen or os.path.exists(dest):
-                seen.add(full)
-                continue
-            seen.add(full)
-            try:
-                req = urllib.request.Request(full, headers=UA)
-                data = urllib.request.urlopen(req, timeout=20).read()
-                if len(data) < MIN_BYTES:
+                full = urllib.parse.urljoin(page, src)
+                if not full.startswith("http") or full in seen_urls:
                     continue
-                with open(dest, "wb") as f:
+                seen_urls.add(full)
+                data = _download_bytes(full)
+                if data is None or len(data) < MIN_BYTES:
+                    continue
+                digest = hashlib.md5(data).hexdigest()
+                if digest in seen_hashes:
+                    continue
+                seen_hashes.add(digest)
+                name = _safe_name(full, digest)
+                with open(os.path.join(dest_dir, name), "wb") as f:
                     f.write(data)
-                counts[label] = counts.get(label, 0) + 1
-                labeled += 1
-                alt = tag.get("alt") or ""
-                cap = ""
-                fig = tag.find_parent("figure")
-                if fig and fig.find("figcaption"):
-                    cap = fig.find("figcaption").get_text(" ", strip=True)
-                IMAGE_CONTEXTS[name] = " | ".join(
-                    x for x in [alt, cap, f"from {page}"] if x)
-            except Exception as ex:
-                print(f"    failed {full}: {ex}")
-            time.sleep(0.3)
-
-    print(f"  {page} → {labeled} saved")
-    return labeled
+                contexts[name] = _context_for(tag, page)
+                saved += 1
+                time.sleep(0.3)
+        per_source[page] = saved
+        print(f"  {saved:3d}  {page}")
+    return per_source
 
 
-def run_blogs(outdir: str, seen: set) -> None:
-    print("\n=== Stage 2: Blogs ===")
-    if PLAYWRIGHT:
-        print("  Playwright available")
-    counts: dict[str, int] = {}
-
-    # 2a: confirmed pages
-    for page in BLOG_PAGES:
-        label = HARDCODED_PAGE_LABELS.get(page)  # None means score dynamically
-        scrape_page(page, label, outdir, seen, counts)
-
-    # 2b: search-discovered pages
-    print("\n  -- discovering pages via site search --")
-    for page, label in discover_pages():
-        if page not in seen:
-            scrape_page(page, label, outdir, seen, counts)
-
-    print("Blog totals:", counts)
-
-    ctx_path = os.path.join(outdir, "contexts.json")
-    with open(ctx_path, "w") as f:
-        json.dump(IMAGE_CONTEXTS, f, indent=1)
-    print(f"Saved image contexts to {ctx_path}")
-
-
-# ── Stage 3: PDFs ───────────────────────────────────────────────────────────────────────────
-
-def run_pdfs(pdf_paths: list[str], outdir: str) -> None:
-    print("\n=== Stage 3: PDFs ===")
+def _download_bytes(url: str) -> bytes | None:
     try:
-        import fitz
-    except ImportError:
-        print("  pymupdf not installed — skipping PDFs")
-        return
+        req = urllib.request.Request(url, headers=UA)
+        with urllib.request.urlopen(req, timeout=25) as r:
+            return r.read()
+    except Exception:
+        return None
 
-    counts: dict[str, int] = {}
+
+def _safe_name(url: str, digest: str) -> str:
+    base = re.sub(r"\W+", "_", url.split("?")[0].split("/")[-1])[:60]
+    if not re.search(r"\.(jpe?g|png|webp)$", base, re.I):
+        base += ".jpg"
+    # prefix a short hash so different photos never collide on a shared filename
+    return f"{digest[:8]}_{base}"
+
+
+# ── PDFs (reference books) ─────────────────────────────────────────────────
+
+def collect_pdfs(pdf_paths: list[str], outdir: str,
+                 seen_hashes: set, contexts: dict) -> dict:
+    print("\n=== PDFs ===")
+    try:
+        import fitz  # pymupdf
+    except ImportError:
+        print("  pymupdf not installed — run: pip install pymupdf")
+        return {}
+    dest_dir = os.path.join(outdir, "candidates")
+    os.makedirs(dest_dir, exist_ok=True)
+    per_source: dict[str, int] = {}
+
     for pdf_path in pdf_paths:
         if not os.path.exists(pdf_path):
             print(f"  not found: {pdf_path}")
             continue
         doc = fitz.open(pdf_path)
+        stem = Path(pdf_path).stem
+        saved = 0
         for page_index in range(len(doc)):
             page = doc[page_index]
-            images = page.get_images(full=True)
-            if not images:
-                continue
-            u, o, g = score_text(page.get_text())
-            label = majority_label(u, o, g)
-            if label is None:
-                continue
-            dest_dir = os.path.join(outdir, label)
-            os.makedirs(dest_dir, exist_ok=True)
-            for img_index, img in enumerate(images):
+            page_text = page.get_text().strip().replace("\n", " ")
+            for img_index, img in enumerate(page.get_images(full=True)):
                 xref = img[0]
                 try:
                     pix = fitz.Pixmap(doc, xref)
                 except Exception:
                     continue
-                if pix.width < 200 or pix.height < 200:
+                if pix.width < MIN_DIM or pix.height < MIN_DIM:
                     continue
                 if pix.colorspace and pix.colorspace.n > 3:
                     pix = fitz.Pixmap(fitz.csRGB, pix)
-                dest = os.path.join(dest_dir, f"{Path(pdf_path).stem}_p{page_index+1:03d}_i{img_index}.png")
-                if not os.path.exists(dest):
-                    pix.save(dest)
-                    counts[label] = counts.get(label, 0) + 1
-    print("PDF totals:", counts)
+                data = pix.tobytes("png")
+                digest = hashlib.md5(data).hexdigest()
+                if digest in seen_hashes:
+                    continue
+                seen_hashes.add(digest)
+                name = f"{digest[:8]}_{stem}_p{page_index+1:03d}_i{img_index}.png"
+                with open(os.path.join(dest_dir, name), "wb") as f:
+                    f.write(data)
+                # nearby page text is often the printed caption / label
+                contexts[name] = f"{page_text[:300]} | from {stem} p{page_index+1}"
+                saved += 1
+        per_source[pdf_path] = saved
+        print(f"  {saved:3d}  {pdf_path}")
+    return per_source
 
 
-# ── Stage 4: Train ───────────────────────────────────────────────────────────────────────────
+# ── Reddit (opt-in, OAuth only) ────────────────────────────────────────────
 
-def run_train(dataset_dir: str, model_out: str, epochs: int) -> None:
-    print("\n=== Stage 4: Train ===")
+def collect_reddit(outdir: str, seen_hashes: set, contexts: dict) -> dict:
+    print("\n=== Reddit ===")
+    cid = os.environ.get("REDDIT_CLIENT_ID")
+    secret = os.environ.get("REDDIT_CLIENT_SECRET")
+    if not (cid and secret):
+        print("  REDDIT_CLIENT_ID / REDDIT_CLIENT_SECRET not set — skipping.\n"
+              "  Anonymous Reddit JSON is rate-limited/blocked since 2023. To use\n"
+              "  Reddit, create a free 'script' app at\n"
+              "  https://www.reddit.com/prefs/apps and export both env vars.\n"
+              "  (Low priority: blogs + PDFs are a cleaner, higher-yield source.)")
+        return {}
     try:
-        import tensorflow as tf
-    except ImportError:
-        print("  tensorflow not installed — skipping training")
-        return
+        token = _reddit_token(cid, secret)
+    except Exception as e:
+        print(f"  auth failed: {e} — skipping Reddit")
+        return {}
 
-    IMG_SIZE = 224
-    train_ds, val_ds = tf.keras.utils.image_dataset_from_directory(
-        dataset_dir,
-        validation_split=0.2,
-        subset="both",
-        seed=42,
-        image_size=(IMG_SIZE, IMG_SIZE),
-        batch_size=16,
-    )
-    labels = train_ds.class_names
-    print("Classes:", labels)
-
-    import numpy as np
-    class_counts = np.zeros(len(labels))
-    for d in [dataset_dir + "/" + l for l in labels]:
-        idx = labels.index(Path(d).name)
-        class_counts[idx] = len(list(Path(d).glob("*.*"))) if Path(d).exists() else 1
-    class_counts = np.maximum(class_counts, 1)
-    total = class_counts.sum()
-    class_weight = {i: total / (len(labels) * c) for i, c in enumerate(class_counts)}
-    print("Class weights:", {labels[i]: f"{w:.2f}" for i, w in class_weight.items()})
-
-    augment = tf.keras.Sequential([
-        tf.keras.layers.RandomFlip("horizontal"),
-        tf.keras.layers.RandomRotation(0.08),
-        tf.keras.layers.RandomZoom(0.15),
-        tf.keras.layers.RandomBrightness(0.2),
-    ])
-
-    base = tf.keras.applications.MobileNetV3Small(
-        input_shape=(IMG_SIZE, IMG_SIZE, 3),
-        include_top=False,
-        weights="imagenet",
-        include_preprocessing=True,
-    )
-    base.trainable = False
-
-    inputs = tf.keras.Input(shape=(IMG_SIZE, IMG_SIZE, 3))
-    x = augment(inputs)
-    x = base(x, training=False)
-    x = tf.keras.layers.GlobalAveragePooling2D()(x)
-    x = tf.keras.layers.Dropout(0.3)(x)
-    outputs = tf.keras.layers.Dense(len(labels), activation="softmax")(x)
-    model = tf.keras.Model(inputs, outputs)
-
-    model.compile(
-        optimizer=tf.keras.optimizers.Adam(1e-3),
-        loss="sparse_categorical_crossentropy",
-        metrics=["accuracy"],
-    )
-    model.fit(train_ds, validation_data=val_ds, epochs=epochs, class_weight=class_weight)
-
-    base.trainable = True
-    for layer in base.layers[:-20]:
-        layer.trainable = False
-    model.compile(
-        optimizer=tf.keras.optimizers.Adam(1e-5),
-        loss="sparse_categorical_crossentropy",
-        metrics=["accuracy"],
-    )
-    model.fit(train_ds, validation_data=val_ds, epochs=4, class_weight=class_weight)
-
-    os.makedirs(model_out, exist_ok=True)
-    converter = tf.lite.TFLiteConverter.from_keras_model(model)
-    converter.optimizations = [tf.lite.Optimize.DEFAULT]
-    tflite_model = converter.convert()
-    model_path = os.path.join(model_out, "crumb_classifier.tflite")
-    with open(model_path, "wb") as f:
-        f.write(tflite_model)
-    with open(os.path.join(model_out, "labels.json"), "w") as f:
-        json.dump(labels, f)
-
-    print(f"\nSaved {model_path} ({len(tflite_model)/1e6:.1f} MB)")
-    print("Commit assets/model/ then wire it into visionAnalyzer.ts")
+    queries = ["crumb shot", "rate my crumb", "bulk fermentation result",
+               "underproofed", "overproofed", "open crumb"]
+    subs = ["Sourdough", "Breadit", "SourdoughStarter"]
+    dest_dir = os.path.join(outdir, "candidates")
+    os.makedirs(dest_dir, exist_ok=True)
+    saved = 0
+    for q in queries:
+        for sub in subs:
+            url = (f"https://oauth.reddit.com/r/{sub}/search"
+                   f"?q={urllib.parse.quote(q)}&restrict_sr=1&limit=100&sort=top&t=all")
+            try:
+                req = urllib.request.Request(url, headers={
+                    "User-Agent": "crumb-dataset/2.0", "Authorization": f"bearer {token}"})
+                with urllib.request.urlopen(req, timeout=25) as r:
+                    posts = json.load(r)["data"]["children"]
+            except Exception as e:
+                print(f"  skip r/{sub} '{q}': {e}")
+                continue
+            for post in posts:
+                d = post["data"]
+                title = d.get("title", "")
+                for img in _reddit_image_urls(d):
+                    data = _download_bytes(img)
+                    if data is None or len(data) < MIN_BYTES:
+                        continue
+                    digest = hashlib.md5(data).hexdigest()
+                    if digest in seen_hashes:
+                        continue
+                    seen_hashes.add(digest)
+                    name = _safe_name(img, digest)
+                    with open(os.path.join(dest_dir, name), "wb") as f:
+                        f.write(data)
+                    contexts[name] = f"{title} | r/{sub}"
+                    saved += 1
+                    time.sleep(0.5)
+            time.sleep(1)
+    print(f"  saved {saved} candidate images from Reddit")
+    return {"reddit": saved}
 
 
-# ── main ─────────────────────────────────────────────────────────────────────────────
+def _reddit_token(cid: str, secret: str) -> str:
+    body = urllib.parse.urlencode({"grant_type": "client_credentials"}).encode()
+    req = urllib.request.Request(
+        "https://www.reddit.com/api/v1/access_token", data=body,
+        headers={"User-Agent": "crumb-dataset/2.0"})
+    auth = base64_basic(cid, secret)
+    req.add_header("Authorization", f"Basic {auth}")
+    with urllib.request.urlopen(req, timeout=25) as r:
+        return json.load(r)["access_token"]
+
+
+def base64_basic(cid: str, secret: str) -> str:
+    import base64
+    return base64.standard_b64encode(f"{cid}:{secret}".encode()).decode()
+
+
+def _reddit_image_urls(d: dict) -> list[str]:
+    urls = []
+    u = d.get("url_overridden_by_dest") or d.get("url") or ""
+    if re.search(r"\.(jpe?g|png)(\?|$)", u, re.I):
+        urls.append(u)
+    for item in (d.get("media_metadata") or {}).values():
+        src = (item.get("s") or {}).get("u", "")
+        if src:
+            urls.append(src.replace("&amp;", "&"))
+    return urls
+
+
+# ── main ───────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--out", default="dataset")
-    ap.add_argument("--model-out", default="assets/model")
-    ap.add_argument("--per-query", type=int, default=100)
-    ap.add_argument("--epochs", type=int, default=12)
-    ap.add_argument("--pdfs", nargs="*", default=[])
-    ap.add_argument("--reddit",   action="store_true",
-                    help="Enable Reddit scraping (requires OAuth since 2023)")
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--out", default="dataset_raw",
+                    help="candidates land in <out>/candidates/ (flat, UNLABELED)")
+    ap.add_argument("--limit", type=int, default=None,
+                    help="only process the first N blog pages — use 1-2 to smoke-test")
+    ap.add_argument("--pdfs", nargs="*", default=[],
+                    help="PDF paths; default = every *.pdf in the current dir")
     ap.add_argument("--no-blogs", action="store_true")
-    ap.add_argument("--no-pdf",   action="store_true")
-    ap.add_argument("--no-train", action="store_true")
+    ap.add_argument("--no-pdf", action="store_true")
+    ap.add_argument("--reddit", action="store_true",
+                    help="also scrape Reddit (needs REDDIT_CLIENT_ID/SECRET)")
     args = ap.parse_args()
 
-    seen: set[str] = set()
-
-    if args.reddit:
-        run_reddit(args.out, args.per_query, seen)
-    else:
-        print("Skipping Reddit (pass --reddit to attempt it)")
+    os.makedirs(os.path.join(args.out, "candidates"), exist_ok=True)
+    seen_urls: set[str] = set()
+    seen_hashes: set[str] = set()
+    contexts: dict[str, str] = {}
+    report: dict[str, dict] = {}
 
     if not args.no_blogs:
-        run_blogs(args.out, seen)
-
+        report["blogs"] = collect_blogs(args.out, args.limit,
+                                        seen_urls, seen_hashes, contexts)
     if not args.no_pdf:
-        pdf_paths = args.pdfs or [str(p) for p in Path(".").glob("*.pdf")]
-        if pdf_paths:
-            print(f"PDFs: {pdf_paths}")
-        run_pdfs(pdf_paths, args.out)
-
-    if not args.no_train:
-        total = sum(
-            len(list(Path(os.path.join(args.out, d)).glob("*")))
-            for d in ["under_fermented", "properly_fermented", "over_fermented"]
-            if os.path.isdir(os.path.join(args.out, d))
-        )
-        if total < 15:
-            print(f"\nOnly {total} images — skipping training (need ≥15).")
+        pdfs = args.pdfs or [str(p) for p in Path(".").glob("*.pdf")]
+        if pdfs:
+            report["pdfs"] = collect_pdfs(pdfs, args.out, seen_hashes, contexts)
         else:
-            run_train(args.out, args.model_out, args.epochs)
+            print("\n=== PDFs ===\n  no PDFs found (put reference books in cwd or pass --pdfs)")
+    if args.reddit:
+        report["reddit"] = collect_reddit(args.out, seen_hashes, contexts)
+
+    ctx_path = os.path.join(args.out, "contexts.json")
+    with open(ctx_path, "w") as f:
+        json.dump(contexts, f, indent=1)
+
+    total = len(contexts)
+    print("\n=== Collection summary ===")
+    for source, counts in report.items():
+        n = sum(counts.values()) if isinstance(counts, dict) else counts
+        print(f"  {source:8s}: {n} candidate images")
+    print(f"  TOTAL   : {total} unique candidate images (deduped by content hash)")
+    print(f"  contexts: {ctx_path}")
+    print("\nNEXT — eyeball the output BEFORE curating (CLAUDE.md lesson #2):")
+    print(f"  ls {args.out}/candidates | head")
+    print("Then label with Claude vision into 5 buckets:")
+    print(f"  export ANTHROPIC_API_KEY=sk-ant-...")
+    print(f"  python3 tools/curate_dataset.py --in {args.out} \\")
+    print(f"      --out dataset_clean --context-file {ctx_path}")
 
 
 if __name__ == "__main__":

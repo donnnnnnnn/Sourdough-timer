@@ -36,3 +36,4 @@ sprites/
 
 # Skia spike scaffolding (node_modules, screenshots) — not for the repo
 scratchpad-spike/
+__pycache__/

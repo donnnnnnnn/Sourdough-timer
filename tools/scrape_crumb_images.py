@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Collect weakly-labeled sourdough crumb photos from Reddit's public JSON API.
+"""DEPRECATED — superseded by tools/build_dataset.py (Reddit source) + curate_dataset.py.
+
+This uses anonymous Reddit JSON (blocked since 2023) and query-based labels that
+the vision curator now overrides anyway. Kept for reference only. Use the flow in
+docs/crumb-dataset-runbook.md instead.
+
+Collect weakly-labeled sourdough crumb photos from Reddit's public JSON API.
 
 Run on a machine with normal internet access (not the cloud sandbox):
 

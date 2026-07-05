@@ -21,11 +21,6 @@ Notifications.setNotificationHandler({
   }),
 });
 
-// Fold-alarm setup (channel, "I folded" action, tap handlers) — at module
-// scope so notification presses are handled even when the app was in the
-// background. See lib/foldAlarm.ts for the per-platform behavior.
-initFoldAlarms();
-
 export { ErrorBoundary } from 'expo-router';
 
 export const unstable_settings = {
@@ -34,6 +29,14 @@ export const unstable_settings = {
 
 export default function RootLayout() {
   useEffect(() => {
+    // Fold-alarm setup ("I folded" action + tap handler). Deliberately NOT at
+    // module scope: a synchronous throw there ran before React mounted and
+    // crashed the app on launch ("undefined is not a function") — `.catch()`
+    // on a promise can't intercept a sync throw. Here the native runtime is
+    // fully up, and initFoldAlarms() itself traps every failure internally.
+    // A notification tap that *launched* the app is still handled — see the
+    // getLastNotificationResponse() recovery inside initFoldAlarms().
+    initFoldAlarms();
     SplashScreen.hideAsync();
     // Android 8+ requires a channel before any notification can play sound.
     if (Platform.OS === 'android') {

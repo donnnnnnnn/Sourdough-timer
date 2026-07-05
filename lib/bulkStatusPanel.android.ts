@@ -21,12 +21,15 @@
  * trigger notifications that reuse the same notification id, so the OS swaps
  * the panel's content at the right minute on its own.
  */
+// Uses react-native-notify-kit (New-Architecture fork of the archived Notifee)
+// — the same native module the fold alarms use, so the app ships one notifee
+// implementation instead of two colliding ones. API is a drop-in for @notifee.
 import notifee, {
   AndroidImportance,
   TriggerType,
   type Notification,
   type TimestampTrigger,
-} from '@notifee/react-native';
+} from 'react-native-notify-kit';
 import type { BulkPanelState } from './bulkStatusPanel';
 
 const PANEL_ID = 'bulk-panel';

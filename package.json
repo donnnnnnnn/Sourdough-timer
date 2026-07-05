@@ -3,7 +3,6 @@
   "main": "expo-router/entry",
   "version": "1.0.0",
   "dependencies": {
-    "@notifee/react-native": "^9.1.8",
     "@shopify/react-native-skia": "2.6.2",
     "@tailwindcss/postcss": "^4.3.0",
     "base-64": "^1.0.0",

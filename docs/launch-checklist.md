@@ -6,60 +6,59 @@ fixed, delete its entry. Add new entries as they're discovered.
 
 ---
 
-## 1. iOS: real "rings until dismissed" fold alarms (deferred July 2026)
+## 1. Real "rings until dismissed" fold alarms — both platforms (deferred July 2026)
 
-**Current state:** Android fold reminders are true alarms — Notifee schedules
-them on exact `AlarmManager` triggers and the sound loops until the
-notification is dismissed (`lib/foldAlarm.ts`). iOS only gets an
-approximation: a burst of notifications every 8 seconds for ~1 minute, which
-stops when the fold is recorded or a reminder is tapped.
+**Current state:** fold reminders use expo-notifications only (`lib/foldAlarm.ts`),
+on both iOS and Android. Since a single notification can't ring indefinitely,
+the *next* fold's reminder is a "burst" — it re-fires every 8s for ~1 min and
+stops when the fold is recorded (in-app or via the "I folded" action) or a
+reminder is tapped. This approximates, but is not, a native clock-app alarm.
 
-**Why:** iOS has no public API that rings indefinitely from a normal
-notification. The platform-blessed solution is **AlarmKit** (new in iOS 26,
-WWDC 2025) — it gives third-party timer apps native Clock-style alarms that
-ring until dismissed and break through Silent/Focus modes. This is the
-industry best practice for timer apps as of 2026.
+**⚠️ Notifee was tried for Android and reverted — do not re-add it as-is.**
+Notifee gives true `AlarmManager` + `loopSound`/`FLAG_INSISTENT` alarms, but
+**Notifee 9.1.8 has no New Architecture support** (ships a legacy
+`react-native.config.js` with `packageImportPath`, `codegenConfig: none`).
+This app runs the New Architecture by default (RN 0.85 / Expo 56 / React 19),
+so the build compiled but **crashed on launch** — its native methods resolve
+to `undefined`, giving `Error: undefined is not a function` from
+`initFoldAlarms()`. Lesson: a green EAS build does NOT mean the app runs;
+a native module must be launched on a device before shipping (see CLAUDE.md
+principle #2, "inspect outputs, don't trust exit codes").
 
-**Why not now:** the open-source React Native/Expo wrappers exist but were
-judged too immature to adopt (checked July 2026):
+**Options when revisiting (re-check maturity first):**
+- **Android:** adopt Notifee only once it has a New-Arch-compatible release
+  verified against this RN version — or use a small in-repo Expo Module that
+  posts a notification with `FLAG_INSISTENT` on an exact `AlarmManager` trigger.
+- **iOS:** the platform-blessed path is **AlarmKit** (new in iOS 26, WWDC 2025)
+  — native Clock-style alarms that ring until dismissed and pierce Silent/Focus.
+  RN/Expo wrappers exist but were immature as of July 2026 and force the iOS
+  deployment target to 26.0 (drops every user on iOS ≤25):
+  [expo-alarm-kit](https://github.com/nickdeupree/expo-alarm-kit) (closest, v0.1.11),
+  [rn-alarm-kit](https://github.com/wael-fadlallah/rn-alarm-kit),
+  [nitro-ios-alarm-kit](https://github.com/Gautham495/react-native-nitro-ios-alarm-kit),
+  [expo-alarm](https://github.com/vall370/expo-alarm). Prefer one that
+  *weak-links* AlarmKit so the app still installs on older iOS, with the burst
+  as the ≤25 fallback. **Do not** chase Apple's critical-alerts entitlement —
+  it's gated to health/safety apps; a baking timer won't qualify.
+- Whichever native module is chosen, **launch it on a real device before
+  shipping** — the New-Arch crash above is exactly what device testing catches.
+- Nice-to-have: iOS Live Activity / Android ongoing notification showing the
+  next-fold countdown on the Lock Screen.
 
-- [nickdeupree/expo-alarm-kit](https://github.com/nickdeupree/expo-alarm-kit) —
-  closest fit (Expo module, absolute-time scheduling, v0.1.11), but requires
-  raising the **iOS deployment target to 26.0** (drops every user on iOS ≤25),
-  manual App Group + Info.plist setup in Xcode, and has known broken options.
-- [wael-fadlallah/rn-alarm-kit](https://github.com/wael-fadlallah/rn-alarm-kit),
-  [Gautham495/react-native-nitro-ios-alarm-kit](https://github.com/Gautham495/react-native-nitro-ios-alarm-kit),
-  [vall370/expo-alarm](https://github.com/vall370/expo-alarm) — same iOS 26
-  floor, similarly early-stage.
+## 2. Verify fold reminders on a real device
 
-**Plan for launch:**
-- [ ] Re-check those wrappers' maturity; if one supports *weak-linking*
-      AlarmKit (app still installs on older iOS, alarms only on 26+), adopt it
-      with the current notification burst as the ≤25 fallback.
-- [ ] Otherwise write a small in-repo Expo Module (Swift, `#available(iOS 26)`
-      guard) around AlarmKit — roughly: `requestAuthorization()`,
-      `scheduleAlarm(date, title)`, `cancelAlarm(id)` — keeping the burst
-      fallback. Needs `NSAlarmKitUsageDescription` in Info.plist.
-- [ ] **Do not** pursue Apple's critical-alerts entitlement as a shortcut —
-      it's gated to health/safety/security apps and a baking timer won't
-      qualify.
-- Nice-to-have while in there: a Live Activity showing the next-fold countdown
-  on the Lock Screen / Dynamic Island.
+The burst logic type-checks but hasn't been exercised on hardware from this
+cloud environment. Before release, on a physical phone confirm:
 
-## 2. Android: verify alarm behavior on a real device
-
-The Notifee implementation type-checks but hasn't been exercised on hardware
-from this cloud environment. Before release, on a physical phone confirm:
-
-- [ ] Fold alarm sound **loops** until the notification is swiped away /
-      tapped / "I folded ✓" pressed.
-- [ ] Alarms land **on time** with the phone locked ≥30 min (Doze) — this was
-      the "4–5 minutes late" bug; exact `AlarmManager` triggers +
-      `USE_EXACT_ALARM` should fix it.
-- [ ] Recording a fold in-app silences an alarm that's mid-ring.
-- [ ] Battery optimization exemption isn't needed (if reminders still drift on
-      aggressive OEMs — Samsung/Xiaomi — add an in-app prompt via
-      `notifee.openBatteryOptimizationSettings()`).
+- [ ] The reminder keeps re-alerting (~1 min) until you record the fold or tap it.
+- [ ] Reminders land **on time** with the phone locked ≥30 min (Doze). If they
+      drift, the fix is exact alarms — which is the native-module work in §1;
+      `SCHEDULE_EXACT_ALARM`/`USE_EXACT_ALARM` are already declared in app.json.
+- [ ] Recording a fold in-app cancels its pending reminders (no nag for a
+      fold you've already logged — the original bug).
+- [ ] Aggressive OEMs (Samsung/Xiaomi) don't kill reminders via battery
+      optimization; if they do, add an in-app "allow exact alarms / disable
+      battery optimization" prompt.
 
 ## 3. Play Store / App Store submission blockers
 

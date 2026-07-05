@@ -899,9 +899,6 @@ export default function HomeScreen() {
     try {
       endNotificationId.current = null;
       autolyseNotificationId.current = null;
-      // Fold alarms may live outside expo-notifications (Notifee on Android),
-      // so cancelAll alone doesn't reach them.
-      await cancelFoldAlarms();
       await Notifications.cancelAllScheduledNotificationsAsync();
     } catch {}
   }

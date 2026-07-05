@@ -21,9 +21,9 @@ Notifications.setNotificationHandler({
   }),
 });
 
-// Fold-alarm setup (channel, "I folded" action, tap handlers) — at module
-// scope so notification presses are handled even when the app was in the
-// background. See lib/foldAlarm.ts for the per-platform behavior.
+// Fold-alarm setup ("I folded" action + tap handler) — at module scope so
+// notification presses are handled even when the app was in the background.
+// See lib/foldAlarm.ts.
 initFoldAlarms();
 
 export { ErrorBoundary } from 'expo-router';

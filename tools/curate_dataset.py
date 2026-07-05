@@ -10,11 +10,16 @@ recipe photos, composites) and produces a clean dataset where:
   - single crumb shots are labeled by what the image actually shows + any
     embedded text, overriding the scraper's keyword guess when they disagree
 
+Labels onto a 5-point scale: under_fermented, slightly_under,
+properly_fermented, slightly_over, over_fermented (matches the app's
+FermentationState in model/training-data.ts).
+
 Usage (on your machine, needs ANTHROPIC_API_KEY):
 
     python3 -m pip install anthropic pillow
     export ANTHROPIC_API_KEY=sk-ant-...
-    python3 tools/curate_dataset.py --in dataset --out dataset_clean
+    python3 tools/curate_dataset.py --in dataset_raw --out dataset_clean \
+        --context-file dataset_raw/contexts.json
 
 Cost: roughly $0.01-0.03 per image with the default model. Pass
 --model claude-haiku-4-5 to cut cost ~5x at some accuracy loss.
@@ -37,7 +42,32 @@ try:
 except ImportError:
     sys.exit("pip install anthropic")
 
-LABELS = ["under_fermented", "properly_fermented", "over_fermented"]
+LABELS = [
+    "under_fermented",
+    "slightly_under",
+    "properly_fermented",
+    "slightly_over",
+    "over_fermented",
+]
+
+# Plain-language visual criteria for the 5-point fermentation scale. These are
+# reused verbatim in the prompt AND the schema so Claude applies one rubric.
+# Sources: The Sourdough Journey proof-progression charts, The Perfect Loaf
+# over/under guide, and the diagnostic reasoning in Modernist Bread.
+LABEL_CRITERIA = (
+    "- under_fermented: very dense, tight, small even holes or none; often a "
+    "gummy/wet band near the base; little to no rise. Includes classic "
+    "'fool's crumb' (big holes up top, dense gummy bottom).\n"
+    "- slightly_under: mostly good but a bit tight/uneven; a thin denser strip "
+    "low in the slice; holes smaller than ideal. Close to right, needs a little "
+    "more time.\n"
+    "- properly_fermented: open, EVEN honeycomb through the whole slice; medium "
+    "holes of varied but not extreme size; springy, dry walls; good height.\n"
+    "- slightly_over: slightly too open/irregular; some thin translucent "
+    "'spiderweb' walls; a few oversized holes; structure just starting to slacken.\n"
+    "- over_fermented: very irregular, thin fragile walls, big ragged tunnels or "
+    "a collapsed/flat top; gassy and structureless; pale crust when baked."
+)
 
 SCHEMA = {
     "type": "object",
@@ -57,11 +87,10 @@ SCHEMA = {
         "single_label": {
             "type": ["string", "null"],
             "enum": LABELS + [None],
-            "description": "For a single crumb photo: the fermentation diagnosis. "
-            "Use embedded/overlaid text and the provided page context if present; "
-            "otherwise judge visually (dense/gummy/tight = under_fermented; "
-            "collapsed/flat/very gassy irregular = over_fermented; open even "
-            "honeycomb = properly_fermented). Null if composite or not crumb.",
+            "description": "For a single crumb photo: the fermentation diagnosis "
+            "on a 5-point scale. Use embedded/overlaid text and the provided page "
+            "context first, then judge visually per the criteria in the prompt. "
+            "Null if composite or not crumb.",
         },
         "single_confidence": {
             "type": ["string", "null"],
@@ -112,18 +141,30 @@ SCHEMA = {
 
 PROMPT = """Analyze this image from a sourdough baking article.
 
-Terminology mapping (treat as synonyms):
-- underproofed / underproved / underfermented / "needs more time" / dense / gummy / "fool's crumb" -> under_fermented
-- overproofed / overproved / overfermented / collapsed / "too long" -> over_fermented
-- perfect / ideal / "properly proofed" / good crumb -> properly_fermented
+Classify crumb into a 5-point fermentation scale:
+{criteria}
 
-If the image is a composite chart with multiple labeled crumb photos, READ THE
-TEXT on or beside each panel carefully — the author's printed label is the
-ground truth, not your visual judgment. Report the grid layout and each panel's
-label in reading order.
+Terminology mapping (map the author's words onto the scale):
+- underproofed / underproved / underfermented / "needs more time" / dense /
+  gummy / "fool's crumb" -> under_fermented (or slightly_under if the text/photo
+  says only a little)
+- overproofed / overproved / overfermented / collapsed / "went too long" ->
+  over_fermented (or slightly_over if only just past peak)
+- perfect / ideal / "properly proofed" / "nailed it" / good open crumb ->
+  properly_fermented
+Many comparison charts show a PROGRESSION (e.g. 4-6 loaves from raw-under to
+badly-over). Map the endpoints to under/over and the in-between stages to
+slightly_under / properly_fermented / slightly_over by where they sit in the row.
+
+If the image is a composite chart with multiple crumb photos, READ THE TEXT on
+or beside each panel — the author's printed label is the ground truth, not your
+visual judgment. Report the grid layout and each panel's label in reading order.
 
 If it's a single crumb photo, use embedded text first, then the page context
-below (if any), then visual judgment.
+below (if any), then the visual criteria above. Set confidence honestly: reserve
+'high' for a clear photo or an explicit printed label; use 'low' when you are
+guessing between adjacent classes (e.g. proper vs slightly_over) — low-confidence
+items are filtered out by --min-confidence.
 {context}"""
 
 MAX_DIM = 1568
@@ -174,7 +215,7 @@ def analyze(client, model: str, path: Path, context: str) -> dict | None:
             "content": [
                 {"type": "image",
                  "source": {"type": "base64", "media_type": media_type, "data": data}},
-                {"type": "text", "text": PROMPT.format(context=ctx)},
+                {"type": "text", "text": PROMPT.format(criteria=LABEL_CRITERIA, context=ctx)},
             ],
         }],
         output_config={"format": {"type": "json_schema", "schema": SCHEMA}},
@@ -285,7 +326,10 @@ def main() -> None:
         print(f"  {k}: {v}")
     print(f"  class counts: {counts}")
     print(f"\nClean dataset in {args.outdir}/ — train with:")
-    print(f"  python3 tools/build_dataset.py --out {args.outdir} --no-blogs --no-pdf")
+    print(f"  python3 tools/train_crumb_model.py --data {args.outdir}")
+    print("\nPer-class floor is ~15; target 100+. slightly_under / slightly_over")
+    print("are the hardest to source — if they stay thin, see the fallback in")
+    print("docs/crumb-model-integration.md before training.")
 
 
 if __name__ == "__main__":

@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Download crumb photos from the expert blog pages used for the knowledge base.
+"""DEPRECATED — superseded by tools/build_dataset.py (blog collector) + curate_dataset.py.
+
+Kept for reference. The new collector dedups by content hash, saves alt/caption
+context for the vision curator, and renders JS-heavy pages via Playwright. Use the
+flow in docs/crumb-dataset-runbook.md instead.
+
+Download crumb photos from the expert blog pages used for the knowledge base.
 
 The Sourdough Journey's proofing pages are the gold mine: photo grids of the
 same recipe at different proof levels. Run on a machine with normal internet:

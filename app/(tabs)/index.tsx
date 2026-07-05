@@ -15,11 +15,11 @@ import {
   FermentationScene,
   type PhaseCopy,
 } from '@/components/FermentationScene';
-// NOTE: SkiaFermentationScene (@shopify/react-native-skia) is temporarily
-// swapped out for the pure-JS FermentationScene. The Skia native module was
-// added after the last known-good v1.1.0 build and is the prime suspect for the
-// crash-on-launch ("undefined is not a function") — this reverts the timer
-// screen to the animation that shipped in v1.1.0 while we confirm/replace Skia.
+// NOTE: the Skia scene (@shopify/react-native-skia) is temporarily swapped out
+// for the pure-JS FermentationScene above — the Skia native module crashes on
+// launch under the New Architecture (prime suspect, under investigation on the
+// claude/skia-fix branch; see docs/SKIA-HANDOFF.md). Swap it back once fixed.
+import { syncBulkPanel, clearBulkPanel } from '@/lib/bulkStatusPanel';
 
 const AUTOLYSE_OPTIONS = [20, 30, 45, 60];
 
@@ -836,6 +836,22 @@ export default function HomeScreen() {
       if (tickRef.current) clearInterval(tickRef.current);
     };
   }, [ticking]);
+
+  // Keep the pull-down-shade panel (Android) in step with the bulk. The OS
+  // renders the live countdowns itself, so this only needs to run when the
+  // underlying state actually changes — start, fold recorded, target moved.
+  useEffect(() => {
+    if (!bulkStartTimestamp) {
+      clearBulkPanel();
+      return;
+    }
+    syncBulkPanel({
+      completedFolds,
+      plannedFolds: defaultFoldCount,
+      nextFoldDueTimestamp,
+      targetEndTimestamp: bulkStartTimestamp + targetDurationMinutes * 60000,
+    });
+  }, [bulkStartTimestamp, completedFolds, defaultFoldCount, nextFoldDueTimestamp, targetDurationMinutes]);
 
   // Heavier pulse to "arm" the Start Bulk button once autolyse is done.
   const armPulse = useRef(new Animated.Value(0)).current;

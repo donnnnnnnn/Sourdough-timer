@@ -20,26 +20,28 @@
  * ── How it animates ─────────────────────────────────────────────────────────
  * The dough *state* is memoised on the JS thread (it only depends on the
  * mode/fraction props). Motion — organism drift, cell breathing, budding
- * pulses, rising CO₂ bubbles — comes from a monotonic clock (useClock) fed
- * into a derived SkPicture drawn on the UI thread. The imperative draw code
- * below mirrors scratchpad-spike/web/scene.js (the CanvasKit reference that was
- * screenshot-validated) as closely as the RN Skia API allows.
+ * pulses, rising CO₂ bubbles — comes from a JS-thread animation clock
+ * (requestAnimationFrame, ~30fps) fed into a plain SkPicture (useMemo). The
+ * imperative draw code below mirrors scratchpad-spike/web/scene.js (the
+ * CanvasKit reference that was screenshot-validated) as closely as the RN Skia
+ * API allows.
  *
- * The drawing runs inside a reanimated worklet (createPicture within
- * useDerivedValue). The RN-Skia + reanimated animated-Picture pattern is the
- * documented one, but it can only be truly verified in a native build — see the
- * note in this session's report.
+ * NOTE: this used to animate via Skia's useClock + reanimated useDerivedValue
+ * (UI-thread worklet). That crashed the app on launch on this Skia 2.6.2 +
+ * reanimated 4.3 / worklets 0.8 combo — createPicture() inside the worklet threw
+ * "undefined is not a function" (see docs/SKIA-HANDOFF.md). Driving the clock
+ * from JS keeps every drawing call and Skia GPU primitive identical; only the
+ * per-frame trigger moved off the UI thread. Restoring UI-thread animation is a
+ * possible future optimization once the library integration is fixed.
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { View } from 'react-native';
-import { useDerivedValue } from 'react-native-reanimated';
 import {
   Canvas,
   Picture,
   Group,
   Skia,
   createPicture,
-  useClock,
   vec,
   BlendMode,
   PaintStyle,
@@ -530,15 +532,39 @@ export function SkiaFermentationScene({
   );
 
   const { w: W, h: H } = size;
-  const clock = useClock(); // monotonic ms, drives motion only
 
-  // Derived SkPicture: rebuilt each frame on the UI thread as the clock ticks.
-  const picture = useDerivedValue(() => {
-    const time = clock.value / 1000; // seconds — matches scene.js clock units
-    return createPicture((canvas) => {
-      drawScene(canvas, st, W, H, time);
-    });
-  }, [st, W, H]);
+  // Animation clock, driven on the JS thread (~30fps — ample for this slow,
+  // ambient motion). We deliberately do NOT use Skia's useClock +
+  // reanimated useDerivedValue: on this Skia 2.6.2 + reanimated 4.3 / worklets
+  // 0.8 combo, calling createPicture() inside a reanimated worklet throws
+  // "undefined is not a function" and crashes the app (see docs/SKIA-HANDOFF.md).
+  // Driving from JS keeps the drawing byte-for-byte identical — every drawScene
+  // call and Skia GPU primitive is unchanged — only the per-frame trigger moves
+  // off the UI thread. This component re-renders per frame in isolation; `st`
+  // (useMemo above) is NOT recomputed each frame, so only the picture rebuilds.
+  const [timeSec, setTimeSec] = useState(0);
+  useEffect(() => {
+    let raf = 0;
+    let start: number | null = null;
+    let last = 0;
+    const FRAME_MS = 1000 / 30;
+    const loop = (ts: number) => {
+      if (start === null) start = ts;
+      if (ts - last >= FRAME_MS) {
+        last = ts;
+        setTimeSec((ts - start) / 1000); // seconds — matches scene.js clock units
+      }
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
+  // SkPicture rebuilt each frame as timeSec advances — plain Skia, no worklet.
+  const picture = useMemo(
+    () => createPicture((canvas) => drawScene(canvas, st, W, H, timeSec)),
+    [st, W, H, timeSec],
+  );
 
   return (
     <View

@@ -1,16 +1,47 @@
 # SKIA HANDOFF — restore the fermentation animation without crashing on launch
 
-**Goal for this session:** re-introduce the Skia-powered fermentation animation
-(`@shopify/react-native-skia`) so it runs on-device without crashing. This is the
-app's flagship visual and must ship — it was removed only as an emergency
-stop-gap to get a working build out.
-
 **Owner is non-technical.** Explain decisions in plain language and prove things
 with evidence (build logs, device tests), never "it should work."
 
 ---
 
-## TL;DR / current status
+## ✅ RESOLVED (July 2026) — read this before anything below
+
+The investigation is complete; the sections below it are kept as the historical
+record. Final findings, all device-verified:
+
+- **Root cause (exact):** `createPicture()` inside a reanimated worklet
+  (`useClock` + `useDerivedValue`) throws `TypeError: undefined is not a
+  function` on this stack. On-device stack (captured via `SkiaErrorBoundary`):
+  `createPicture → <derived-value fn> → initialUpdaterRun → useDerivedValue →
+  SkiaFermentationScene`. Mechanism: Skia host objects flowing through
+  reanimated's property probes on the worklet/UI runtime hit RN-Skia's
+  `Symbol.dispose` lookup fallback (`cpp/jsi/JsiHostObject.cpp`), which is
+  broken cross-runtime.
+- **Upstream fix is INSUFFICIENT — do not retry a plain version bump.** Skia
+  2.6.4's PR #3855 removed the `eval()`-based lookup, but a build with **Skia
+  2.6.9** + the restored worklet component crashed **identically** on-device
+  (July 5, tested by the owner; same stack, caught by the boundary). The
+  residual `static disposeSymbol` cached per-first-runtime remains
+  cross-runtime-unsafe. Worth reporting upstream on PR #3855 with our stack.
+- **Shipping solution: the JS-thread-driven variant on THIS branch
+  (`claude/skia-fix`).** Identical Skia GPU drawing code (every primitive,
+  glow, additive blend unchanged); only the per-frame trigger moved from a
+  reanimated worklet to a requestAnimationFrame clock + `useMemo` picture on
+  the JS thread — which never hits the broken cross-runtime path (the JS
+  runtime handles the same lookup fine). Wrapped in `SkiaErrorBoundary`
+  (lazy-required) so any future regression shows its stack instead of
+  crashing the app.
+- **The UI-thread experiment lives on `claude/skia-ui-thread`** (Skia 2.6.9 +
+  original worklet component) — kept for re-testing IF upstream actually fixes
+  the cross-runtime symbol cache. Until then it is known-crashing.
+- Tradeoff accepted: JS-thread animation can drop a frame if the JS thread
+  stalls; for this slow ambient scene that's acceptable. Revisit only with an
+  on-device-verified upstream fix.
+
+---
+
+## TL;DR / current status (historical — superseded by RESOLVED above)
 
 - The app was crashing on launch on Android with **"Something went wrong /
   Error: undefined is not a function"**, before any UI rendered.

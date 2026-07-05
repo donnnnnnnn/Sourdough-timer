@@ -1,0 +1,162 @@
+# CLAUDE.md — Sourdough Timer
+
+Guidance for Claude Code (and the human running it) when working in this repo.
+The owner is non-technical and learning software practices — explain decisions
+in plain language, and prefer showing evidence (sample output, spot-checks)
+over asserting that something works.
+
+## What this project is
+
+A React Native (Expo) app that helps sourdough bakers time bulk fermentation
+and diagnose their bread. The flagship ML feature: photograph a slice of bread
+and classify the crumb as `under_fermented`, `properly_fermented`, or
+`over_fermented` using an on-device TFLite model (MobileNetV3Small).
+
+### Layout
+
+- `app/(tabs)/` — Expo Router screens: timer (`index`), `diagnose`, `log`, `history`
+- `model/` — on-device inference: `classifier.ts`, `visionAnalyzer.ts`
+- `store/` — Zustand state + SQLite persistence (`.web.ts` variants for web)
+- `tools/` — Python ML pipeline (runs on the owner's machine, not in the app):
+  - `build_dataset.py` — scrapes crumb photos from baking blogs (Playwright + BS4)
+  - `curate_dataset.py` — Claude-vision pass that filters/relabels/splits the
+    raw scrape into a clean dataset (needs `ANTHROPIC_API_KEY`)
+  - `train_crumb_model.py` — trains MobileNetV3Small, exports TFLite + labels
+
+### Tech stack
+
+Expo SDK 56, React Native 0.85, Expo Router (file-based tabs), NativeWind
+(Tailwind), expo-sqlite. Python 3.13 for tooling.
+
+## Commands
+
+```bash
+# App
+npm install
+npx expo start            # dev server (i = iOS sim, a = Android, w = web)
+npx tsc --noEmit          # type-check — run after any .ts/.tsx change
+
+# ML pipeline (owner's machine)
+python3 tools/build_dataset.py --out dataset            # scrape raw images
+python3 tools/curate_dataset.py --in dataset --out dataset_clean \
+    --context-file dataset/contexts.json --model claude-haiku-4-5
+python3 tools/train_crumb_model.py --data dataset_clean # train + export TFLite
+```
+
+## References: Science-based authority
+
+For any code, captions, algorithms, or diagnostic advice that claims fermentation
+science, **read the books in `docs/references/`** (or the README there if PDFs
+haven't been uploaded yet). These are the canonical sources:
+
+- **Bread Science** (Buehler) — Use for: Q10 kinetics, yeast growth curves,
+  rise trajectory modeling, temperature corrections
+- **Modernist Bread** (Myhrvold & Migoya) — Use for: biochemistry details,
+  temperature tables, fermentation byproducts, diagnostic reasoning
+- **The Rye Baker** (Ginsberg) — Use for: long fermentation, wild yeast & LAB
+  population dynamics, starter strength indicators
+- **The Sourdough School** (Kimbell) — Use for: microbiome health,
+  fermentation markers (windowpane, oven spring), starter diagnostics
+
+**Primary research links** (check alongside the books for latest studies):
+- Q10 Rule: ~2× fermentation rate per 15°F. Base source: biochemistry texts
+  on enzyme kinetics (Michaelis-Menten, temperature coefficient).
+- Wild yeast & LAB kinetics: See Kimbell, Ginsberg, or ResearchGate studies
+  on *Saccharomyces cerevisiae* and *Lactobacillus* population dynamics in
+  sourdough.
+
+**When in doubt:** Trust explicit numbers in the books over general knowledge.
+If the books conflict, cite which one and explain the disagreement.
+
+## Working principles (lessons from this project)
+
+These exist because we lost real time to each failure below. Follow them.
+
+### 1. Validate the approach on a tiny sample before scaling it
+
+The original scraper labeled every image on a page by keywords in the page
+URL. It ran "successfully" for hours and produced a dataset full of logos,
+headshots, cookie photos, and donate buttons — the whole approach was flawed,
+and we only discovered it by eyeballing the output.
+
+**Rule:** before running any data pipeline at full scale, run it on ~10 items
+and *show the actual output to the human* (file list, sample images, sample
+rows). Get a "yes, this looks right" before scaling up.
+
+### 2. Inspect outputs, don't trust exit codes
+
+A script finishing without errors means almost nothing. After every pipeline
+stage, print/spot-check concrete artifacts: class counts, a few random
+filenames per class, rejected-item examples. `curate_dataset.py` prints a
+stats summary for exactly this reason — keep that pattern in any new tool.
+
+### 3. Prove credentials/setup with the smallest possible test first
+
+We ran the full 188-image curation job twice against a broken API key,
+getting 188 401-errors each time. A one-call smoke test would have caught it
+in seconds.
+
+**Rule:** every script that needs external credentials must fail fast — make
+one cheap test call (or validate the env var) *before* the main loop, and exit
+with a clear message ("ANTHROPIC_API_KEY missing/invalid — get one at
+console.anthropic.com and ensure billing is active") instead of erroring once
+per item. If you write a new tool, add this preflight check.
+
+### 4. Use the right tool for the judgment being made
+
+Keyword heuristics can't tell a crumb photo from a logo; a vision model can.
+When a task requires understanding *content* (images, prose), don't fake it
+with string matching — either use a model or have a human label it. Heuristics
+are fine for cheap pre-filtering, never for final labels.
+
+### 5. Ground truth beats inference
+
+For composite infographics, the author's printed label on each panel is the
+ground truth — `curate_dataset.py` is explicitly instructed to read the text,
+not judge visually. Preserve this priority order anywhere labels are assigned:
+explicit text > page context > visual judgment, with a confidence rating so
+low-confidence guesses can be filtered.
+
+### 6. Secrets never go in code or commits
+
+API keys live in environment variables (`export ANTHROPIC_API_KEY=...`),
+never hardcoded, never committed, never pasted into files. If a key or token
+ever appears in chat, code, or a commit, treat it as compromised and rotate it
+immediately. GitHub PATs previously shared in chat have been treated as
+compromised for this reason.
+
+### 7. Track dataset health by class, every run
+
+The model needs balanced classes (target 100+ images each; absolute floor
+~15). Every scrape/curate run must end with a per-class count table so
+regressions (e.g. `under_fermented` dropping 77 → 40 after a refactor) are
+visible immediately, not discovered at training time.
+
+## Validation checklist before saying a change is "done"
+
+- [ ] TypeScript changes: `npx tsc --noEmit` passes
+- [ ] New/changed Python tool: ran on a small sample; human saw real output
+- [ ] Tool needing credentials: has a fail-fast preflight check
+- [ ] Data pipeline run: per-class counts printed and sanity-checked
+- [ ] No secrets in any file being committed
+
+## Current state / next steps (June 2026)
+
+1. **Blocked:** `curate_dataset.py` needs a working Anthropic API key
+   (key currently returns 401 — verify billing + workspace in console).
+2. Curate the existing 188-image `dataset/` → `dataset_clean/`.
+3. Re-run the scraper (it now also collects unlabeled "neutral" guide pages
+   for the curator), curate again, repeat until ≥100 images/class.
+4. Train with `train_crumb_model.py`; wire the exported
+   `crumb_classifier.tflite` + `labels.json` into `model/visionAnalyzer.ts`.
+
+## Git
+
+- **At the start of each session:** Run `git fetch origin && git branch -r` to
+  see all remote branches. Previous sessions may have created feature branches
+  (e.g. `claude/focused-babbage-KKUnX`) that contain work not yet on `main`
+  or the current session's branch. Check if there's unmerged work and merge it
+  in with `git merge origin/<branch-name> --no-edit` if needed.
+- Work happens on `claude/...` feature branches, pushed via the GitHub MCP
+  tools (this cloud environment has no local git credentials).
+- Never push directly to `main` without being asked.

@@ -14,7 +14,12 @@ import {
   bulkPhaseIndex,
   type PhaseCopy,
 } from '@/components/FermentationScene';
-import { SkiaFermentationScene } from '@/components/SkiaFermentationScene';
+// Deliberately NOT a static import of SkiaFermentationScene: the Skia module
+// runs code at import time, and a throw there would crash the whole route
+// before any error boundary mounts. SafeSkiaFermentationScene lazy-loads the
+// scene inside a dedicated error boundary that shows the real error + stack
+// on-device (see components/SkiaErrorBoundary.tsx and docs/SKIA-HANDOFF.md).
+import { SafeSkiaFermentationScene } from '@/components/SkiaErrorBoundary';
 
 const AUTOLYSE_OPTIONS = [20, 30, 45, 60];
 
@@ -1050,7 +1055,7 @@ export default function HomeScreen() {
         <View style={{ gap: 28 }}>
           {autolyseRunning ? (
             <View style={{ position: 'relative', alignItems: 'center', paddingVertical: 14, minHeight: 220, justifyContent: 'center' }}>
-              <SkiaFermentationScene mode="autolyse" />
+              <SafeSkiaFermentationScene mode="autolyse" />
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                 <FlaskConical color={C.accent} size={14} />
                 <Text style={{ ...label, color: C.accent }}>Autolyse resting</Text>
@@ -1074,7 +1079,7 @@ export default function HomeScreen() {
             </View>
           ) : (
             <View style={{ paddingVertical: 10, minHeight: 200, position: 'relative' }}>
-              <SkiaFermentationScene mode="idle" />
+              <SafeSkiaFermentationScene mode="idle" />
               <Text style={{ color: C.text, fontSize: 36, fontFamily: fonts.display, letterSpacing: 0.2 }}>
                 {autolyseDone ? 'Levain time.' : 'Ready to bake?'}
               </Text>
@@ -1386,7 +1391,7 @@ export default function HomeScreen() {
             }],
           }}>
           <View style={{ position: 'relative', alignItems: 'center', paddingTop: 8, paddingBottom: 12, minHeight: 280, justifyContent: 'center' }}>
-            <SkiaFermentationScene mode="bulk" fraction={sceneFraction} />
+            <SafeSkiaFermentationScene mode="bulk" fraction={sceneFraction} />
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
               <PulseDot />
               <Text style={{ ...label, color: C.accent }}>

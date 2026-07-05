@@ -14,6 +14,7 @@ import {
   type PhaseCopy,
 } from '@/components/FermentationScene';
 import { SkiaFermentationScene } from '@/components/SkiaFermentationScene';
+import { syncBulkPanel, clearBulkPanel } from '@/lib/bulkStatusPanel';
 
 const AUTOLYSE_OPTIONS = [20, 30, 45, 60];
 
@@ -802,6 +803,22 @@ export default function HomeScreen() {
       if (tickRef.current) clearInterval(tickRef.current);
     };
   }, [ticking]);
+
+  // Keep the pull-down-shade panel (Android) in step with the bulk. The OS
+  // renders the live countdowns itself, so this only needs to run when the
+  // underlying state actually changes — start, fold recorded, target moved.
+  useEffect(() => {
+    if (!bulkStartTimestamp) {
+      clearBulkPanel();
+      return;
+    }
+    syncBulkPanel({
+      completedFolds,
+      plannedFolds: defaultFoldCount,
+      nextFoldDueTimestamp,
+      targetEndTimestamp: bulkStartTimestamp + targetDurationMinutes * 60000,
+    });
+  }, [bulkStartTimestamp, completedFolds, defaultFoldCount, nextFoldDueTimestamp, targetDurationMinutes]);
 
   // Heavier pulse to "arm" the Start Bulk button once autolyse is done.
   const armPulse = useRef(new Animated.Value(0)).current;

@@ -129,7 +129,7 @@ function restingPanel(state: BulkPanelState): Notification {
   const base = basePanel(state);
   return {
     ...base,
-    title: `Dough resting — shape around ${formatClock(state.targetEndTimestamp)}`,
+    title: `Dough rising — shape around ${formatClock(state.targetEndTimestamp)}`,
     android: {
       ...base.android,
       chronometerDirection: 'down',

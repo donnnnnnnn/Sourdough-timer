@@ -8,12 +8,12 @@ import { router } from 'expo-router';
 import { Sparkles, Hand, BellRing, Thermometer, Wand2, ArrowUp, FlaskConical, X, Clock, CheckCircle2 } from 'lucide-react-native';
 import { C, fonts, label } from '@/components/theme';
 import {
-  FermentationScene,
   PHASE_SCRIPT,
   AUTOLYSE_COPY,
   bulkPhaseIndex,
   type PhaseCopy,
 } from '@/components/FermentationScene';
+import { SkiaFermentationScene } from '@/components/SkiaFermentationScene';
 
 const AUTOLYSE_OPTIONS = [20, 30, 45, 60];
 
@@ -1046,7 +1046,7 @@ export default function HomeScreen() {
         <View style={{ gap: 28 }}>
           {autolyseRunning ? (
             <View style={{ position: 'relative', alignItems: 'center', paddingVertical: 14, minHeight: 220, justifyContent: 'center' }}>
-              <FermentationScene mode="autolyse" />
+              <SkiaFermentationScene mode="autolyse" />
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                 <FlaskConical color={C.accent} size={14} />
                 <Text style={{ ...label, color: C.accent }}>Autolyse resting</Text>
@@ -1070,7 +1070,7 @@ export default function HomeScreen() {
             </View>
           ) : (
             <View style={{ paddingVertical: 10, minHeight: 200, position: 'relative' }}>
-              <FermentationScene mode="idle" />
+              <SkiaFermentationScene mode="idle" />
               <Text style={{ color: C.text, fontSize: 36, fontFamily: fonts.display, letterSpacing: 0.2 }}>
                 {autolyseDone ? 'Levain time.' : 'Ready to bake?'}
               </Text>
@@ -1382,7 +1382,7 @@ export default function HomeScreen() {
             }],
           }}>
           <View style={{ position: 'relative', alignItems: 'center', paddingTop: 8, paddingBottom: 12, minHeight: 280, justifyContent: 'center' }}>
-            <FermentationScene mode="bulk" fraction={sceneFraction} />
+            <SkiaFermentationScene mode="bulk" fraction={sceneFraction} />
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
               <PulseDot />
               <Text style={{ ...label, color: C.accent }}>

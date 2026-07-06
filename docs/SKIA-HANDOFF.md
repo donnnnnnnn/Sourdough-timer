@@ -7,37 +7,48 @@ with evidence (build logs, device tests), never "it should work."
 
 ## ✅ RESOLVED (July 2026) — read this before anything below
 
-The investigation is complete; the sections below it are kept as the historical
-record. Final findings, all device-verified:
+The investigation is complete; everything below is historical record. The true
+root cause was found by running the app's own Babel transform on the component
+and reading the output — after two plausible-but-wrong theories (documented
+below so they aren't repeated).
 
-- **Root cause (exact):** `createPicture()` inside a reanimated worklet
-  (`useClock` + `useDerivedValue`) throws `TypeError: undefined is not a
-  function` on this stack. On-device stack (captured via `SkiaErrorBoundary`):
-  `createPicture → <derived-value fn> → initialUpdaterRun → useDerivedValue →
-  SkiaFermentationScene`. Mechanism: Skia host objects flowing through
-  reanimated's property probes on the worklet/UI runtime hit RN-Skia's
-  `Symbol.dispose` lookup fallback (`cpp/jsi/JsiHostObject.cpp`), which is
-  broken cross-runtime.
-- **Upstream fix is INSUFFICIENT — do not retry a plain version bump.** Skia
-  2.6.4's PR #3855 removed the `eval()`-based lookup, but a build with **Skia
-  2.6.9** + the restored worklet component crashed **identically** on-device
-  (July 5, tested by the owner; same stack, caught by the boundary). The
-  residual `static disposeSymbol` cached per-first-runtime remains
-  cross-runtime-unsafe. Worth reporting upstream on PR #3855 with our stack.
-- **Shipping solution: the JS-thread-driven variant on THIS branch
-  (`claude/skia-fix`).** Identical Skia GPU drawing code (every primitive,
-  glow, additive blend unchanged); only the per-frame trigger moved from a
-  reanimated worklet to a requestAnimationFrame clock + `useMemo` picture on
-  the JS thread — which never hits the broken cross-runtime path (the JS
-  runtime handles the same lookup fine). Wrapped in `SkiaErrorBoundary`
-  (lazy-required) so any future regression shows its stack instead of
-  crashing the app.
-- **The UI-thread experiment lives on `claude/skia-ui-thread`** (Skia 2.6.9 +
-  original worklet component) — kept for re-testing IF upstream actually fixes
-  the cross-runtime symbol cache. Until then it is known-crashing.
-- Tradeoff accepted: JS-thread animation can drop a frame if the JS thread
-  stalls; for this slow ambient scene that's acceptable. Revisit only with an
-  on-device-verified upstream fix.
+- **TRUE ROOT CAUSE — `'worklet'` directives + forward references.** Every
+  draw helper in `SkiaFermentationScene.tsx` was marked `'worklet'`, and
+  `drawScene` (declared FIRST in the file) calls helpers declared AFTER it.
+  Plain JS handles that via function hoisting — but the worklets Babel plugin
+  rewrites each marked `function foo() {}` into a `var foo = factory({...deps})`
+  whose dependencies are **captured at the declaration site**. So `drawScene`
+  captured `drawAcidHaze`, `drawGluten`, … while they were still `undefined`
+  (var-hoisted, unassigned). First frame → `drawAcidHaze(...)` →
+  `TypeError: undefined is not a function`. Proven statically: transforming the
+  file with `babel-preset-expo` (which auto-applies `react-native-worklets/plugin`)
+  shows `const {drawAcidHaze,...} = this.__closure` in the emitted worklet and
+  the factory capturing the forward refs. This explains **every** observed
+  crash: both threads (worklet AND plain-JS `useMemo` builds crashed — the JS
+  path also runs the transformed functions), and both Skia versions (2.6.2 and
+  2.6.9 crashed identically — Skia was never at fault).
+- **Fix (shipping, this branch `claude/skia-fix`):** the JS-driven variant with
+  ALL `'worklet'` directives removed — they were vestigial there. Verified by
+  re-running the transform: 0 `__closure`/`__workletHash`, `drawScene` stays a
+  hoisted declaration. Kept behind `SkiaErrorBoundary` (lazy-required) so any
+  future regression shows its stack on-device instead of crashing the app.
+- **Disproven theories (do not re-chase):** (1) "Skia 2.6.2's eval-based
+  Symbol.dispose lookup breaks on the worklet runtime, fixed upstream in
+  2.6.4/PR #3855" — a Skia **2.6.9** build crashed identically, and the
+  JS-thread build crashed too, where that mechanism can't apply. (2) "Skia
+  native module / New Architecture incompatibility" — Skia's native install and
+  `createPicture` executed fine; the throw was always inside the app's own
+  transformed draw callback.
+- **UI-thread variant (parked on `claude/skia-ui-thread`):** likely fixable the
+  same way — keep `'worklet'` directives (required there) but declare all
+  helpers BEFORE their callers (leaf helpers first, `drawScene` last), so the
+  factories capture initialized values. Untested; a future optimization once
+  the shipped JS-driven scene is confirmed smooth enough. Its Skia-2.6.9 bump
+  can also be reverted to Expo's pinned 2.6.2 — the version was never the issue.
+- Rule this adds (also in CLAUDE.md spirit): with `'worklet'`-marked function
+  declarations, **define before use** — the plugin breaks hoisting; and when a
+  device stack shows the throw one frame inside your own callback, run the real
+  Babel transform on the file and read the output before blaming libraries.
 
 ---
 

@@ -82,7 +82,6 @@ const FALLBACK_H = 400;
 
 // ── math helpers (worklet-safe: pure, no closures over host objects) ─────────
 function mulberry32(a: number) {
-  'worklet';
   return function () {
     a |= 0;
     a = (a + 0x6d2b79f5) | 0;
@@ -92,22 +91,18 @@ function mulberry32(a: number) {
   };
 }
 const clamp = (x: number, a: number, b: number) => {
-  'worklet';
   return x < a ? a : x > b ? b : x;
 };
 const lerp = (a: number, b: number, t: number) => {
-  'worklet';
   return a + (b - a) * t;
 };
 const smooth = (a: number, b: number, t: number) => {
-  'worklet';
   const x = clamp((t - a) / (b - a), 0, 1);
   return x * x * (3 - 2 * x);
 };
 
 // deterministic per-index drift so motion is smooth + stable (no RNG per frame)
 function drift(t: number, seed: number, ampX: number, ampY: number, period: number) {
-  'worklet';
   const ph = seed * 1.7;
   return {
     dx: Math.sin((t * TAU) / period + ph) * ampX,
@@ -115,20 +110,17 @@ function drift(t: number, seed: number, ampX: number, ampY: number, period: numb
   };
 }
 function breathe(t: number, seed: number, amp: number, period: number) {
-  'worklet';
   return 1 + Math.sin((t * TAU) / period + seed * 2.1) * amp;
 }
 
 // ── low-level additive primitives (RN Skia canvas API mirrors CanvasKit) ─────
 function additivePaint() {
-  'worklet';
   const p = Skia.Paint();
   p.setAntiAlias(true);
   p.setBlendMode(BlendMode.Plus);
   return p;
 }
 function col(rgb: RGB, a: number) {
-  'worklet';
   const aa = a < 0 ? 0 : a > 1 ? 1 : a;
   return Skia.Color(`rgba(${rgb[0]},${rgb[1]},${rgb[2]},${aa})`);
 }
@@ -143,7 +135,6 @@ function glowOrb(
   coreA: number,
   hueA: number,
 ) {
-  'worklet';
   if (r <= 0.2 || (coreA <= 0 && hueA <= 0)) return;
   const p = additivePaint();
   const sh = Skia.Shader.MakeRadialGradient(
@@ -157,7 +148,6 @@ function glowOrb(
   canvas.drawCircle(x, y, r, p);
 }
 function halo(canvas: any, x: number, y: number, r: number, rgb: RGB, a: number, sigma: number) {
-  'worklet';
   if (a <= 0.002) return;
   const p = additivePaint();
   p.setColor(col(rgb, a));
@@ -174,7 +164,6 @@ function ring(
   a: number,
   sigma: number,
 ) {
-  'worklet';
   if (a <= 0.002) return;
   const p = additivePaint();
   p.setStyle(PaintStyle.Stroke);
@@ -186,7 +175,6 @@ function ring(
 
 // ── the scene (mirrors scene.js drawScene) ───────────────────────────────────
 function drawScene(canvas: any, st: DoughState, W: number, H: number, time: number) {
-  'worklet';
   drawAcidHaze(canvas, st, W, H);
   drawGluten(canvas, st, W, H, time);
   drawAmylase(canvas, st, W, H, time);
@@ -200,14 +188,12 @@ function drawScene(canvas: any, st: DoughState, W: number, H: number, time: numb
 // warm haze that deepens with acidity — a soft CENTERED bloom that fades fully
 // to pure black well inside the frame (must never read as a glowing rectangle).
 function drawAcidHaze(canvas: any, st: DoughState, W: number, H: number) {
-  'worklet';
   const a = smooth(0.45, 1.0, st.acidity);
   if (a < 0.02) return;
   glowOrb(canvas, W * 0.5, H * 0.58, W * 0.42, P.protease, P.protease, 0.045 * a, 0.05 * a);
 }
 
 function drawYeast(canvas: any, st: DoughState, W: number, H: number, time: number) {
-  'worklet';
   const m = st.microbeActivity;
   const rng = mulberry32(99);
   const count = Math.round(lerp(2, 7, m));
@@ -256,7 +242,6 @@ function drawYeast(canvas: any, st: DoughState, W: number, H: number, time: numb
 
 // LAB: bead-like violet rods in chains — bacteria outnumber yeast
 function drawLAB(canvas: any, st: DoughState, W: number, H: number, time: number) {
-  'worklet';
   const m = st.microbeActivity;
   const rng = mulberry32(211);
   const chains = Math.round(lerp(1, 10, m));
@@ -284,7 +269,6 @@ function drawLAB(canvas: any, st: DoughState, W: number, H: number, time: number
 
 // Amylase: teal rings — the autolyse workhorse, fades as ferment proceeds
 function drawAmylase(canvas: any, st: DoughState, W: number, H: number, time: number) {
-  'worklet';
   const emerge = clamp(1 - smooth(0.04, 0.3, st.fermentation), 0, 1) * 0.9 + 0.1 * st.sugarAvail;
   if (emerge < 0.04) return;
   const rng = mulberry32(53);
@@ -313,7 +297,6 @@ function drawAmylase(canvas: any, st: DoughState, W: number, H: number, time: nu
 
 // Protease: red lobes — appear as gluten damage / acidity rise (late)
 function drawProtease(canvas: any, st: DoughState, W: number, H: number, time: number) {
-  'worklet';
   const emerge = Math.max(smooth(0.12, 0.7, st.glutenDamage), smooth(0.55, 1.0, st.acidity));
   if (emerge < 0.04) return;
   const rng = mulberry32(131);
@@ -334,7 +317,6 @@ function drawProtease(canvas: any, st: DoughState, W: number, H: number, time: n
 
 // Acetic acid: small yellow-green flecks — concentrate as acidity rises (late)
 function drawAcetic(canvas: any, st: DoughState, W: number, H: number, time: number) {
-  'worklet';
   const emerge = smooth(0.35, 0.85, st.acidity);
   if (emerge < 0.04) return;
   const rng = mulberry32(177);
@@ -351,7 +333,6 @@ function drawAcetic(canvas: any, st: DoughState, W: number, H: number, time: num
 
 // CO₂ bubbles: inflate + rise with gasVolume
 function drawBubbles(canvas: any, st: DoughState, W: number, H: number, time: number) {
-  'worklet';
   const gas = st.gasVolume;
   if (gas < 0.03) return;
   const rng = mulberry32(311);
@@ -381,7 +362,6 @@ function drawBubbles(canvas: any, st: DoughState, W: number, H: number, time: nu
 // organize (glutenStrength): slack/dim -> aligned/bright lattice
 // fray (glutenDamage): thins, dims, snaps strands, extinguishes nodes
 function drawGluten(canvas: any, st: DoughState, W: number, H: number, time: number) {
-  'worklet';
   const organize = st.glutenStrength;
   const fray = st.glutenDamage;
   const rng = mulberry32(7);
@@ -456,7 +436,6 @@ function drawStrand(
   idx: number,
   rng: () => number,
 ) {
-  'worklet';
   if (alpha < 0.01) return;
   const thick = w * lerp(0.6, 1.45, rng());
   const bowSign = rng() < 0.5 ? -1 : 1;

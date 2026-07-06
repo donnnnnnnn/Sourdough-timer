@@ -157,6 +157,24 @@ visible immediately, not discovered at training time.
 4. Train with `train_crumb_model.py`; wire the exported
    `crumb_classifier.tflite` + `labels.json` into `model/visionAnalyzer.ts`.
 
+## Handoff protocol
+
+For focused threads of work (e.g. the app's visual design — notification
+panel, icons, illustration style), we keep a living state doc in `docs/`
+instead of relying on chat history, since sessions don't share context.
+
+**Whenever the owner asks to "hand off," "hand off to a new session," or
+similar, for the app-design thread:** update `docs/SESSION_HANDOFF.md` before
+ending the turn — rewrite it to reflect current reality (what shipped, what's
+open, what the owner said about any options shown), not append to it. Commit
+and push it with the rest of the session's work. See that file's own "Keeping
+this doc current" section for the full protocol.
+
+If a similar living-handoff doc doesn't exist yet for some other thread of
+work the owner wants to hand off, create one in `docs/` following the same
+pattern (state snapshot + explicit update protocol at the bottom) rather than
+leaving the handoff to chat memory.
+
 ## Git
 
 - **At the start of each session:** Run `git fetch origin && git branch -r` to

@@ -1,0 +1,2 @@
+# Placeholder so assets/model/ exists in git.
+# WP8 drops the trained crumb_classifier.tflite + labels.json here.

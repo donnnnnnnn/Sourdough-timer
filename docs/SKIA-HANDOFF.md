@@ -1,16 +1,61 @@
 # SKIA HANDOFF — restore the fermentation animation without crashing on launch
 
-**Goal for this session:** re-introduce the Skia-powered fermentation animation
-(`@shopify/react-native-skia`) so it runs on-device without crashing. This is the
-app's flagship visual and must ship — it was removed only as an emergency
-stop-gap to get a working build out.
-
 **Owner is non-technical.** Explain decisions in plain language and prove things
 with evidence (build logs, device tests), never "it should work."
 
 ---
 
-## TL;DR / current status
+## ✅ RESOLVED (July 2026) — read this before anything below
+
+The investigation is complete; everything below is historical record. The true
+root cause was found by running the app's own Babel transform on the component
+and reading the output — after two plausible-but-wrong theories (documented
+below so they aren't repeated).
+
+- **TRUE ROOT CAUSE — `'worklet'` directives + forward references.** Every
+  draw helper in `SkiaFermentationScene.tsx` was marked `'worklet'`, and
+  `drawScene` (declared FIRST in the file) calls helpers declared AFTER it.
+  Plain JS handles that via function hoisting — but the worklets Babel plugin
+  rewrites each marked `function foo() {}` into a `var foo = factory({...deps})`
+  whose dependencies are **captured at the declaration site**. So `drawScene`
+  captured `drawAcidHaze`, `drawGluten`, … while they were still `undefined`
+  (var-hoisted, unassigned). First frame → `drawAcidHaze(...)` →
+  `TypeError: undefined is not a function`. Proven statically: transforming the
+  file with `babel-preset-expo` (which auto-applies `react-native-worklets/plugin`)
+  shows `const {drawAcidHaze,...} = this.__closure` in the emitted worklet and
+  the factory capturing the forward refs. This explains **every** observed
+  crash: both threads (worklet AND plain-JS `useMemo` builds crashed — the JS
+  path also runs the transformed functions), and both Skia versions (2.6.2 and
+  2.6.9 crashed identically — Skia was never at fault).
+- **Fix (SHIPPED — device-verified July 6):** the JS-driven variant with ALL
+  `'worklet'` directives removed — they were vestigial there. Verified by
+  re-running the transform (0 `__closure`/`__workletHash`, `drawScene` stays a
+  hoisted declaration), then **confirmed on the owner's phone: the full
+  fermentation scene renders and animates** (screenshot in session). Merged
+  into the shipping branch `claude/fold-notification-fixes-7j2l0y` (PR #8).
+  Kept behind `SkiaErrorBoundary` (lazy-required) so any future regression
+  shows its stack on-device instead of crashing the app.
+- **Disproven theories (do not re-chase):** (1) "Skia 2.6.2's eval-based
+  Symbol.dispose lookup breaks on the worklet runtime, fixed upstream in
+  2.6.4/PR #3855" — a Skia **2.6.9** build crashed identically, and the
+  JS-thread build crashed too, where that mechanism can't apply. (2) "Skia
+  native module / New Architecture incompatibility" — Skia's native install and
+  `createPicture` executed fine; the throw was always inside the app's own
+  transformed draw callback.
+- **UI-thread variant (parked on `claude/skia-ui-thread`):** likely fixable the
+  same way — keep `'worklet'` directives (required there) but declare all
+  helpers BEFORE their callers (leaf helpers first, `drawScene` last), so the
+  factories capture initialized values. Untested; a future optimization once
+  the shipped JS-driven scene is confirmed smooth enough. Its Skia-2.6.9 bump
+  can also be reverted to Expo's pinned 2.6.2 — the version was never the issue.
+- Rule this adds (also in CLAUDE.md spirit): with `'worklet'`-marked function
+  declarations, **define before use** — the plugin breaks hoisting; and when a
+  device stack shows the throw one frame inside your own callback, run the real
+  Babel transform on the file and read the output before blaming libraries.
+
+---
+
+## TL;DR / current status (historical — superseded by RESOLVED above)
 
 - The app was crashing on launch on Android with **"Something went wrong /
   Error: undefined is not a function"**, before any UI rendered.

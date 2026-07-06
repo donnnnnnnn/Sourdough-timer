@@ -14,7 +14,9 @@ import {
   bulkPhaseIndex,
   FermentationScene,
   type PhaseCopy,
+  type SceneMode,
 } from '@/components/FermentationScene';
+import { Glass } from '@/components/Glass';
 // NOTE: the Skia scene (@shopify/react-native-skia) is temporarily swapped out
 // for the pure-JS FermentationScene above — the Skia native module crashes on
 // launch under the New Architecture (prime suspect, under investigation on the
@@ -700,29 +702,23 @@ function PhaseCaption({ copy, phaseLabel }: { copy: PhaseCopy; phaseLabel?: stri
   }, [copy, fade]);
   const c = shown.current;
   return (
-    <Animated.View
-      style={{
-        opacity: fade,
-        backgroundColor: C.card,
-        borderWidth: 1,
-        borderColor: C.cardBorder,
-        borderRadius: 20,
-        padding: 18,
-      }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 }}>
-        <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: C.accent }} />
-        <Text style={{ ...label, color: C.accent }}>
-          {phaseLabel ? `${phaseLabel} · ${c.title}` : c.title}
+    <Animated.View style={{ opacity: fade }}>
+      <Glass variant="caption" style={{ padding: 18 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+          <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: C.accent }} />
+          <Text style={{ ...label, color: C.accent }}>
+            {phaseLabel ? `${phaseLabel} · ${c.title}` : c.title}
+          </Text>
+        </View>
+        <Text style={{ color: C.text, fontSize: 14.5, lineHeight: 21 }}>{c.science}</Text>
+        <View style={{ height: 1, backgroundColor: C.cardBorder, marginVertical: 12 }} />
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <Text style={{ color: C.textDim, fontSize: 12, marginTop: 1 }}>IN THE BOWL</Text>
+        </View>
+        <Text style={{ color: C.textMuted, fontSize: 14, lineHeight: 20, marginTop: 4, fontStyle: 'italic' }}>
+          {c.sensory}
         </Text>
-      </View>
-      <Text style={{ color: C.text, fontSize: 14.5, lineHeight: 21 }}>{c.science}</Text>
-      <View style={{ height: 1, backgroundColor: C.cardBorder, marginVertical: 12 }} />
-      <View style={{ flexDirection: 'row', gap: 8 }}>
-        <Text style={{ color: C.textDim, fontSize: 12, marginTop: 1 }}>IN THE BOWL</Text>
-      </View>
-      <Text style={{ color: C.textMuted, fontSize: 14, lineHeight: 20, marginTop: 4, fontStyle: 'italic' }}>
-        {c.sensory}
-      </Text>
+      </Glass>
     </Animated.View>
   );
 }
@@ -1036,8 +1032,13 @@ export default function HomeScreen() {
 
   const recentLog = bakeLogs.length > 0 ? bakeLogs[0] : null;
 
+  // The colony runs full-bleed behind the whole screen — one mount instead of
+  // one per section — so panels can float over it as frosted glass.
+  const bgMode: SceneMode = isActive ? 'bulk' : autolyseRunning ? 'autolyse' : 'idle';
+
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
+    <FermentationScene mode={bgMode} fraction={isActive ? sceneFraction : 0} />
     <ScrollView
       style={{ flex: 1 }}
       contentContainerStyle={{ padding: 24, paddingBottom: 48 }}>
@@ -1070,8 +1071,7 @@ export default function HomeScreen() {
       {!isActive ? (
         <View style={{ gap: 28 }}>
           {autolyseRunning ? (
-            <View style={{ position: 'relative', alignItems: 'center', paddingVertical: 14, minHeight: 220, justifyContent: 'center' }}>
-              <FermentationScene mode="autolyse" />
+            <View style={{ alignItems: 'center', paddingVertical: 14, minHeight: 220, justifyContent: 'center' }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                 <FlaskConical color={C.accent} size={14} />
                 <Text style={{ ...label, color: C.accent }}>Autolyse resting</Text>
@@ -1094,8 +1094,7 @@ export default function HomeScreen() {
               </TouchableOpacity>
             </View>
           ) : (
-            <View style={{ paddingVertical: 10, minHeight: 200, position: 'relative' }}>
-              <FermentationScene mode="idle" />
+            <View style={{ paddingVertical: 10, minHeight: 200 }}>
               <Text style={{ color: C.text, fontSize: 36, fontFamily: fonts.display, letterSpacing: 0.2 }}>
                 {autolyseDone ? 'Levain time.' : 'Ready to bake?'}
               </Text>
@@ -1406,8 +1405,9 @@ export default function HomeScreen() {
               translateY: enter.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }),
             }],
           }}>
-          <View style={{ position: 'relative', alignItems: 'center', paddingTop: 8, paddingBottom: 12, minHeight: 280, justifyContent: 'center' }}>
-            <FermentationScene mode="bulk" fraction={sceneFraction} />
+          <Glass
+            variant="hero"
+            style={{ alignItems: 'center', paddingTop: 8, paddingBottom: 12, minHeight: 280, justifyContent: 'center' }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
               <PulseDot />
               <Text style={{ ...label, color: C.accent }}>
@@ -1434,7 +1434,7 @@ export default function HomeScreen() {
             }}>
               :{elapsed.seconds}
             </Text>
-          </View>
+          </Glass>
 
           {/* What's happening in the dough right now — science + sensory */}
           <PhaseCaption
@@ -1443,14 +1443,7 @@ export default function HomeScreen() {
           />
 
           {/* Whole-bulk progress toward the planned end time */}
-          <View
-            style={{
-              backgroundColor: C.card,
-              borderWidth: 1,
-              borderColor: C.cardBorder,
-              borderRadius: 20,
-              padding: 20,
-            }}>
+          <Glass variant="progress" style={{ padding: 20 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
               <Text style={{ ...label }}>Bulk progress</Text>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -1485,15 +1478,12 @@ export default function HomeScreen() {
                 <Text style={{ color: C.text, fontSize: 22, fontWeight: '300' }}>+</Text>
               </TouchableOpacity>
             </View>
-          </View>
+          </Glass>
 
           {foldsComplete ? (
-            <View
+            <Glass
+              variant="folds"
               style={{
-                backgroundColor: C.card,
-                borderWidth: 1,
-                borderColor: C.cardBorder,
-                borderRadius: 20,
                 paddingVertical: 14,
                 paddingHorizontal: 20,
                 flexDirection: 'row',
@@ -1504,16 +1494,9 @@ export default function HomeScreen() {
               <Text style={{ color: C.text, fontSize: 15, fontWeight: '600' }}>
                 All {defaultFoldCount} folds done — watch the dough for shape readiness
               </Text>
-            </View>
+            </Glass>
           ) : foldIsLate ? (
-            <View
-              style={{
-                backgroundColor: C.card,
-                borderWidth: 1,
-                borderColor: C.cardBorder,
-                borderRadius: 20,
-                padding: 20,
-              }}>
+            <Glass variant="folds" style={{ padding: 20 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
                 <Clock color={C.orange} size={16} />
                 <Text style={{ ...label, color: C.orange }}>{foldLatenessAdvice(lateMinutes, doughTempF).title}</Text>
@@ -1521,17 +1504,9 @@ export default function HomeScreen() {
               <Text style={{ color: C.textMuted, fontSize: 14, lineHeight: 20 }}>
                 {foldLatenessAdvice(lateMinutes, doughTempF).body}
               </Text>
-            </View>
+            </Glass>
           ) : (
-            <View
-              style={{
-                backgroundColor: C.card,
-                borderWidth: 1,
-                borderColor: C.cardBorder,
-                borderRadius: 20,
-                padding: 20,
-                alignItems: 'center',
-              }}>
+            <Glass variant="folds" style={{ padding: 20, alignItems: 'center' }}>
               <Text style={{ ...label, marginBottom: 6 }}>
                 Next fold in
               </Text>
@@ -1562,7 +1537,7 @@ export default function HomeScreen() {
               <Text style={{ color: C.textDim, fontSize: 13, marginTop: 10 }}>
                 every {foldIntervalMinutes} min
               </Text>
-            </View>
+            </Glass>
           )}
 
           {/* The dough's story so far */}

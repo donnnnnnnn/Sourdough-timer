@@ -45,3 +45,18 @@ export const label = {
   textTransform: 'uppercase' as const,
   letterSpacing: 2,
 };
+
+// Frosted-glass panels for the timer screen, where the FermentationScene runs
+// full-bleed behind everything. Each window's tint/blur was tuned by eye in
+// tools/frosted-glass-tuner.html against how big/bold its own text is — the
+// giant timer digits need no backing at all, small body copy needs the most.
+// `intensity` is expo-blur's BlurView prop (0-100); `tint` layers on top at
+// the app's espresso hue so the glass reads warm, not grey.
+export const glass = {
+  hero: { tint: 'rgba(23,18,16,0)', intensity: 0, border: 'transparent' },
+  folds: { tint: 'rgba(23,18,16,0.40)', intensity: 7, border: C.cardBorder },
+  progress: { tint: 'rgba(23,18,16,0.03)', intensity: 13, border: C.cardBorder },
+  caption: { tint: 'rgba(23,18,16,0.04)', intensity: 30, border: C.cardBorder },
+} as const;
+
+export type GlassVariant = keyof typeof glass;

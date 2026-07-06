@@ -1,19 +1,33 @@
 /**
  * On-device crumb photo analyzer — zero network, zero cloud.
  *
- * v1 uses deterministic computer-vision heuristics (downscale → grayscale →
- * Otsu threshold → connected-component hole analysis) to produce the same
- * output shape a trained CNN would. A TFLite/ONNX model can replace the
- * internals later without touching the classifier or UI.
+ * Two jobs from one photo, kept deliberately separate:
  *
- * Confidence from this analyzer is intentionally moderate: when its features
- * are ambiguous the fusion classifier drops below the 0.75 threshold and the
- * UI surfaces tiebreaker questions — that interplay is the designed UX.
+ *  1. Boolean shape/texture features (evenHoles, topHeavyHoles,
+ *     tunnelingDetected, gummyDetected, holeFraction) — produced by the
+ *     deterministic CV pipeline below (downscale → grayscale → Otsu threshold →
+ *     connected-component hole analysis). `classifier.ts`'s `diagnose()` leans
+ *     heavily on these (fool's crumb, oven-artifact, flat-loaf voting), so this
+ *     pipeline stays byte-for-byte stable regardless of what feeds crumbProbs.
+ *
+ *  2. The 5-way `crumbProbs` distribution — model-first, heuristic-fallback.
+ *     When a trained TFLite model is bundled (see model/tfliteRuntime.ts), its
+ *     softmax supplies crumbProbs; otherwise (Expo Go, model absent, or any
+ *     load/run failure) we fall back to `heuristicProbs()`, which is the exact
+ *     synthesis this file always used. Only job #1's booleans gate diagnose();
+ *     crumbProbs only feeds topCrumbClass(), so the fallback degrades the
+ *     top-level under/over/proper vote gracefully rather than breaking anything.
+ *
+ * Confidence from the heuristic path is intentionally moderate: when its
+ * features are ambiguous the fusion classifier drops below the 0.75 threshold
+ * and the UI surfaces tiebreaker questions — that interplay is the designed UX.
+ * A trained model will be more decisive, which is fine.
  */
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as jpeg from 'jpeg-js';
 import { decode as b64decode } from 'base-64';
 import type { FermentationState } from './training-data';
+import { tryModelProbs } from './tfliteRuntime';
 
 export interface CrumbVisionFeatures {
   crumbProbs: Record<FermentationState, number>;
@@ -22,6 +36,45 @@ export interface CrumbVisionFeatures {
   tunnelingDetected: boolean;
   gummyDetected: boolean;
   holeFraction: number;
+  /** Which path produced crumbProbs — for the UI's "beta" path indicator. */
+  probSource: 'model' | 'heuristic';
+}
+
+/**
+ * Signals the heuristic probability synthesis consumes. All are computed by the
+ * CV pipeline in analyzeCrumbPhoto; this bag exists so heuristicProbs stays a
+ * pure function (identical math, no image access).
+ */
+export interface HeuristicSignals {
+  tunnelingDetected: boolean;
+  bottomDense: boolean;
+  topHeavyHoles: boolean;
+  gummyDetected: boolean;
+  evenHoles: boolean;
+  holeFraction: number;
+  sizeVariance: number;
+}
+
+/**
+ * The fallback 5-way crumb probability synthesis — moved verbatim out of
+ * analyzeCrumbPhoto so the model path can supersede it without disturbing the
+ * math. Do not "improve" the constants: they are tuned and feed topCrumbClass().
+ */
+export function heuristicProbs(s: HeuristicSignals): Record<FermentationState, number> {
+  let under = 0.1, sUnder = 0.15, proper = 0.3, sOver = 0.15, over = 0.1;
+  if (s.tunnelingDetected || (s.bottomDense && s.topHeavyHoles)) { under += 0.35; sUnder += 0.15; proper -= 0.2; }
+  else if (s.bottomDense || s.gummyDetected) { under += 0.2; sUnder += 0.15; proper -= 0.1; }
+  if (s.evenHoles && s.holeFraction > 0.12 && s.sizeVariance > 0.5 && s.sizeVariance < 4) { proper += 0.35; under -= 0.05; }
+  if (s.evenHoles && s.holeFraction <= 0.12) { proper += 0.1; sUnder += 0.1; } // tight-but-even: proper wholegrain vs slightly under — genuinely ambiguous
+  if (s.holeFraction > 0.10 && s.sizeVariance < 0.4 && !s.topHeavyHoles) { sOver += 0.15; over += 0.1; } // uniform ragged smallness
+  const sum = under + sUnder + proper + sOver + over;
+  return {
+    under_fermented: under / sum,
+    slightly_under: sUnder / sum,
+    properly_fermented: proper / sum,
+    slightly_over: sOver / sum,
+    over_fermented: over / sum,
+  };
 }
 
 const SIZE = 160; // analysis resolution — small enough for fast flood fill on-device
@@ -117,23 +170,25 @@ export async function analyzeCrumbPhoto(uri: string): Promise<CrumbVisionFeature
     holeFraction > 0.05;
   const gummyDetected = avgWallContrast < 6 && holeFraction < 0.12;
 
-  // ── Probability synthesis ─────────────────────────────────────────
-  let under = 0.1, sUnder = 0.15, proper = 0.3, sOver = 0.15, over = 0.1;
-  if (tunnelingDetected || (bottomDense && topHeavyHoles)) { under += 0.35; sUnder += 0.15; proper -= 0.2; }
-  else if (bottomDense || gummyDetected) { under += 0.2; sUnder += 0.15; proper -= 0.1; }
-  if (evenHoles && holeFraction > 0.12 && sizeVariance > 0.5 && sizeVariance < 4) { proper += 0.35; under -= 0.05; }
-  if (evenHoles && holeFraction <= 0.12) { proper += 0.1; sUnder += 0.1; } // tight-but-even: proper wholegrain vs slightly under — genuinely ambiguous
-  if (holeFraction > 0.10 && sizeVariance < 0.4 && !topHeavyHoles) { sOver += 0.15; over += 0.1; } // uniform ragged smallness
-  const sum = under + sUnder + proper + sOver + over;
-  const crumbProbs: Record<FermentationState, number> = {
-    under_fermented: under / sum,
-    slightly_under: sUnder / sum,
-    properly_fermented: proper / sum,
-    slightly_over: sOver / sum,
-    over_fermented: over / sum,
-  };
+  // ── Probability synthesis: model-first, heuristic fallback ────────
+  // tryModelProbs runs the bundled TFLite model on a 224×224 copy of the same
+  // photo and returns its softmax mapped to the 5 states BY NAME; it returns
+  // null in Expo Go, when the model isn't bundled, or on any load/run failure,
+  // in which case we synthesize crumbProbs from the heuristics exactly as before.
+  const modelProbs = await tryModelProbs(uri);
+  const crumbProbs =
+    modelProbs ??
+    heuristicProbs({ tunnelingDetected, bottomDense, topHeavyHoles, gummyDetected, evenHoles, holeFraction, sizeVariance });
 
-  return { crumbProbs, evenHoles, topHeavyHoles, tunnelingDetected, gummyDetected, holeFraction };
+  return {
+    crumbProbs,
+    evenHoles,
+    topHeavyHoles,
+    tunnelingDetected,
+    gummyDetected,
+    holeFraction,
+    probSource: modelProbs ? 'model' : 'heuristic',
+  };
 }
 
 function otsu(gray: Uint8Array): number {

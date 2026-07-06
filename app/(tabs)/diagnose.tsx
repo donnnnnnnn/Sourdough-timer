@@ -1,10 +1,22 @@
 import { useState } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, Image, Platform } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Image, Platform, ActivityIndicator } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { Camera, ImagePlus, RotateCcw } from 'lucide-react-native';
 import { useBakeStore } from '@/store/useBakeStore';
 import { diagnose, DIAGNOSIS_COPY, type ClassifierInput, type ShoulderProfile } from '@/model/classifier';
+import { analyzeCrumbPhoto } from '@/model/visionAnalyzer';
 import type { FermentationState } from '@/model/training-data';
+
+// Which evidence produced the crumb probabilities, surfaced in the result card.
+// 'answers' = no photo (or web / analysis failed); the model/heuristic split
+// comes from the analyzer's probSource.
+type PhotoPath = 'model' | 'heuristic' | 'answers';
+
+const PHOTO_PATH_LABEL: Record<PhotoPath, string> = {
+  model: 'Photo analysis: on-device model',
+  heuristic: 'Photo analysis: heuristic (beta)',
+  answers: 'Answers only — no crumb photo',
+};
 
 const C = {
   bg: '#0c0c0f',
@@ -147,6 +159,8 @@ export default function DiagnoseScreen() {
   const [crumb, setCrumb] = useState<CrumbAnswer | null>(null);
   const [crust, setCrust] = useState<CrustAnswer | null>(null);
   const [result, setResult] = useState<ReturnType<typeof diagnose> | null>(null);
+  const [photoPath, setPhotoPath] = useState<PhotoPath>('answers');
+  const [analyzing, setAnalyzing] = useState(false);
 
   const avgBulk =
     bakeLogs.length > 0
@@ -173,9 +187,41 @@ export default function DiagnoseScreen() {
     } catch {}
   }
 
-  function handleDiagnose() {
+  async function handleDiagnose() {
     if (!shape || !crumb || !crust) return;
-    const input = buildClassifierInput(shape, crumb, crust, bulkMins, foldCount, avgBulk);
+
+    // Start from the answers-only input (today's behavior).
+    let input = buildClassifierInput(shape, crumb, crust, bulkMins, foldCount, avgBulk);
+    let path: PhotoPath = 'answers';
+
+    // A crumb photo, when present, beats memory: it supplies crumbProbs and the
+    // vision booleans it can actually see. The crumb question still contributes
+    // megaPocketsNearCrust (the heuristic can't detect it) and stays as the
+    // tiebreaker. Exterior signals remain question-driven. Web has no picker, so
+    // crumbUri is null there; we still guard on Platform for safety.
+    if (crumbUri && Platform.OS !== 'web') {
+      setAnalyzing(true);
+      try {
+        const vf = await analyzeCrumbPhoto(crumbUri);
+        input = {
+          ...input,
+          crumbProbs: vf.crumbProbs,
+          evenHoles: vf.evenHoles,
+          topHeavyHoles: vf.topHeavyHoles,
+          tunnelingDetected: vf.tunnelingDetected,
+          gummyDetected: vf.gummyDetected,
+        };
+        path = vf.probSource; // 'model' | 'heuristic'
+      } catch (e) {
+        // Never block a diagnosis on a bad photo — fall back to the answers.
+        console.warn('[diagnose] crumb photo analysis failed; using answers only.', e);
+        path = 'answers';
+      } finally {
+        setAnalyzing(false);
+      }
+    }
+
+    setPhotoPath(path);
     setResult(diagnose(input));
   }
 
@@ -184,6 +230,7 @@ export default function DiagnoseScreen() {
     setCrumb(null);
     setCrust(null);
     setResult(null);
+    setPhotoPath('answers');
     setCrumbUri(null);
     setExteriorUri(null);
   }
@@ -202,7 +249,15 @@ export default function DiagnoseScreen() {
       </Text>
 
       {/* Photos */}
-      <SectionLabel hint="Reference only — for a future ML model">Photos</SectionLabel>
+      <SectionLabel
+        badge="BETA"
+        hint={
+          Platform.OS === 'web'
+            ? 'Crumb-photo analysis runs on-device (not available on web). Exterior is reference only.'
+            : 'Attach a crumb cross-section and it’s analyzed on-device on Diagnose. Exterior is reference only.'
+        }>
+        Photos
+      </SectionLabel>
       <View style={{ flexDirection: 'row', gap: 10, marginBottom: 28 }}>
         <PhotoSlot
           label="Crumb cross-section"
@@ -246,7 +301,7 @@ export default function DiagnoseScreen() {
       {!result && (
         <TouchableOpacity
           onPress={handleDiagnose}
-          disabled={!canDiagnose}
+          disabled={!canDiagnose || analyzing}
           activeOpacity={0.8}
           style={{
             backgroundColor: canDiagnose ? C.accent : 'rgba(255,255,255,0.06)',
@@ -254,20 +309,30 @@ export default function DiagnoseScreen() {
             paddingVertical: 22,
             alignItems: 'center',
             marginTop: 4,
+            opacity: analyzing ? 0.85 : 1,
             shadowColor: canDiagnose ? C.accent : 'transparent',
             shadowOffset: { width: 0, height: 8 },
             shadowOpacity: 0.3,
             shadowRadius: 20,
           }}>
-          <Text
-            style={{
-              color: canDiagnose ? '#0c0c0f' : C.textDim,
-              fontSize: 19,
-              fontWeight: '800',
-              letterSpacing: -0.2,
-            }}>
-            Diagnose
-          </Text>
+          {analyzing ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <ActivityIndicator color="#0c0c0f" />
+              <Text style={{ color: '#0c0c0f', fontSize: 19, fontWeight: '800', letterSpacing: -0.2 }}>
+                Analyzing photo…
+              </Text>
+            </View>
+          ) : (
+            <Text
+              style={{
+                color: canDiagnose ? '#0c0c0f' : C.textDim,
+                fontSize: 19,
+                fontWeight: '800',
+                letterSpacing: -0.2,
+              }}>
+              Diagnose
+            </Text>
+          )}
         </TouchableOpacity>
       )}
 
@@ -277,6 +342,7 @@ export default function DiagnoseScreen() {
           result={result}
           avgBulkMins={avgBulk}
           bakeCount={bakeLogs.length}
+          photoPath={photoPath}
           onReset={handleReset}
         />
       )}
@@ -286,19 +352,36 @@ export default function DiagnoseScreen() {
 
 // ── SectionLabel ───────────────────────────────────────────────────────────
 
-function SectionLabel({ children, hint }: { children: string; hint?: string }) {
+function SectionLabel({ children, hint, badge }: { children: string; hint?: string; badge?: string }) {
   return (
     <View style={{ marginBottom: 12 }}>
-      <Text
-        style={{
-          color: C.textDim,
-          fontSize: 11,
-          fontWeight: '700',
-          textTransform: 'uppercase',
-          letterSpacing: 2,
-        }}>
-        {children}
-      </Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <Text
+          style={{
+            color: C.textDim,
+            fontSize: 11,
+            fontWeight: '700',
+            textTransform: 'uppercase',
+            letterSpacing: 2,
+          }}>
+          {children}
+        </Text>
+        {badge && (
+          <View
+            style={{
+              backgroundColor: C.accentSoft,
+              borderWidth: 1,
+              borderColor: C.accentBorder,
+              borderRadius: 6,
+              paddingHorizontal: 6,
+              paddingVertical: 1,
+            }}>
+            <Text style={{ color: C.accent, fontSize: 9, fontWeight: '800', letterSpacing: 1 }}>
+              {badge}
+            </Text>
+          </View>
+        )}
+      </View>
       {hint && (
         <Text style={{ color: C.textDim, fontSize: 12, marginTop: 2 }}>{hint}</Text>
       )}
@@ -467,11 +550,13 @@ function DiagnosisCard({
   result,
   avgBulkMins,
   bakeCount,
+  photoPath,
   onReset,
 }: {
   result: ReturnType<typeof diagnose>;
   avgBulkMins: number | null;
   bakeCount: number;
+  photoPath: PhotoPath;
   onReset: () => void;
 }) {
   const copy = DIAGNOSIS_COPY[result.diagnosis];
@@ -558,6 +643,9 @@ function DiagnosisCard({
           </Text>
           <Text style={{ color: C.textMuted, fontSize: 13, lineHeight: 19 }}>
             {result.reasoning}
+          </Text>
+          <Text style={{ color: C.textDim, fontSize: 11, marginTop: 8, fontStyle: 'italic' }}>
+            {PHOTO_PATH_LABEL[photoPath]}
           </Text>
         </View>
 

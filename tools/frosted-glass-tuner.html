@@ -539,18 +539,28 @@
   const AMYL  = Array.from({length: 6},  () => ({ x: rnd(), y: rnd(), r: 9+rnd()*6, ph: rnd()*6.28 }));
   const BUB   = Array.from({length: 16}, () => ({ x: rnd(), r: 3+rnd()*7, born: rnd(), sp: 0.02+rnd()*0.03, off: rnd() }));
 
-  // Gluten network — a connected mesh: nodes linked to their nearest neighbours,
-  // with glowing junctions where strands cross-link. This is the structural web
-  // that organizes through bulk and frays past peak.
-  const GNODES = Array.from({length: 18}, () => ({ x: 0.06+rnd()*0.88, y: 0.05+rnd()*0.9, ph: rnd()*6.28, amp: 0.004+rnd()*0.012 }));
+  // Gluten network — an imperfect scaffolding lattice spanning the whole frame.
+  // Nodes sit on a rough grid (jittered off their cells) and link to their
+  // horizontal + vertical neighbours; a few strands are missing and a few extra
+  // diagonals cross-brace it, so it reads as hand-built scaffolding, not a mesh.
+  const GCOLS = 5, GROWS = 9, JIT = 0.05;
+  const GNODES = [];
+  for (let j = 0; j < GROWS; j++) for (let i = 0; i < GCOLS; i++) {
+    GNODES.push({
+      x: (i / (GCOLS - 1)) * 0.92 + 0.04 + (rnd() - 0.5) * JIT,
+      y: (j / (GROWS - 1)) * 0.94 + 0.03 + (rnd() - 0.5) * JIT,
+      ph: rnd() * 6.28, amp: 0.003 + rnd() * 0.007,
+    });
+  }
+  const gi = (i, j) => j * GCOLS + i;
   const GEDGES = [];
-  GNODES.forEach((n, i) => {
-    const near = GNODES.map((m, j) => ({ j, d: (m.x-n.x)**2 + (m.y-n.y)**2 })).filter(o => o.j !== i).sort((a,b) => a.d - b.d);
-    for (let k = 0; k < 2; k++) {
-      const j = near[k].j, key = i < j ? i+'-'+j : j+'-'+i;
-      if (!GEDGES.some(e => e.key === key)) GEDGES.push({ a: i, b: j, key, brk: 0.75 + rnd()*0.35 });
-    }
-  });
+  for (let j = 0; j < GROWS; j++) for (let i = 0; i < GCOLS; i++) {
+    if (i < GCOLS - 1) GEDGES.push({ a: gi(i, j), b: gi(i + 1, j), brk: 0.72 + rnd() * 0.36, miss: rnd() < 0.10 });
+    if (j < GROWS - 1) GEDGES.push({ a: gi(i, j), b: gi(i, j + 1), brk: 0.72 + rnd() * 0.36, miss: rnd() < 0.10 });
+    // sparse diagonal cross-brace for an organic, imperfect look
+    if (i < GCOLS - 1 && j < GROWS - 1 && rnd() < 0.22)
+      GEDGES.push({ a: gi(i, j), b: gi(i + 1, j + 1), brk: 0.6 + rnd() * 0.3, miss: false, diag: true });
+  }
 
   function orb(x, y, r, col, a) {
     const g = ctx.createRadialGradient(x, y, 0, x, y, r);
@@ -591,12 +601,13 @@
     });
     ctx.lineCap = 'round';
     GEDGES.forEach(e => {
+      if (e.miss) return;                                // imperfect scaffold — strand never formed
       const A = gp[e.a], D = gp[e.b];
       const broken = fray > e.brk;                       // strands snap one by one past peak
-      const a = (0.12 + 0.46*organize) * (broken ? 0.12 : 1) * B;
+      const a = (0.10 + 0.34*organize) * (e.diag ? 0.5 : 1) * (broken ? 0.12 : 1) * B;
       if (a < 0.008) return;
       ctx.strokeStyle = `rgba(${P.gluten},${a})`;
-      ctx.lineWidth = 1.3 + 2.4*organize;
+      ctx.lineWidth = (e.diag ? 0.8 : 1.2) + 1.9*organize;
       if (broken) {
         // frayed: draw two recoiling stubs instead of a full strand
         const mx = (A.x+D.x)/2, my = (A.y+D.y)/2, g = 0.32;
@@ -606,11 +617,11 @@
         ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(D.x, D.y); ctx.stroke();
       }
     });
-    // glowing junction nodes
+    // glowing junction nodes where strands cross-link
     gp.forEach(p => {
-      const a = (0.14 + 0.5*organize) * (1 - 0.4*fray) * B;
-      orb(p.x, p.y, 5 + 7*organize, P.gluten, a);
-      orb(p.x, p.y, 2.4, P.yeastCore, a*0.9);
+      const a = (0.12 + 0.4*organize) * (1 - 0.4*fray) * B;
+      orb(p.x, p.y, 3.5 + 5*organize, P.gluten, a);
+      orb(p.x, p.y, 1.8, P.yeastCore, a*0.9);
     });
 
     const amE = 1 - smooth(0.05, 0.25, f);

@@ -36,6 +36,8 @@ export interface CrumbVisionFeatures {
   tunnelingDetected: boolean;
   gummyDetected: boolean;
   holeFraction: number;
+  /** Which path produced crumbProbs — for the UI's "beta" path indicator. */
+  probSource: 'model' | 'heuristic';
 }
 
 /**
@@ -173,11 +175,20 @@ export async function analyzeCrumbPhoto(uri: string): Promise<CrumbVisionFeature
   // photo and returns its softmax mapped to the 5 states BY NAME; it returns
   // null in Expo Go, when the model isn't bundled, or on any load/run failure,
   // in which case we synthesize crumbProbs from the heuristics exactly as before.
+  const modelProbs = await tryModelProbs(uri);
   const crumbProbs =
-    (await tryModelProbs(uri)) ??
+    modelProbs ??
     heuristicProbs({ tunnelingDetected, bottomDense, topHeavyHoles, gummyDetected, evenHoles, holeFraction, sizeVariance });
 
-  return { crumbProbs, evenHoles, topHeavyHoles, tunnelingDetected, gummyDetected, holeFraction };
+  return {
+    crumbProbs,
+    evenHoles,
+    topHeavyHoles,
+    tunnelingDetected,
+    gummyDetected,
+    holeFraction,
+    probSource: modelProbs ? 'model' : 'heuristic',
+  };
 }
 
 function otsu(gray: Uint8Array): number {

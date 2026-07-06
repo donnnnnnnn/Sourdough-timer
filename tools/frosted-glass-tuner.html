@@ -144,9 +144,13 @@
   .g-hero     { --tint: var(--tint-hero);     --blur: var(--blur-hero); }
   .g-caption  { --tint: var(--tint-caption);  --blur: var(--blur-caption); }
   .g-progress { --tint: var(--tint-progress); --blur: var(--blur-progress); }
-  /* the hero, being a clean window, drops its heavy inner shadow so it doesn't
-     darken the view into the colony */
-  .g-hero { box-shadow: inset 0 1px 0 rgba(255,244,226,0.12), 0 8px 24px -18px rgba(0,0,0,0.5); }
+  /* the hero, being a clean window, drops its heavy inner shadow and border so
+     it doesn't darken or frame the view into the colony */
+  .g-hero {
+    box-shadow: inset 0 1px 0 rgba(255,244,226,0.12), 0 8px 24px -18px rgba(0,0,0,0.5);
+    border-color: transparent;
+  }
+  .g-hero::before { display: none; }
 
   .label { font-size: 11px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); }
 

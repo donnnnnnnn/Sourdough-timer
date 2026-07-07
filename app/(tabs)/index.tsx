@@ -12,13 +12,14 @@ import {
   PHASE_SCRIPT,
   AUTOLYSE_COPY,
   bulkPhaseIndex,
-  FermentationScene,
   type PhaseCopy,
 } from '@/components/FermentationScene';
-// NOTE: the Skia scene (@shopify/react-native-skia) is temporarily swapped out
-// for the pure-JS FermentationScene above — the Skia native module crashes on
-// launch under the New Architecture (prime suspect, under investigation on the
-// claude/skia-fix branch; see docs/SKIA-HANDOFF.md). Swap it back once fixed.
+// Deliberately NOT a static import of SkiaFermentationScene: the Skia module
+// runs code at import time, and a throw there would crash the whole route
+// before any error boundary mounts. SafeSkiaFermentationScene lazy-loads the
+// scene inside a dedicated error boundary that shows the real error + stack
+// on-device (see components/SkiaErrorBoundary.tsx and docs/SKIA-HANDOFF.md).
+import { SafeSkiaFermentationScene } from '@/components/SkiaErrorBoundary';
 import { syncBulkPanel, clearBulkPanel } from '@/lib/bulkStatusPanel';
 
 const AUTOLYSE_OPTIONS = [20, 30, 45, 60];
@@ -1071,7 +1072,7 @@ export default function HomeScreen() {
         <View style={{ gap: 28 }}>
           {autolyseRunning ? (
             <View style={{ position: 'relative', alignItems: 'center', paddingVertical: 14, minHeight: 220, justifyContent: 'center' }}>
-              <FermentationScene mode="autolyse" />
+              <SafeSkiaFermentationScene mode="autolyse" />
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                 <FlaskConical color={C.accent} size={14} />
                 <Text style={{ ...label, color: C.accent }}>Autolyse resting</Text>
@@ -1095,7 +1096,7 @@ export default function HomeScreen() {
             </View>
           ) : (
             <View style={{ paddingVertical: 10, minHeight: 200, position: 'relative' }}>
-              <FermentationScene mode="idle" />
+              <SafeSkiaFermentationScene mode="idle" />
               <Text style={{ color: C.text, fontSize: 36, fontFamily: fonts.display, letterSpacing: 0.2 }}>
                 {autolyseDone ? 'Levain time.' : 'Ready to bake?'}
               </Text>
@@ -1407,7 +1408,7 @@ export default function HomeScreen() {
             }],
           }}>
           <View style={{ position: 'relative', alignItems: 'center', paddingTop: 8, paddingBottom: 12, minHeight: 280, justifyContent: 'center' }}>
-            <FermentationScene mode="bulk" fraction={sceneFraction} />
+            <SafeSkiaFermentationScene mode="bulk" fraction={sceneFraction} />
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
               <PulseDot />
               <Text style={{ ...label, color: C.accent }}>

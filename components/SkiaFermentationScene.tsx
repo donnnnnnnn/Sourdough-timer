@@ -52,7 +52,6 @@ import { View } from 'react-native';
 import {
   Canvas,
   Picture,
-  Group,
   Skia,
   createPicture,
   vec,
@@ -61,6 +60,7 @@ import {
   StrokeCap,
   BlurStyle,
   TileMode,
+  ClipOp,
 } from '@shopify/react-native-skia';
 import {
   computeDoughState,
@@ -69,6 +69,7 @@ import {
   type FoldEvent,
   type DoughState,
 } from '../model/doughState';
+import { screenRects, type GlassScreenRect } from './glassStage';
 
 // ── Palette (0..255 rgb) — matches fermentation-art-spec.md & scene.js ───────
 const P = {
@@ -631,7 +632,18 @@ function drawScene(
   W: number,
   H: number,
   time: number,
+  dim: number,
+  glass: GlassScreenRect[],
 ) {
+  // Group-dim the living organisms via a layer alpha (was a declarative
+  // <Group opacity>; baked in here so the frosted-glass panels below can be
+  // drawn at full strength on top, undimmed).
+  const dimmed = dim < 0.999;
+  if (dimmed) {
+    const lp = Skia.Paint();
+    lp.setAlphaf(clamp(dim, 0, 1));
+    canvas.saveLayer(lp, null);
+  }
   drawAcidHaze(canvas, layout, W, H);
   drawGluten(canvas, layout.gluten, time);
   drawAmylase(canvas, layout, st, time);
@@ -640,6 +652,61 @@ function drawScene(
   drawYeast(canvas, layout, st, time);
   drawAcetic(canvas, layout, time);
   drawBubbles(canvas, layout, st, W, H, time);
+  if (dimmed) canvas.restore();
+
+  // Frosted-glass panels: real backdrop blur of the organisms beneath each
+  // registered UI card, so the animation shows THROUGH the controls.
+  if (glass.length) drawGlassPanels(canvas, glass, time);
+}
+
+// A soft, faintly-breathing frosted slab per registered UI card. Uses NORMAL
+// (SrcOver) blending — deliberately NOT the additive paint the organisms use —
+// so it mutes the bright glows beneath into a legible, glassy panel.
+function drawGlassPanels(canvas: any, rects: GlassScreenRect[], time: number) {
+  for (const g of rects) {
+    if (g.w <= 1 || g.h <= 1) continue;
+    const rect = Skia.XYWHRect(g.x, g.y, g.w, g.h);
+    const rr = Skia.RRectXY(rect, g.radius, g.radius);
+
+    canvas.save();
+    canvas.clipRRect(rr, ClipOp.Intersect, true);
+
+    // 1) Frosted backdrop — blur the already-drawn organisms within this panel.
+    //    A gentle breathing of the blur radius makes the glass feel alive under
+    //    the "scope" without being distracting.
+    const sigma = 8 + Math.sin((time * TAU) / 7 + g.x * 0.01) * 1.5;
+    const blur = Skia.ImageFilter.MakeBlur(sigma, sigma, TileMode.Clamp);
+    const layerPaint = Skia.Paint();
+    canvas.saveLayer(layerPaint, rect, blur);
+    canvas.restore(); // composite the blurred backdrop back into the clip
+
+    // 2) Warm espresso tint so text stays readable over bright glows.
+    const tint = Skia.Paint();
+    tint.setColor(Skia.Color(`rgba(22,16,13,${clamp(0.44 * g.tint, 0, 0.92)})`));
+    canvas.drawRRect(rr, tint);
+
+    // 3) Top-down warm sheen — the sub-surface glow of real frosted glass.
+    const sheen = Skia.Paint();
+    sheen.setShader(
+      Skia.Shader.MakeLinearGradient(
+        vec(g.x, g.y),
+        vec(g.x, g.y + g.h),
+        [Skia.Color('rgba(255,240,220,0.12)'), Skia.Color('rgba(255,240,220,0.0)')],
+        [0, 0.5],
+        TileMode.Clamp,
+      ),
+    );
+    canvas.drawRRect(rr, sheen);
+
+    // 4) Hairline bright edge to define the pane.
+    const border = Skia.Paint();
+    border.setStyle(PaintStyle.Stroke);
+    border.setStrokeWidth(1);
+    border.setColor(Skia.Color('rgba(255,238,212,0.22)'));
+    canvas.drawRRect(rr, border);
+
+    canvas.restore(); // pop clip
+  }
 }
 
 // warm haze that deepens with acidity — a soft CENTERED bloom that fades fully
@@ -966,6 +1033,8 @@ function drawStrand(
 }
 
 // ── React component ──────────────────────────────────────────────────────────
+const EMPTY_GLASS: GlassScreenRect[] = [];
+
 interface Props {
   /** 'idle' (dim/near-empty) | 'autolyse' (fixed early, amylase-led) | 'bulk'. */
   mode: 'idle' | 'autolyse' | 'bulk';
@@ -973,6 +1042,12 @@ interface Props {
   fraction?: number;
   inputs?: BakerInputs;
   folds?: FoldEvent[];
+  /**
+   * When true (default), the scene draws frosted-glass panels behind every UI
+   * card registered via glassStage — used by the fullscreen timer background.
+   * Set false to render the organisms only (e.g. a stand-alone decorative use).
+   */
+  glassEnabled?: boolean;
 }
 
 export function SkiaFermentationScene({
@@ -980,6 +1055,7 @@ export function SkiaFermentationScene({
   fraction = 0,
   inputs = DEFAULT_INPUTS,
   folds = [],
+  glassEnabled = true,
 }: Props) {
   const [size, setSize] = useState({ w: FALLBACK_W, h: FALLBACK_H });
 
@@ -1032,10 +1108,20 @@ export function SkiaFermentationScene({
     return () => cancelAnimationFrame(raf);
   }, []);
 
+  // Frosted-glass panels registered by the floating UI cards, resolved to
+  // current on-screen coordinates. Read every frame (this component already
+  // re-renders ~30fps), so the panels track scrolling content without any
+  // extra re-render being triggered by scroll events. When no cards register
+  // (e.g. the scene used stand-alone), this is empty and no glass is drawn.
+  const glass = glassEnabled ? screenRects() : EMPTY_GLASS;
+
   // SkPicture rebuilt each frame as timeSec advances — plain Skia, no worklet.
+  // `glass` is captured in the closure; the memo recomputes every frame because
+  // timeSec changes, so the latest panel positions are always drawn.
   const picture = useMemo(
-    () => createPicture((canvas) => drawScene(canvas, st, layout, W, H, timeSec)),
-    [st, layout, W, H, timeSec],
+    () => createPicture((canvas) => drawScene(canvas, st, layout, W, H, timeSec, dim, glass)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [st, layout, W, H, timeSec, dim],
   );
 
   return (
@@ -1051,9 +1137,7 @@ export function SkiaFermentationScene({
     >
       {/* backgroundColor black is required: additive glow over pure black. */}
       <Canvas style={{ width: W, height: H, backgroundColor: 'black' }}>
-        <Group opacity={dim}>
-          <Picture picture={picture} />
-        </Group>
+        <Picture picture={picture} />
       </Canvas>
     </View>
   );

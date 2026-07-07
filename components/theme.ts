@@ -14,6 +14,9 @@ export const C = {
   textMuted: 'rgba(242,232,220,0.55)',
   textDim: 'rgba(242,232,220,0.30)',
   chip: 'rgba(255,228,196,0.08)',
+  // Frosted-glass panel edges (the Skia scene draws the blurred fill beneath).
+  glassBorder: 'rgba(255,235,205,0.16)',
+  glassSheen: 'rgba(255,245,225,0.34)',
   green: '#8FBC70',
   greenSoft: 'rgba(143,188,112,0.12)',
   greenBorder: 'rgba(143,188,112,0.28)',

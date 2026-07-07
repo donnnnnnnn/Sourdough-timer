@@ -9,6 +9,23 @@ below for the update protocol.
 **Last updated:** 2026-07-06, end of the app-icon-concepts commit
 (`6a3db9f`), by the session that built the notification panel.
 
+## Pasteable prompt to start a new session
+
+Copy this verbatim as the first message to a fresh Claude Code session (in
+this repo, on branch `claude/fold-tracking-notifications-panel-bhjcxd`) to
+resume this thread of work:
+
+> Read `docs/SESSION_HANDOFF.md` in full before doing anything else — it's
+> the complete briefing for the app-design thread (notification panel, icons,
+> visual identity). Also skim `CLAUDE.md`'s "Handoff protocol" section. Once
+> you've read both, summarize back to me in a couple of sentences what's
+> shipped and what's still an open decision, then wait for my instructions —
+> don't start making changes yet.
+
+Keep this prompt in sync with the file it points to — if `SESSION_HANDOFF.md`
+ever gets renamed or the branch changes, update this block in the same
+commit.
+
 ## Branch & PR state
 
 - All work described here is on `claude/fold-tracking-notifications-panel-bhjcxd`

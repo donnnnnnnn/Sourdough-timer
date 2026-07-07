@@ -170,10 +170,17 @@ open, what the owner said about any options shown), not append to it. Commit
 and push it with the rest of the session's work. See that file's own "Keeping
 this doc current" section for the full protocol.
 
+**The owner also wants a ready-to-paste prompt for starting each new
+session**, not just the doc itself — every living-handoff doc must include a
+"Pasteable prompt to start a new session" section near the top (see
+`docs/SESSION_HANDOFF.md` for the template) that the owner can copy as the
+first message to a fresh session. Keep that prompt in sync whenever the doc's
+filename, branch, or scope changes.
+
 If a similar living-handoff doc doesn't exist yet for some other thread of
 work the owner wants to hand off, create one in `docs/` following the same
-pattern (state snapshot + explicit update protocol at the bottom) rather than
-leaving the handoff to chat memory.
+pattern (state snapshot + pasteable start-prompt + explicit update protocol
+at the bottom) rather than leaving the handoff to chat memory.
 
 ## Git
 

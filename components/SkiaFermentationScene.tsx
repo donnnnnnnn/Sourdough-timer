@@ -735,14 +735,19 @@ function drawScene(
   glass: GlassScreenRect[],
   offscreen: SkSurface | null,
 ) {
-  drawOrganisms(canvas, st, layout, W, H, time, dim);
+  // If glass panels exist: render organisms to offscreen FIRST, then draw the
+  // blurred glass effect, THEN draw organisms on top. This ensures organisms
+  // appear behind the frosted glass (which blurs & tints them).
   if (glass.length > 0 && offscreen) {
     const oCanvas = offscreen.getCanvas();
     oCanvas.clear(Skia.Color('black'));
     drawOrganisms(oCanvas, st, layout, W, H, time, dim);
     const snapshot = offscreen.makeImageSnapshot();
+    // Draw glass FIRST so it renders below the final organism layer.
     drawGlassPanels(canvas, glass, snapshot, time);
   }
+  // Organisms on top (whether or not glass panels exist).
+  drawOrganisms(canvas, st, layout, W, H, time, dim);
 }
 
 

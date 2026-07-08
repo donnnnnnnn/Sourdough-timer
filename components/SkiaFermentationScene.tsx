@@ -46,6 +46,20 @@
  * var-assigned factory that captures its deps at the declaration site, which
  * breaks JS function hoisting and crashed the app for a full day. Every draw
  * function here MUST stay a plain hoisted `function`. See docs/SKIA-HANDOFF.md.
+ *
+ * ── Glass panels: real blur without backdrop filters ────────────────────────
+ * The frosted-glass panels behind the UI cards are NOT drawn with a backdrop
+ * filter (`saveLayer` + backdrop image filter, or the declarative
+ * `<BackdropBlur>`). Both were tried and confirmed broken on a Pixel 9: the
+ * in-picture version was a no-op (no blur), and the declarative version made
+ * Skia's native surface render ABOVE the rest of the app's UI (buttons were
+ * hidden underneath it). Real backdrop sampling appears to force a
+ * compositing mode this Skia/Android combo can't place correctly in the view
+ * stack. Instead, `drawScene` renders the organisms a SECOND time into an
+ * offscreen `SkSurface`, snapshots it to an image, and draws that image back
+ * through an ordinary `ImageFilter.MakeBlur`, clipped to each panel's rounded
+ * rect — see `drawGlassPanels`. This is a real blur of the real organism
+ * pixels; it just never asks the GPU to sample the destination canvas.
  */
 import { useEffect, useMemo, useState } from 'react';
 import { View } from 'react-native';
@@ -61,11 +75,9 @@ import {
   StrokeCap,
   BlurStyle,
   TileMode,
-  BackdropBlur,
-  RoundedRect,
-  Group,
-  LinearGradient,
+  ClipOp,
 } from '@shopify/react-native-skia';
+import type { SkSurface } from '@shopify/react-native-skia';
 import {
   computeDoughState,
   DEFAULT_INPUTS,
@@ -629,7 +641,9 @@ function glutenNodeY(n: GlutenNode, time: number, organize: number) {
 }
 
 // ── the scene ────────────────────────────────────────────────────────────────
-function drawScene(
+// Just the organisms — drawn identically whether the target is the visible
+// canvas or the offscreen surface used to source the glass-panel blur.
+function drawOrganisms(
   canvas: any,
   st: DoughState,
   layout: SceneLayout,
@@ -653,6 +667,82 @@ function drawScene(
   drawAcetic(canvas, layout, time);
   drawBubbles(canvas, layout, st, W, H, time);
   if (dimmed) canvas.restore();
+}
+
+// Frosted-glass panels: a REAL blur of the organisms, without ever asking the
+// GPU to sample the destination canvas (i.e. no saveLayer + backdrop filter).
+// On this Skia 2.6.2 / Android build, invoking a true backdrop filter — either
+// recorded inside createPicture(), or as a declarative <BackdropBlur> sibling
+// after <Picture> — forces the native Skia surface into a compositing mode
+// that renders ABOVE the rest of the app's native views (buttons vanished
+// underneath it, confirmed on a Pixel 9). Backdrop sampling is the thing that
+// breaks; a blurred IMAGE does not need it.
+//
+// So instead: render the organisms a second time into an offscreen SkSurface
+// (same size, reused across frames), snapshot it to an SkImage, then draw
+// that image — through a real `ImageFilter.MakeBlur` — clipped to each glass
+// panel's rounded rect. This is an ordinary image draw call, not a backdrop
+// read, so it stays on the normal (non-promoted) rendering path.
+function drawGlassPanels(canvas: any, glass: GlassScreenRect[], snapshot: any, time: number) {
+  for (const g of glass) {
+    if (g.w <= 1 || g.h <= 1) continue;
+    const sigma = 8 + Math.sin((time * TAU) / 7 + g.x * 0.01) * 1.5;
+    const rr = Skia.RRectXY(Skia.XYWHRect(g.x, g.y, g.w, g.h), g.radius, g.radius);
+
+    // Real blur of the actual organism pixels underneath this panel.
+    canvas.save();
+    canvas.clipRRect(rr, ClipOp.Intersect, true);
+    const blurPaint = Skia.Paint();
+    blurPaint.setImageFilter(Skia.ImageFilter.MakeBlur(sigma, sigma, TileMode.Clamp));
+    canvas.drawImage(snapshot, 0, 0, blurPaint);
+    canvas.restore();
+
+    // Warm espresso tint (normal blend mutes the additive glow into a pane).
+    const tintPaint = Skia.Paint();
+    tintPaint.setColor(Skia.Color(`rgba(22,16,13,${clamp(0.44 * g.tint, 0, 0.92)})`));
+    canvas.drawRRect(rr, tintPaint);
+
+    // Top-down warm sheen.
+    const sheenPaint = Skia.Paint();
+    sheenPaint.setShader(
+      Skia.Shader.MakeLinearGradient(
+        vec(g.x, g.y),
+        vec(g.x, g.y + g.h),
+        [Skia.Color('rgba(255,240,220,0.12)'), Skia.Color('rgba(255,240,220,0.0)')],
+        [0, 0.5],
+        TileMode.Clamp,
+      ),
+    );
+    canvas.drawRRect(rr, sheenPaint);
+
+    // Hairline bright edge.
+    const edgePaint = Skia.Paint();
+    edgePaint.setStyle(PaintStyle.Stroke);
+    edgePaint.setStrokeWidth(1);
+    edgePaint.setColor(Skia.Color('rgba(255,238,212,0.22)'));
+    canvas.drawRRect(rr, edgePaint);
+  }
+}
+
+function drawScene(
+  canvas: any,
+  st: DoughState,
+  layout: SceneLayout,
+  W: number,
+  H: number,
+  time: number,
+  dim: number,
+  glass: GlassScreenRect[],
+  offscreen: SkSurface | null,
+) {
+  drawOrganisms(canvas, st, layout, W, H, time, dim);
+  if (glass.length > 0 && offscreen) {
+    const oCanvas = offscreen.getCanvas();
+    oCanvas.clear(Skia.Color('black'));
+    drawOrganisms(oCanvas, st, layout, W, H, time, dim);
+    const snapshot = offscreen.makeImageSnapshot();
+    drawGlassPanels(canvas, glass, snapshot, time);
+  }
 }
 
 
@@ -1155,16 +1245,24 @@ export function SkiaFermentationScene({
     return () => cancelAnimationFrame(raf);
   }, []);
 
-  // Glass panel positions for the declarative BackdropBlur overlay.
+  // Glass panel positions (screen-space rects of every registered GlassCard).
   const glass = glassEnabled ? screenRects() : EMPTY_GLASS;
 
+  // Offscreen surface used ONLY as a source image for the glass-panel blur —
+  // never as a destination that needs backdrop sampling. Recreated only when
+  // the canvas size changes, reused every frame otherwise.
+  const offscreen = useMemo(() => Skia.Surface.MakeOffscreen(W, H), [W, H]);
+
   // SkPicture rebuilt each frame as timeSec advances — plain Skia, no worklet.
-  // Glass panels are rendered as declarative <BackdropBlur> AFTER the <Picture>
-  // so the blur correctly samples the organisms already drawn on the canvas.
+  // drawScene renders the organisms once to the visible canvas, and (only if
+  // there are glass panels to paint) a second time into `offscreen`, whose
+  // snapshot is then drawn back through a real ImageFilter blur, clipped to
+  // each panel. See the drawGlassPanels comment for why this avoids backdrop
+  // filters entirely.
   const picture = useMemo(
-    () => createPicture((canvas) => drawScene(canvas, st, layout, W, H, timeSec, dim)),
+    () => createPicture((canvas) => drawScene(canvas, st, layout, W, H, timeSec, dim, glass, offscreen)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [st, layout, W, H, timeSec, dim],
+    [st, layout, W, H, timeSec, dim, glass, offscreen],
   );
 
   return (
@@ -1178,55 +1276,11 @@ export function SkiaFermentationScene({
       }}
       style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, overflow: 'hidden' }}
     >
-      {/* backgroundColor black is required: additive glow over pure black. */}
+      {/* backgroundColor black is required: additive glow over pure black.
+          Organisms AND glass panels (real image-blur, no backdrop filter)
+          are both drawn inside the single recorded Picture — see drawScene. */}
       <Canvas style={{ width: W, height: H, backgroundColor: 'black' }}>
         <Picture picture={picture} />
-        {/* Frosted-glass panels: declarative BackdropBlur AFTER the Picture so
-            the blur correctly samples the organisms already on the canvas.
-            (Backdrop filters inside createPicture can't sample the destination
-            canvas — the original imperative approach was a no-op on device.) */}
-        {glass.map((g, i) => {
-          if (g.w <= 1 || g.h <= 1) return null;
-          const sigma = 8 + Math.sin((timeSec * TAU) / 7 + g.x * 0.01) * 1.5;
-          const rr = Skia.RRectXY(
-            Skia.XYWHRect(g.x, g.y, g.w, g.h),
-            g.radius,
-            g.radius,
-          );
-          return (
-            <BackdropBlur key={i} blur={sigma} clip={rr}>
-              {/* Warm espresso tint */}
-              <RoundedRect
-                x={g.x}
-                y={g.y}
-                width={g.w}
-                height={g.h}
-                r={g.radius}
-                color={`rgba(22,16,13,${clamp(0.44 * g.tint, 0, 0.92)})`}
-              />
-              {/* Top-down warm sheen */}
-              <RoundedRect x={g.x} y={g.y} width={g.w} height={g.h} r={g.radius}>
-                <LinearGradient
-                  start={vec(g.x, g.y)}
-                  end={vec(g.x, g.y + g.h)}
-                  colors={['rgba(255,240,220,0.12)', 'rgba(255,240,220,0.0)']}
-                  positions={[0, 0.5]}
-                />
-              </RoundedRect>
-              {/* Hairline bright edge */}
-              <RoundedRect
-                x={g.x}
-                y={g.y}
-                width={g.w}
-                height={g.h}
-                r={g.radius}
-                color="rgba(255,238,212,0.22)"
-                style="stroke"
-                strokeWidth={1}
-              />
-            </BackdropBlur>
-          );
-        })}
       </Canvas>
     </View>
   );

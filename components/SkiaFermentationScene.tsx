@@ -49,17 +49,23 @@
  *
  * ── Glass panels: real blur without backdrop filters ────────────────────────
  * The frosted-glass panels behind the UI cards are NOT drawn with a backdrop
- * filter (`saveLayer` + backdrop image filter, or the declarative
- * `<BackdropBlur>`). Both were tried and confirmed broken on a Pixel 9: the
- * in-picture version was a no-op (no blur), and the declarative version made
- * Skia's native surface render ABOVE the rest of the app's UI (buttons were
- * hidden underneath it). Real backdrop sampling appears to force a
- * compositing mode this Skia/Android combo can't place correctly in the view
- * stack. Instead, `drawScene` renders the organisms a SECOND time into an
- * offscreen `SkSurface`, snapshots it to an image, and draws that image back
- * through an ordinary `ImageFilter.MakeBlur`, clipped to each panel's rounded
- * rect — see `drawGlassPanels`. This is a real blur of the real organism
- * pixels; it just never asks the GPU to sample the destination canvas.
+ * filter (`saveLayer` + backdrop image filter sampling the destination, or
+ * the declarative `<BackdropBlur>`). Both were tried and confirmed broken on
+ * a Pixel 9: the in-picture version was a no-op (no blur), and the
+ * declarative version made Skia's native surface render ABOVE the rest of
+ * the app's UI (buttons were hidden underneath it). A third attempt —
+ * rendering organisms into a separate offscreen SkSurface, snapshotting to
+ * an SkImage, and drawImage-ing that through a blur filter — ALSO produced
+ * no visible blur on-device (an SkImage from a second GPU surface, replayed
+ * inside a recorded SkPicture, is a rare code path).
+ *
+ * What actually works: draw organisms once (full canvas, "in focus"), then
+ * for each glass panel, clip to its rounded rect, open `canvas.saveLayer()`
+ * with a paint carrying `ImageFilter.MakeBlur`, and redraw the organisms
+ * AGAIN directly into that layer — see `drawGlassPanels`. A saveLayer image
+ * filter only affects content drawn after it opens, not the existing
+ * canvas, so this is NOT a backdrop read; it stays on Skia's ordinary
+ * layer-filter path and composites correctly under the native UI.
  */
 import { useEffect, useMemo, useState } from 'react';
 import { View } from 'react-native';
@@ -77,7 +83,6 @@ import {
   TileMode,
   ClipOp,
 } from '@shopify/react-native-skia';
-import type { SkSurface } from '@shopify/react-native-skia';
 import {
   computeDoughState,
   DEFAULT_INPUTS,
@@ -669,33 +674,56 @@ function drawOrganisms(
   if (dimmed) canvas.restore();
 }
 
-// Frosted-glass panels: a REAL blur of the organisms, without ever asking the
-// GPU to sample the destination canvas (i.e. no saveLayer + backdrop filter).
-// On this Skia 2.6.2 / Android build, invoking a true backdrop filter — either
-// recorded inside createPicture(), or as a declarative <BackdropBlur> sibling
-// after <Picture> — forces the native Skia surface into a compositing mode
-// that renders ABOVE the rest of the app's native views (buttons vanished
-// underneath it, confirmed on a Pixel 9). Backdrop sampling is the thing that
-// breaks; a blurred IMAGE does not need it.
+// Frosted-glass panels: a REAL blur, without ever asking the GPU to sample
+// the EXISTING destination canvas (a "backdrop" filter). On this Skia 2.6.2 /
+// Android build, invoking a true backdrop filter — either recorded inside
+// createPicture(), or as a declarative <BackdropBlur> sibling after
+// <Picture> — forces the native Skia surface into a compositing mode that
+// renders ABOVE the rest of the app's native views (buttons vanished
+// underneath it, confirmed on a Pixel 9). Sampling the destination is the
+// thing that breaks.
 //
-// So instead: render the organisms a second time into an offscreen SkSurface
-// (same size, reused across frames), snapshot it to an SkImage, then draw
-// that image — through a real `ImageFilter.MakeBlur` — clipped to each glass
-// panel's rounded rect. This is an ordinary image draw call, not a backdrop
-// read, so it stays on the normal (non-promoted) rendering path.
-function drawGlassPanels(canvas: any, glass: GlassScreenRect[], snapshot: any, time: number) {
+// A prior attempt avoided that by rendering organisms into a separate
+// offscreen SkSurface, snapshotting it to an SkImage, then drawImage-ing that
+// through an ImageFilter blur. That still didn't blur anything visible on a
+// Pixel 9 — an SkImage sourced from a second GPU surface, replayed inside a
+// recorded SkPicture, is a much less-travelled code path than the one below.
+//
+// This version uses `canvas.saveLayer(paintWithImageFilter, bounds)`, which
+// is NOT a backdrop filter — it only filters content drawn AFTER the
+// saveLayer call, not whatever was already on the canvas. We clip to the
+// panel's rounded rect, open a layer with a blur image filter, redraw the
+// organisms straight into that layer (so Skia rasterizes just this clipped
+// region and blurs it while compositing back), then restore. Ordinary
+// layer-filter idiom, same GPU context as everything else on this canvas.
+function drawGlassPanels(
+  canvas: any,
+  glass: GlassScreenRect[],
+  st: DoughState,
+  layout: SceneLayout,
+  W: number,
+  H: number,
+  time: number,
+  dim: number,
+) {
   for (const g of glass) {
     if (g.w <= 1 || g.h <= 1) continue;
     const sigma = 8 + Math.sin((time * TAU) / 7 + g.x * 0.01) * 1.5;
     const rr = Skia.RRectXY(Skia.XYWHRect(g.x, g.y, g.w, g.h), g.radius, g.radius);
 
-    // Real blur of the actual organism pixels underneath this panel.
+    // Real blur: redraw the organisms clipped to this panel, through a
+    // saveLayer whose paint carries the blur image filter.
     canvas.save();
     canvas.clipRRect(rr, ClipOp.Intersect, true);
     const blurPaint = Skia.Paint();
     blurPaint.setImageFilter(Skia.ImageFilter.MakeBlur(sigma, sigma, TileMode.Clamp));
-    canvas.drawImage(snapshot, 0, 0, blurPaint);
-    canvas.restore();
+    canvas.saveLayer(blurPaint, null);
+    drawOrganisms(canvas, st, layout, W, H, time, dim);
+    canvas.restore(); // composite the blurred layer back
+    canvas.restore(); // pop the clip
+
+    canvas.save();
+    canvas.clipRRect(rr, ClipOp.Intersect, true);
 
     // Warm espresso tint (normal blend mutes the additive glow into a pane).
     const tintPaint = Skia.Paint();
@@ -721,6 +749,7 @@ function drawGlassPanels(canvas: any, glass: GlassScreenRect[], snapshot: any, t
     edgePaint.setStrokeWidth(1);
     edgePaint.setColor(Skia.Color('rgba(255,238,212,0.22)'));
     canvas.drawRRect(rr, edgePaint);
+    canvas.restore(); // pop the tint/sheen/edge clip
   }
 }
 
@@ -733,21 +762,17 @@ function drawScene(
   time: number,
   dim: number,
   glass: GlassScreenRect[],
-  offscreen: SkSurface | null,
 ) {
-  // If glass panels exist: render organisms to offscreen FIRST, then draw the
-  // blurred glass effect, THEN draw organisms on top. This ensures organisms
-  // appear behind the frosted glass (which blurs & tints them).
-  if (glass.length > 0 && offscreen) {
-    const oCanvas = offscreen.getCanvas();
-    oCanvas.clear(Skia.Color('black'));
-    drawOrganisms(oCanvas, st, layout, W, H, time, dim);
-    const snapshot = offscreen.makeImageSnapshot();
-    // Draw glass FIRST so it renders below the final organism layer.
-    drawGlassPanels(canvas, glass, snapshot, time);
-  }
-  // Organisms on top (whether or not glass panels exist).
+  // Organisms draw first, across the FULL canvas — this is the "full focus"
+  // layer visible in the gaps between UI cards.
   drawOrganisms(canvas, st, layout, W, H, time, dim);
+  // Glass panels draw LAST, on top, but each one is clipped to its own
+  // rounded-rect region (see drawGlassPanels) — so only the area under a
+  // card gets the blurred/tinted treatment; everywhere else keeps the
+  // full-focus organisms drawn above.
+  if (glass.length > 0) {
+    drawGlassPanels(canvas, glass, st, layout, W, H, time, dim);
+  }
 }
 
 
@@ -1253,21 +1278,16 @@ export function SkiaFermentationScene({
   // Glass panel positions (screen-space rects of every registered GlassCard).
   const glass = glassEnabled ? screenRects() : EMPTY_GLASS;
 
-  // Offscreen surface used ONLY as a source image for the glass-panel blur —
-  // never as a destination that needs backdrop sampling. Recreated only when
-  // the canvas size changes, reused every frame otherwise.
-  const offscreen = useMemo(() => Skia.Surface.MakeOffscreen(W, H), [W, H]);
-
   // SkPicture rebuilt each frame as timeSec advances — plain Skia, no worklet.
-  // drawScene renders the organisms once to the visible canvas, and (only if
-  // there are glass panels to paint) a second time into `offscreen`, whose
-  // snapshot is then drawn back through a real ImageFilter blur, clipped to
-  // each panel. See the drawGlassPanels comment for why this avoids backdrop
-  // filters entirely.
+  // drawScene renders organisms once across the full canvas, then (only if
+  // there are glass panels to paint) redraws them a second time per panel
+  // inside a saveLayer with a blur image filter, clipped to that panel's
+  // rounded rect. See the drawGlassPanels comment for why this avoids
+  // backdrop filters entirely.
   const picture = useMemo(
-    () => createPicture((canvas) => drawScene(canvas, st, layout, W, H, timeSec, dim, glass, offscreen)),
+    () => createPicture((canvas) => drawScene(canvas, st, layout, W, H, timeSec, dim, glass)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [st, layout, W, H, timeSec, dim, glass, offscreen],
+    [st, layout, W, H, timeSec, dim, glass],
   );
 
   return (

@@ -49,6 +49,7 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import { View } from 'react-native';
+import React from 'react';
 import {
   Canvas,
   Picture,
@@ -60,7 +61,10 @@ import {
   StrokeCap,
   BlurStyle,
   TileMode,
-  ClipOp,
+  BackdropBlur,
+  RoundedRect,
+  Group,
+  LinearGradient,
 } from '@shopify/react-native-skia';
 import {
   computeDoughState,
@@ -633,11 +637,7 @@ function drawScene(
   H: number,
   time: number,
   dim: number,
-  glass: GlassScreenRect[],
 ) {
-  // Group-dim the living organisms via a layer alpha (was a declarative
-  // <Group opacity>; baked in here so the frosted-glass panels below can be
-  // drawn at full strength on top, undimmed).
   const dimmed = dim < 0.999;
   if (dimmed) {
     const lp = Skia.Paint();
@@ -653,61 +653,8 @@ function drawScene(
   drawAcetic(canvas, layout, time);
   drawBubbles(canvas, layout, st, W, H, time);
   if (dimmed) canvas.restore();
-
-  // Frosted-glass panels: real backdrop blur of the organisms beneath each
-  // registered UI card, so the animation shows THROUGH the controls.
-  if (glass.length) drawGlassPanels(canvas, glass, time);
 }
 
-// A soft, faintly-breathing frosted slab per registered UI card. Uses NORMAL
-// (SrcOver) blending — deliberately NOT the additive paint the organisms use —
-// so it mutes the bright glows beneath into a legible, glassy panel.
-function drawGlassPanels(canvas: any, rects: GlassScreenRect[], time: number) {
-  for (const g of rects) {
-    if (g.w <= 1 || g.h <= 1) continue;
-    const rect = Skia.XYWHRect(g.x, g.y, g.w, g.h);
-    const rr = Skia.RRectXY(rect, g.radius, g.radius);
-
-    canvas.save();
-    canvas.clipRRect(rr, ClipOp.Intersect, true);
-
-    // 1) Frosted backdrop — blur the already-drawn organisms within this panel.
-    //    A gentle breathing of the blur radius makes the glass feel alive under
-    //    the "scope" without being distracting.
-    const sigma = 8 + Math.sin((time * TAU) / 7 + g.x * 0.01) * 1.5;
-    const blur = Skia.ImageFilter.MakeBlur(sigma, sigma, TileMode.Clamp);
-    const layerPaint = Skia.Paint();
-    canvas.saveLayer(layerPaint, rect, blur);
-    canvas.restore(); // composite the blurred backdrop back into the clip
-
-    // 2) Warm espresso tint so text stays readable over bright glows.
-    const tint = Skia.Paint();
-    tint.setColor(Skia.Color(`rgba(22,16,13,${clamp(0.44 * g.tint, 0, 0.92)})`));
-    canvas.drawRRect(rr, tint);
-
-    // 3) Top-down warm sheen — the sub-surface glow of real frosted glass.
-    const sheen = Skia.Paint();
-    sheen.setShader(
-      Skia.Shader.MakeLinearGradient(
-        vec(g.x, g.y),
-        vec(g.x, g.y + g.h),
-        [Skia.Color('rgba(255,240,220,0.12)'), Skia.Color('rgba(255,240,220,0.0)')],
-        [0, 0.5],
-        TileMode.Clamp,
-      ),
-    );
-    canvas.drawRRect(rr, sheen);
-
-    // 4) Hairline bright edge to define the pane.
-    const border = Skia.Paint();
-    border.setStyle(PaintStyle.Stroke);
-    border.setStrokeWidth(1);
-    border.setColor(Skia.Color('rgba(255,238,212,0.22)'));
-    canvas.drawRRect(rr, border);
-
-    canvas.restore(); // pop clip
-  }
-}
 
 // warm haze that deepens with acidity — a soft CENTERED bloom that fades fully
 // to pure black well inside the frame (must never read as a glowing rectangle).
@@ -730,62 +677,113 @@ function drawYeast(canvas: any, layout: SceneLayout, st: DoughState, time: numbe
     const bright = cell.bright * twk;
     const rot = time * cell.rotSpeed;
 
-    halo(canvas, x, y, r * 1.9, P.amber, 0.18 * bright, r * 0.9);
-    glowOrb(canvas, x, y, r, P.whiteHot, P.amber, 0.85 * bright, 0.55 * bright);
-    glowOrb(canvas, x, y, r * 0.62, P.amberCore, P.amber, 0.5 * bright, 0.35 * bright);
-    // enlarged vacuole in a starved cell reads as "past its prime"
+    // Ovoid cell: each cell gets a per-seed tilt and aspect ratio so the
+    // population reads as plump biological cells, not identical circles.
+    const tilt = cell.seed * 180 + rot * 17; // degrees (Skia rotate)
+    const aspect = lerp(0.72, 0.88, cell.seed);
+
+    canvas.save();
+    canvas.translate(x, y);
+    canvas.rotate(tilt);
+    canvas.scale(1.0, aspect);
+
+    // Outer diffuse halo (the bloom around the cell)
+    halo(canvas, 0, 0, r * 1.9, P.amber, 0.18 * bright, r * 0.9);
+    // Main cytoplasm body
+    glowOrb(canvas, 0, 0, r, P.whiteHot, P.amber, 0.85 * bright, 0.55 * bright);
+    // Inner cytoplasm density gradient
+    glowOrb(canvas, 0, 0, r * 0.62, P.amberCore, P.amber, 0.5 * bright, 0.35 * bright);
+    // Cell wall membrane — thin luminous ring near the edge
+    ring(canvas, 0, 0, r * 0.94, Math.max(0.7, r * 0.045), P.amberCore, 0.32 * bright, r * 0.12);
+
+    // Nucleus — bright off-center organelle with its own micro-halo
+    const nOff = r * 0.18;
+    glowOrb(canvas, nOff, -nOff * 0.6, r * 0.26, P.whiteHot, P.amberCore, 0.55 * bright, 0.35 * bright);
+    dot(canvas, nOff, -nOff * 0.6, r * 0.1, P.whiteHot, 0.7 * bright);
+
+    // Vacuole(s) — dim fluid-filled pockets
     if (cell.pose === 'starved') {
-      glowOrb(canvas, x + r * 0.2, y - r * 0.15, r * 0.4, P.amber, P.amber, 0.16 * bright, 0.1 * bright);
+      // large vacuole (starved cell: "past its prime")
+      glowOrb(canvas, r * 0.2, -r * 0.15, r * 0.4, P.amber, P.amber, 0.16 * bright, 0.1 * bright);
+      glowOrb(canvas, -r * 0.15, r * 0.22, r * 0.2, P.amber, P.amber, 0.1 * bright, 0.07 * bright);
+    } else {
+      glowOrb(canvas, -r * 0.24, r * 0.16, r * 0.16, P.amber, P.amber, 0.12 * bright, 0.08 * bright);
     }
-    // ring-shaped bud scars from past divisions
+
+    // Granular cytoplasm — scattered micro-dots for that "grainy" fluorescence look
+    const grng = mulberry32(cell.idx * 17 + 131);
+    const grains = 5 + Math.floor(bright * 3);
+    for (let gi = 0; gi < grains; gi++) {
+      const ga = grng() * TAU;
+      const gd = grng() * r * 0.68;
+      dot(canvas, Math.cos(ga) * gd, Math.sin(ga) * gd, lerp(0.5, 1.3, grng()), P.amberCore, 0.16 * bright * grng());
+    }
+
+    // Ring-shaped bud scars from past divisions
     for (const sc of cell.scars) {
-      const sx = x + Math.cos(sc.a + rot) * r * sc.d;
-      const sy = y + Math.sin(sc.a + rot) * r * sc.d;
+      const sx = Math.cos(sc.a + rot) * r * sc.d;
+      const sy = Math.sin(sc.a + rot) * r * sc.d;
       ring(canvas, sx, sy, r * 0.16, Math.max(0.8, r * 0.05), P.amberCore, 0.28 * bright, r * 0.1);
     }
-    // slowly-orbiting specular highlight (the cell reads as rotating)
+    // Slowly-orbiting specular highlight (the cell reads as rotating under the scope)
     const spa = -0.9 + rot;
-    dot(canvas, x + Math.cos(spa) * r * 0.4, y + Math.sin(spa) * r * 0.4, r * 0.13, P.whiteHot, 0.9 * bright);
+    dot(canvas, Math.cos(spa) * r * 0.4, Math.sin(spa) * r * 0.4, r * 0.13, P.whiteHot, 0.9 * bright);
 
-    // sibling minis (grape-like clump at peak colony vigor)
+    canvas.restore();
+
+    // Sibling minis (grape-like clump at peak colony vigor) — each has its own oval
     for (const sib of cell.siblings) {
       const bx = x + Math.cos(sib.a + rot * 0.6) * r * sib.d;
       const by = y + Math.sin(sib.a + rot * 0.6) * r * sib.d;
       const sr = r * sib.r * s;
-      halo(canvas, bx, by, sr * 1.5, P.amber, 0.1 * bright, sr * 0.9);
-      glowOrb(canvas, bx, by, sr, P.whiteHot, P.amber, 0.6 * bright, 0.42 * bright);
+      canvas.save();
+      canvas.translate(bx, by);
+      canvas.rotate((sib.a * 37) % 360);
+      canvas.scale(1.0, lerp(0.74, 0.9, cell.seed));
+      halo(canvas, 0, 0, sr * 1.5, P.amber, 0.1 * bright, sr * 0.9);
+      glowOrb(canvas, 0, 0, sr, P.whiteHot, P.amber, 0.6 * bright, 0.42 * bright);
+      ring(canvas, 0, 0, sr * 0.92, Math.max(0.5, sr * 0.04), P.amberCore, 0.25 * bright, sr * 0.1);
+      canvas.restore();
     }
 
-    // Budding as a real life-cycle beat: daughter swells at a pole, a bright
-    // cytoplasmic bridge (neck) links them, then the daughter pinches off and
-    // drifts away fading — the cycle resets seamlessly (mother keeps a scar).
+    // Budding daughter cell
     if (cell.pose === 'budding' && vigor > 0.25) {
       const bp = (time / cell.budPeriod + cell.seed) % 1;
-      const grow = smooth(0.05, 0.62, bp); // daughter grows
-      const pinch = smooth(0.6, 0.85, bp); // neck narrows
-      const release = smooth(0.8, 1.0, bp); // pushes out + fades
+      const grow = smooth(0.05, 0.62, bp);
+      const pinch = smooth(0.6, 0.85, bp);
+      const release = smooth(0.8, 1.0, bp);
       const ba = cell.budAngle + rot;
       const bdist = r * (0.9 + release * 0.7);
       const bxp = x + Math.cos(ba) * bdist;
       const byp = y + Math.sin(ba) * bdist;
       const br = r * (0.18 + 0.42 * grow) * lerp(0.9, 1.15, vigor);
       const bAlpha = bright * (1 - release * 0.85);
-      // cytoplasmic bridge (neck) — a small orb between mother & daughter
+      // cytoplasmic bridge (neck)
       const neckA = bright * (1 - pinch) * 0.5;
       if (neckA > 0.01) {
         const mx = x + Math.cos(ba) * r * 0.7;
         const my = y + Math.sin(ba) * r * 0.7;
         glowOrb(canvas, mx, my, r * 0.28 * (1 - pinch * 0.6), P.amberCore, P.amber, neckA, neckA * 0.7);
       }
-      halo(canvas, bxp, byp, br * 1.6, P.amber, 0.12 * bAlpha, br * 0.9);
-      glowOrb(canvas, bxp, byp, br, P.whiteHot, P.amber, 0.7 * bAlpha, 0.5 * bAlpha);
+      // daughter as its own oval
+      canvas.save();
+      canvas.translate(bxp, byp);
+      canvas.rotate(ba * (180 / Math.PI));
+      canvas.scale(1.0, lerp(0.76, 0.88, cell.seed));
+      halo(canvas, 0, 0, br * 1.6, P.amber, 0.12 * bAlpha, br * 0.9);
+      glowOrb(canvas, 0, 0, br, P.whiteHot, P.amber, 0.7 * bAlpha, 0.5 * bAlpha);
+      ring(canvas, 0, 0, br * 0.9, Math.max(0.5, br * 0.04), P.amberCore, 0.22 * bAlpha, br * 0.1);
+      canvas.restore();
     }
   }
 }
 
-// LAB: bead-like violet rods in gently-curved, slowly-rotating chains.
+// LAB: capsule-shaped violet rods in gently-curved, slowly-rotating chains.
+// Each bead is elongated along the chain axis (scale transform) so it reads
+// as a rod bacterium, not a sphere. Bright poles + a dimmer mid-section give
+// the classic confocal "bean" look.
 function drawLAB(canvas: any, layout: SceneLayout, st: DoughState, time: number) {
-  const acidBud = smooth(0.4, 0.9, st.acidity); // acid molecules bud off late
+  const acidBud = smooth(0.4, 0.9, st.acidity);
   for (const ch of layout.lab) {
     const d = drift(time, ch.idx + 40, 7, 6, ch.driftP);
     const fl = flow(ch.x, ch.y, time);
@@ -796,28 +794,62 @@ function drawLAB(canvas: any, layout: SceneLayout, st: DoughState, time: number)
     const step = ch.br * 1.5;
     const cx = ch.x + d.dx + fl.fx;
     const cy = ch.y + d.dy + fl.fy;
+    const angDeg = baseAng * (180 / Math.PI);
     for (let b = 0; b < ch.beads; b++) {
       const along = (b - (ch.beads - 1) / 2) * step;
-      // gentle curvature: perpendicular offset ∝ along²
       const bend = along * along * ch.curve;
       const ca = Math.cos(baseAng);
       const sa = Math.sin(baseAng);
       const x = cx + ca * along - sa * bend;
       const y = cy + sa * along + ca * bend;
       const poleBoost = b === 0 || b === ch.beads - 1 ? 1.25 : 1.0;
+
       if (b === ch.fissionBead) {
-        // mid-division: bead drawn as two sub-orbs with a pinched septum
+        // mid-division: two sub-orbs with a pinched septum
         const sep = ch.br * 0.55;
         const ox = ca * sep * 0.5;
         const oy = sa * sep * 0.5;
         halo(canvas, x, y, ch.br * 1.7, P.lab, 0.12 * bright, ch.br);
-        glowOrb(canvas, x - ox, y - oy, ch.br * 0.72, P.labHot, P.lab, 0.8 * bright, 0.5 * bright);
-        glowOrb(canvas, x + ox, y + oy, ch.br * 0.72, P.labHot, P.lab, 0.8 * bright, 0.5 * bright);
+        // each half is a capsule
+        canvas.save();
+        canvas.translate(x - ox, y - oy);
+        canvas.rotate(angDeg);
+        canvas.scale(1.35, 0.78);
+        glowOrb(canvas, 0, 0, ch.br * 0.72, P.labHot, P.lab, 0.8 * bright, 0.5 * bright);
+        canvas.restore();
+        canvas.save();
+        canvas.translate(x + ox, y + oy);
+        canvas.rotate(angDeg);
+        canvas.scale(1.35, 0.78);
+        glowOrb(canvas, 0, 0, ch.br * 0.72, P.labHot, P.lab, 0.8 * bright, 0.5 * bright);
+        canvas.restore();
+        // faint septum constriction line
+        const sx1 = x - sa * ch.br * 0.6;
+        const sy1 = y + ca * ch.br * 0.6;
+        const sx2 = x + sa * ch.br * 0.6;
+        const sy2 = y - ca * ch.br * 0.6;
+        const sp = additivePaint();
+        sp.setColor(col(P.labHot, 0.2 * bright));
+        sp.setStrokeWidth(0.8);
+        sp.setStyle(PaintStyle.Stroke);
+        canvas.drawLine(sx1, sy1, sx2, sy2, sp);
       } else {
+        // capsule-shaped bead: elongated along the chain axis
         halo(canvas, x, y, ch.br * 1.7, P.lab, 0.12 * bright, ch.br);
-        glowOrb(canvas, x, y, ch.br, P.labHot, P.lab, 0.8 * bright * poleBoost, 0.5 * bright);
+        canvas.save();
+        canvas.translate(x, y);
+        canvas.rotate(angDeg);
+        canvas.scale(1.4, 0.76);
+        glowOrb(canvas, 0, 0, ch.br, P.labHot, P.lab, 0.8 * bright * poleBoost, 0.5 * bright);
+        // bright polar caps
+        dot(canvas, -ch.br * 0.55, 0, ch.br * 0.22, P.labHot, 0.5 * bright * poleBoost);
+        dot(canvas, ch.br * 0.55, 0, ch.br * 0.22, P.labHot, 0.5 * bright * poleBoost);
+        // faint internal line (nucleoid region)
+        dot(canvas, 0, 0, ch.br * 0.18, P.whiteHot, 0.2 * bright);
+        canvas.restore();
       }
-      // acid molecules budding off the chain as pH drops (B3)
+
+      // acid molecules budding off the chain ends as pH drops (B3)
       if (acidBud > 0.05 && (b === 0 || b === ch.beads - 1)) {
         const aph = (time * 0.5 + b + ch.idx) % 1;
         const adist = ch.br * (1.4 + aph * 1.4);
@@ -830,11 +862,12 @@ function drawLAB(canvas: any, layout: SceneLayout, st: DoughState, time: number)
   }
 }
 
-// Amylase: teal rings — the autolyse workhorse. Active toroid flings sugar off.
+// Amylase: teal toroid — the autolyse workhorse. Knobby surface subunits orbit
+// the ring; active form flings cleaved-sugar specks off its rim.
 function drawAmylase(canvas: any, layout: SceneLayout, st: DoughState, time: number) {
   const emerge = layout.amylaseEmerge;
   if (emerge < 0.04) return;
-  const active = st.sugarAvail; // brighter + more specks when actively cleaving
+  const active = st.sugarAvail;
   for (const mol of layout.amylase) {
     const d = drift(time, mol.idx + 70, 8, 7, mol.driftP);
     const fl = flow(mol.x, mol.y, time);
@@ -842,9 +875,23 @@ function drawAmylase(canvas: any, layout: SceneLayout, st: DoughState, time: num
     const y = mol.y + d.dy + fl.fy;
     const rr = mol.rr;
     const pulse = 1 + Math.sin((time * TAU) / 3.4 + mol.idx) * 0.12 * active;
+    // outer halo bloom
+    halo(canvas, x, y, rr * 1.8 * pulse, P.amylase, 0.08 * emerge, rr * 0.7);
+    // main ring structure
     ring(canvas, x, y, rr * pulse, rr * 0.32, P.amylase, 0.5 * emerge, rr * 0.25);
     ring(canvas, x, y, rr * pulse, rr * 0.12, P.amylaseHot, 0.6 * emerge, 0);
-    // faint cleaved-sugar specks flung off the rim (active enzyme)
+    // knobby surface subunits — bright dots orbiting the ring, giving texture
+    const knobs = 6;
+    const spinRate = time * 0.3 * mol.spinDir;
+    for (let k = 0; k < knobs; k++) {
+      const ka = (k / knobs) * TAU + spinRate;
+      const kx = x + Math.cos(ka) * rr * pulse;
+      const ky = y + Math.sin(ka) * rr * pulse;
+      const kBright = 0.4 + 0.2 * Math.sin(ka * 2 + time);
+      dot(canvas, kx, ky, rr * 0.14, P.amylaseHot, kBright * emerge);
+      glowOrb(canvas, kx, ky, rr * 0.22, P.amylase, P.amylaseHot, 0.25 * emerge, 0.15 * emerge);
+    }
+    // cleaved-sugar specks flung off the rim
     const specks = 3 + Math.round(active * 2);
     for (let s2 = 0; s2 < specks; s2++) {
       const ph = (time * 0.4 + s2 / specks + mol.idx) % 1;
@@ -1108,18 +1155,14 @@ export function SkiaFermentationScene({
     return () => cancelAnimationFrame(raf);
   }, []);
 
-  // Frosted-glass panels registered by the floating UI cards, resolved to
-  // current on-screen coordinates. Read every frame (this component already
-  // re-renders ~30fps), so the panels track scrolling content without any
-  // extra re-render being triggered by scroll events. When no cards register
-  // (e.g. the scene used stand-alone), this is empty and no glass is drawn.
+  // Glass panel positions for the declarative BackdropBlur overlay.
   const glass = glassEnabled ? screenRects() : EMPTY_GLASS;
 
   // SkPicture rebuilt each frame as timeSec advances — plain Skia, no worklet.
-  // `glass` is captured in the closure; the memo recomputes every frame because
-  // timeSec changes, so the latest panel positions are always drawn.
+  // Glass panels are rendered as declarative <BackdropBlur> AFTER the <Picture>
+  // so the blur correctly samples the organisms already drawn on the canvas.
   const picture = useMemo(
-    () => createPicture((canvas) => drawScene(canvas, st, layout, W, H, timeSec, dim, glass)),
+    () => createPicture((canvas) => drawScene(canvas, st, layout, W, H, timeSec, dim)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [st, layout, W, H, timeSec, dim],
   );
@@ -1138,6 +1181,52 @@ export function SkiaFermentationScene({
       {/* backgroundColor black is required: additive glow over pure black. */}
       <Canvas style={{ width: W, height: H, backgroundColor: 'black' }}>
         <Picture picture={picture} />
+        {/* Frosted-glass panels: declarative BackdropBlur AFTER the Picture so
+            the blur correctly samples the organisms already on the canvas.
+            (Backdrop filters inside createPicture can't sample the destination
+            canvas — the original imperative approach was a no-op on device.) */}
+        {glass.map((g, i) => {
+          if (g.w <= 1 || g.h <= 1) return null;
+          const sigma = 8 + Math.sin((timeSec * TAU) / 7 + g.x * 0.01) * 1.5;
+          const rr = Skia.RRectXY(
+            Skia.XYWHRect(g.x, g.y, g.w, g.h),
+            g.radius,
+            g.radius,
+          );
+          return (
+            <BackdropBlur key={i} blur={sigma} clip={rr}>
+              {/* Warm espresso tint */}
+              <RoundedRect
+                x={g.x}
+                y={g.y}
+                width={g.w}
+                height={g.h}
+                r={g.radius}
+                color={`rgba(22,16,13,${clamp(0.44 * g.tint, 0, 0.92)})`}
+              />
+              {/* Top-down warm sheen */}
+              <RoundedRect x={g.x} y={g.y} width={g.w} height={g.h} r={g.radius}>
+                <LinearGradient
+                  start={vec(g.x, g.y)}
+                  end={vec(g.x, g.y + g.h)}
+                  colors={['rgba(255,240,220,0.12)', 'rgba(255,240,220,0.0)']}
+                  positions={[0, 0.5]}
+                />
+              </RoundedRect>
+              {/* Hairline bright edge */}
+              <RoundedRect
+                x={g.x}
+                y={g.y}
+                width={g.w}
+                height={g.h}
+                r={g.radius}
+                color="rgba(255,238,212,0.22)"
+                style="stroke"
+                strokeWidth={1}
+              />
+            </BackdropBlur>
+          );
+        })}
       </Canvas>
     </View>
   );

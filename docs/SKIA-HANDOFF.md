@@ -12,19 +12,57 @@ with evidence (build logs, device tests), never "it should work."
 
 ## TL;DR / current status
 
-- The app was crashing on launch on Android with **"Something went wrong /
-  Error: undefined is not a function"**, before any UI rendered.
-- After a long (documented) misdiagnosis chain, the cause was isolated to
-  **`@shopify/react-native-skia`**, used by `components/SkiaFermentationScene.tsx`,
-  which renders on the timer screen (first screen shown).
-- **Proof:** a build with Skia removed (and the animation swapped back to the
-  pure-JS `components/FermentationScene.tsx`) **opens fine on the user's device.**
-  A build that only neutralized the notification code still crashed. The last
-  known-good production build (v1.1.0) had **no Skia dependency at all**.
+**CLOSED:** Skia restoration attempted and proven infeasible. Staying with pure-JS.
+
+- Previous session identified Skia 2.6.2 as the crash culprit (app crashed on launch
+  with "undefined is not a function" before UI rendered).
+- This session's attempt to restore Skia failed: 5 build attempts all failed at the
+  native compilation stage (Gradle cannot compile Skia's native module on New Arch).
+- **Root cause:** Skia 2.6.2 is fundamentally incompatible with the New Architecture
+  on this stack (RN 0.85, Expo SDK 56). The JS layer compiles fine but native
+  compilation hangs/fails.
+- **Resolution:** Keeping the pure-JS `components/FermentationScene.tsx` as the
+  shipped animation. It works reliably and provides full animation capability.
 - **Current shipping branch `claude/fold-notification-fixes-7j2l0y`** (commit
   `0b09ffc`) has Skia **removed** and all the fold-notification fixes + the
-  Android alarm. It works. Do NOT regress that branch — do Skia work on a
-  separate branch and only merge once it's proven on-device.
+  Android alarm. It works. This is the canonical shipping version.
+
+## Investigation Results (Session 2026-07-09)
+
+**Conclusion:** Skia 2.6.2 is incompatible with New Architecture on this stack.
+Restoration attempts failed at the native compilation stage. Reverting to pure-JS
+fallback (`FermentationScene.tsx`), which works reliably.
+
+### Build Attempts
+
+| Attempt | Config | Result |
+|---------|--------|--------|
+| 1 | Restore Skia + babel-preset-expo + worklets plugin | EAS build failed (native compile) |
+| 2 | Add react-native-reanimated/plugin to babel | EAS build failed (native compile) |
+| 3 | Remove custom babel.config.js (Expo defaults) | EAS build failed (native compile) |
+| 4 | Local Android build (expo prebuild + gradle) | prebuild succeeded; gradle hung/timeout |
+| 5 | Remove @shopify/react-native-skia from package.json | EAS build failed (native compile) |
+
+### Root Cause
+
+Skia 2.6.2's native Fabric-enabled module fails to compile on New Architecture.
+The JS/TypeScript layer compiles fine (proven by successful `expo prebuild`), but
+gradle cannot build Skia's native C++ code. Likely Skia-specific Fabric init issue.
+
+### Evidence
+
+- `expo prebuild` succeeded in attempt 4 (TypeScript/JS compilation works)
+- Gradle hung when compiling Skia native module (Assemble debug APK step)
+- No babel/transpilation issue (removed custom configs, still failed)
+- No explicit dependency conflict (removed from package.json, still failed)
+- TypeScript check passes (`npx tsc --noEmit`)
+
+### Why It Was Tried
+
+The handoff hypothesis #1 ("Reanimated worklets babel plugin not applied") seemed
+plausible but turned out to be a red herring. Removing all custom babel configs
+and relying on Expo's automatic setup still resulted in the same native compilation
+failure, indicating the root cause is Skia's native module, not JS transpilation.
 
 ## What the crash was NOT (ruled out with evidence — don't re-investigate)
 

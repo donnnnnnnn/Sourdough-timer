@@ -29,9 +29,18 @@ with evidence (build logs, device tests), never "it should work."
 
 ## Investigation Results (Session 2026-07-09)
 
-**Conclusion:** Skia 2.6.2 is incompatible with New Architecture on this stack.
-Restoration attempts failed at the native compilation stage. Reverting to pure-JS
-fallback (`FermentationScene.tsx`), which works reliably.
+> **⚠️ SUPERSEDED — this section's conclusion is WRONG. See
+> `docs/FIELD-ANIMATION-HANDOFF.md` §2 for the corrected diagnosis.**
+> In short: the EAS "compilation failures" below were actually a 10-second free-tier
+> **billing quota wall** (`used its Android builds from the Free plan this month`),
+> not native compilation. The one real Gradle build ran 29 min and was abandoned
+> before its error was read (logs now gone). And `babel-preset-expo@56` already
+> auto-injects the worklets plugin, so hypothesis #1 was moot. Skia is NOT proven
+> incompatible; the real suspect is the reanimated↔Skia bridge. Kept below for history.
+
+**Conclusion (SUPERSEDED — do not trust):** Skia 2.6.2 is incompatible with New
+Architecture on this stack. Restoration attempts failed at the native compilation
+stage. Reverting to pure-JS fallback (`FermentationScene.tsx`), which works reliably.
 
 ### Build Attempts
 

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, Platform, Animated, Easing } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { View, Text, TouchableOpacity, ScrollView, Platform, Animated, Easing, StyleSheet, findNodeHandle, type NativeSyntheticEvent, type NativeScrollEvent } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import * as Haptics from 'expo-haptics';
 import { useBakeStore } from '@/store/useBakeStore';
@@ -12,13 +12,16 @@ import {
   PHASE_SCRIPT,
   AUTOLYSE_COPY,
   bulkPhaseIndex,
-  FermentationScene,
   type PhaseCopy,
 } from '@/components/FermentationScene';
-// NOTE: the Skia scene (@shopify/react-native-skia) is temporarily swapped out
-// for the pure-JS FermentationScene above — the Skia native module crashes on
-// launch under the New Architecture (prime suspect, under investigation on the
-// claude/skia-fix branch; see docs/SKIA-HANDOFF.md). Swap it back once fixed.
+// Deliberately NOT a static import of SkiaFermentationScene: the Skia module
+// runs code at import time, and a throw there would crash the whole route
+// before any error boundary mounts. SafeSkiaFermentationScene lazy-loads the
+// scene inside a dedicated error boundary that shows the real error + stack
+// on-device (see components/SkiaErrorBoundary.tsx and docs/SKIA-HANDOFF.md).
+import { SafeSkiaFermentationScene } from '@/components/SkiaErrorBoundary';
+import { GlassStageProvider, GlassCard } from '@/components/GlassCard';
+import { setScrollY } from '@/components/glassStage';
 import { syncBulkPanel, clearBulkPanel } from '@/lib/bulkStatusPanel';
 
 const AUTOLYSE_OPTIONS = [20, 30, 45, 60];
@@ -760,6 +763,19 @@ export default function HomeScreen() {
   const [now, setNow] = useState(Date.now());
   const [lateFoldConfirm, setLateFoldConfirm] = useState<{ lateMinutes: number } | null>(null);
 
+  // Frosted-glass stage: the scroll content container node (glass cards measure
+  // their position against it) and a tick that asks all cards to re-measure
+  // once scrolling settles, so any drift self-corrects.
+  const [contentNode, setContentNode] = useState<number | null>(null);
+  const [measureTick, setMeasureTick] = useState(0);
+  const onContentRef = useCallback((node: View | null) => {
+    setContentNode(node ? findNodeHandle(node) : null);
+  }, []);
+  const onScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    setScrollY(e.nativeEvent.contentOffset.y);
+  }, []);
+  const remeasureGlass = useCallback(() => setMeasureTick((t) => t + 1), []);
+
   // Coach: suggested bulk time from kitchen temp + the user's own history.
   const suggestion = useMemo(() => suggestBulk(doughTempF, bakeLogs), [doughTempF, bakeLogs]);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -1034,13 +1050,32 @@ export default function HomeScreen() {
   // instead of freezing at whatever the dough looked like right at fraction 1.
   const sceneFraction = isActive ? elapsedMs / (targetDurationMinutes * 60000) : 0;
 
+  // One fullscreen scene drives the whole screen: bulk while active, the
+  // amylase-led autolyse look while resting, else the near-empty idle field.
+  const sceneMode: 'idle' | 'autolyse' | 'bulk' = isActive
+    ? 'bulk'
+    : autolyseRunning
+      ? 'autolyse'
+      : 'idle';
+
   const recentLog = bakeLogs.length > 0 ? bakeLogs[0] : null;
 
   return (
-    <View style={{ flex: 1, backgroundColor: C.bg }}>
-    <ScrollView
-      style={{ flex: 1 }}
-      contentContainerStyle={{ padding: 24, paddingBottom: 48 }}>
+    <View style={{ flex: 1, backgroundColor: '#000' }}>
+      {/* Fullscreen living "microscope" backdrop, behind everything. */}
+      <View style={StyleSheet.absoluteFill} pointerEvents="none">
+        <SafeSkiaFermentationScene mode={sceneMode} fraction={sceneFraction} />
+      </View>
+
+      <GlassStageProvider contentNode={contentNode} measureTick={measureTick}>
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={{ padding: 0 }}
+          scrollEventThrottle={16}
+          onScroll={onScroll}
+          onMomentumScrollEnd={remeasureGlass}
+          onScrollEndDrag={remeasureGlass}>
+          <View ref={onContentRef} onLayout={remeasureGlass} style={{ padding: 24, paddingBottom: 48 }}>
 
       {recentLog && !isActive && (
         <View
@@ -1071,7 +1106,6 @@ export default function HomeScreen() {
         <View style={{ gap: 28 }}>
           {autolyseRunning ? (
             <View style={{ position: 'relative', alignItems: 'center', paddingVertical: 14, minHeight: 220, justifyContent: 'center' }}>
-              <FermentationScene mode="autolyse" />
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                 <FlaskConical color={C.accent} size={14} />
                 <Text style={{ ...label, color: C.accent }}>Autolyse resting</Text>
@@ -1095,7 +1129,6 @@ export default function HomeScreen() {
             </View>
           ) : (
             <View style={{ paddingVertical: 10, minHeight: 200, position: 'relative' }}>
-              <FermentationScene mode="idle" />
               <Text style={{ color: C.text, fontSize: 36, fontFamily: fonts.display, letterSpacing: 0.2 }}>
                 {autolyseDone ? 'Levain time.' : 'Ready to bake?'}
               </Text>
@@ -1170,14 +1203,7 @@ export default function HomeScreen() {
           {autolyseRunning && <PhaseCaption copy={AUTOLYSE_COPY} phaseLabel="Pre-ferment" />}
 
           {/* Coach: kitchen temp in, suggested bulk time out */}
-          <View
-            style={{
-              backgroundColor: C.card,
-              borderWidth: 1,
-              borderColor: C.cardBorder,
-              borderRadius: 20,
-              padding: 20,
-            }}>
+          <GlassCard radius={20} style={{ padding: 20 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 14 }}>
               <Thermometer color={C.textMuted} size={13} />
               <Text style={{ ...label }}>Kitchen temp</Text>
@@ -1236,7 +1262,7 @@ export default function HomeScreen() {
                 {suggestion.reason}
               </Text>
             </View>
-          </View>
+          </GlassCard>
 
           <View>
             <Text style={{ ...label, marginBottom: 14 }}>
@@ -1407,7 +1433,6 @@ export default function HomeScreen() {
             }],
           }}>
           <View style={{ position: 'relative', alignItems: 'center', paddingTop: 8, paddingBottom: 12, minHeight: 280, justifyContent: 'center' }}>
-            <FermentationScene mode="bulk" fraction={sceneFraction} />
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
               <PulseDot />
               <Text style={{ ...label, color: C.accent }}>
@@ -1443,14 +1468,7 @@ export default function HomeScreen() {
           />
 
           {/* Whole-bulk progress toward the planned end time */}
-          <View
-            style={{
-              backgroundColor: C.card,
-              borderWidth: 1,
-              borderColor: C.cardBorder,
-              borderRadius: 20,
-              padding: 20,
-            }}>
+          <GlassCard radius={20} style={{ padding: 20 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
               <Text style={{ ...label }}>Bulk progress</Text>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -1485,7 +1503,7 @@ export default function HomeScreen() {
                 <Text style={{ color: C.text, fontSize: 22, fontWeight: '300' }}>+</Text>
               </TouchableOpacity>
             </View>
-          </View>
+          </GlassCard>
 
           {foldsComplete ? (
             <View
@@ -1566,14 +1584,7 @@ export default function HomeScreen() {
           )}
 
           {/* The dough's story so far */}
-          <View
-            style={{
-              backgroundColor: C.card,
-              borderWidth: 1,
-              borderColor: C.cardBorder,
-              borderRadius: 20,
-              padding: 20,
-            }}>
+          <GlassCard radius={20} style={{ padding: 20 }}>
             <Text style={{ ...label, marginBottom: 16 }}>Dough story</Text>
             <DoughStory
               startTs={bulkStartTimestamp ?? now}
@@ -1584,7 +1595,7 @@ export default function HomeScreen() {
               targetEndTs={targetEndTimestamp}
               now={now}
             />
-          </View>
+          </GlassCard>
 
           <RiseTracker
             pct={risePercent}
@@ -1643,7 +1654,9 @@ export default function HomeScreen() {
           </TouchableOpacity>
         </Animated.View>
       )}
-    </ScrollView>
+          </View>
+        </ScrollView>
+      </GlassStageProvider>
 
     {celebrating && (
       <CelebrationOverlay durationLabel={`${formatMinutes(Math.round(elapsedMs / 60000))} of bulk`} />

@@ -50,29 +50,21 @@ jobs:
       - name: Sign release build with the debug keystore
         working-directory: android/app
         run: |
-          # Expo SDK 56 may generate build.gradle.kts (Kotlin DSL) or build.gradle (Groovy).
-          # Handle both, and also handle the case where no release signingConfig line exists
-          # (meaning the release buildType inherits null → unsigned → packageRelease fails).
-          if [ -f build.gradle.kts ]; then
-            TARGET=build.gradle.kts
-            # Kotlin DSL: signingConfig = signingConfigs.getByName("release")
-            # Replace with debug, or inject if absent
-            if grep -q 'signingConfig.*release' "$TARGET"; then
-              sed -i 's/signingConfig = signingConfigs.getByName("release")/signingConfig = signingConfigs.getByName("debug")/' "$TARGET"
-            else
-              # Inject signingConfig into the release block
-              sed -i '/buildTypes {/,/}/ { /release {/a\            signingConfig = signingConfigs.getByName("debug")' "$TARGET"
-            fi
+          # Expo prebuild generates build.gradle (Groovy). Force the release
+          # buildType to use the debug signing config so we get an installable
+          # APK without a real release keystore.
+          TARGET=build.gradle
+          if [ -f build.gradle.kts ]; then TARGET=build.gradle.kts; fi
+
+          # Strategy: replace any existing release signingConfig, or inject one.
+          if grep -q 'signingConfig.*release\|signingConfigs.release' "$TARGET"; then
+            sed -i 's/signingConfigs.getByName("release")/signingConfigs.getByName("debug")/' "$TARGET"
+            sed -i 's/signingConfig signingConfigs.release/signingConfig signingConfigs.debug/' "$TARGET"
           else
-            TARGET=build.gradle
-            if grep -q 'signingConfig signingConfigs.release' "$TARGET"; then
-              sed -i 's/signingConfig signingConfigs.release/signingConfig signingConfigs.debug/' "$TARGET"
-            else
-              # Inject signingConfig into release block
-              sed -i '/buildTypes/,/}/ { /release/a\            signingConfig signingConfigs.debug' "$TARGET"
-            fi
+            # No release signingConfig found — inject one after "release {"
+            sed -i '/release {/a\            signingConfig signingConfigs.debug' "$TARGET"
           fi
-          echo "--- Signing config lines in $TARGET ---"
+          echo "--- Signing config in $TARGET ---"
           grep -n "signingConfig" "$TARGET" || echo "(none found — build may fail)"
 
       - name: Cache Gradle

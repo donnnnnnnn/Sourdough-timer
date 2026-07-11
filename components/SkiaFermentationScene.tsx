@@ -708,7 +708,9 @@ function drawGlassPanels(
 ) {
   for (const g of glass) {
     if (g.w <= 1 || g.h <= 1) continue;
-    const sigma = 8 + Math.sin((time * TAU) / 7 + g.x * 0.01) * 1.5;
+    const sigma = g.blur !== null
+      ? g.blur
+      : 8 + Math.sin((time * TAU) / 7 + g.x * 0.01) * 1.5;
     const rr = Skia.RRectXY(Skia.XYWHRect(g.x, g.y, g.w, g.h), g.radius, g.radius);
 
     // Real blur: redraw the organisms clipped to this panel, through a

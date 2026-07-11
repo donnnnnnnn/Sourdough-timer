@@ -21,7 +21,7 @@ import {
 // on-device (see components/SkiaErrorBoundary.tsx and docs/SKIA-HANDOFF.md).
 import { SafeSkiaFermentationScene } from '@/components/SkiaErrorBoundary';
 import { GlassStageProvider, GlassCard } from '@/components/GlassCard';
-import { setScrollY } from '@/components/glassStage';
+import { setScrollY, setContentTop } from '@/components/glassStage';
 import { syncBulkPanel, clearBulkPanel } from '@/lib/bulkStatusPanel';
 
 const AUTOLYSE_OPTIONS = [20, 30, 45, 60];
@@ -770,6 +770,11 @@ export default function HomeScreen() {
   const [measureTick, setMeasureTick] = useState(0);
   const onContentRef = useCallback((node: View | null) => {
     setContentNode(node ? findNodeHandle(node) : null);
+    if (node) {
+      node.measureInWindow((_x: number, y: number) => {
+        setContentTop(y);
+      });
+    }
   }, []);
   const onScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
     setScrollY(e.nativeEvent.contentOffset.y);
@@ -1203,7 +1208,7 @@ export default function HomeScreen() {
           {autolyseRunning && <PhaseCaption copy={AUTOLYSE_COPY} phaseLabel="Pre-ferment" />}
 
           {/* Coach: kitchen temp in, suggested bulk time out */}
-          <GlassCard radius={20} style={{ padding: 20 }}>
+          <GlassCard radius={20} tint={0.36} blur={14} style={{ padding: 20 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 14 }}>
               <Thermometer color={C.textMuted} size={13} />
               <Text style={{ ...label }}>Kitchen temp</Text>
@@ -1468,7 +1473,7 @@ export default function HomeScreen() {
           />
 
           {/* Whole-bulk progress toward the planned end time */}
-          <GlassCard radius={20} style={{ padding: 20 }}>
+          <GlassCard radius={20} tint={0.36} blur={14} style={{ padding: 20 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
               <Text style={{ ...label }}>Bulk progress</Text>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -1584,7 +1589,7 @@ export default function HomeScreen() {
           )}
 
           {/* The dough's story so far */}
-          <GlassCard radius={20} style={{ padding: 20 }}>
+          <GlassCard radius={20} tint={0.54} blur={16} style={{ padding: 20 }}>
             <Text style={{ ...label, marginBottom: 16 }}>Dough story</Text>
             <DoughStory
               startTs={bulkStartTimestamp ?? now}

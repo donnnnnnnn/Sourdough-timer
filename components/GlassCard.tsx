@@ -64,9 +64,11 @@ interface GlassCardProps {
   radius?: number;
   /** Per-card tint strength (0..1.5). Lower = clearer glass. Default 1. */
   tint?: number;
+  /** Per-card blur sigma override. Omit to use the shared animated sigma. */
+  blur?: number;
 }
 
-export function GlassCard({ children, style, radius = 20, tint = 1 }: GlassCardProps) {
+export function GlassCard({ children, style, radius = 20, tint = 1, blur }: GlassCardProps) {
   const ref = useRef<View>(null);
   const idRef = useRef<string>(nextGlassId());
   const { contentNode, measureTick } = useContext(GlassStageContext);
@@ -81,12 +83,12 @@ export function GlassCard({ children, style, radius = 20, tint = 1 }: GlassCardP
       contentNode as number,
       (x: number, y: number, w: number, h: number) => {
         if (w > 0 && h > 0) {
-          upsertGlass({ id: idRef.current, x, w, h, contentY: y, radius, tint });
+          upsertGlass({ id: idRef.current, x, w, h, contentY: y, radius, tint, blur });
         }
       },
       () => {},
     );
-  }, [contentNode, radius, tint]);
+  }, [contentNode, radius, tint, blur]);
 
   // Re-measure whenever the provider asks (scroll settle, layout shifts).
   useEffect(() => {

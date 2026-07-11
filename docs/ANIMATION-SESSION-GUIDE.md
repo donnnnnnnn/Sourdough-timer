@@ -147,16 +147,17 @@ judging GLASS legibility over a busy background, not a pixel-match.
   the `saveLayer` approach. As of this writing it has not been confirmed
   on-device. See `docs/SKIA-HANDOFF.md` → "If build #6 STILL shows no blur"
   for next-step instructions if it fails.
-- **`contentTop` is never wired up:** `setContentTop()` exists in
-  `glassStage.ts` but is never called. Works today because the Skia canvas
-  and ScrollView share a parent origin. A future layout change (status bar
-  inset, header) will silently break panel positioning.
-- **No per-panel blur:** The tuner supports per-panel blur, but the live app
-  uses a single shared sigma. To add per-panel blur, store it in
-  `GlassRegistration` (like `tint`) and read `g.blur` in `drawGlassPanels`.
-- **Tint values not yet dialled:** All three GlassCards use the default
-  `tint=1`. The tuner's presets suggest different values per panel — port them
-  once the blur is confirmed working on-device.
+- ~~**`contentTop` is never wired up**~~ **Done.** `onContentRef` in
+  `index.tsx` now calls `measureInWindow` and feeds the result to
+  `setContentTop()`.
+- ~~**No per-panel blur**~~ **Done.** `GlassRegistration` and
+  `GlassScreenRect` now carry an optional `blur` field. `GlassCard` accepts a
+  `blur` prop. `drawGlassPanels` uses `g.blur` when set, falling back to the
+  shared animated sigma.
+- ~~**Tint values not yet dialled**~~ **Done.** GlassCards in `index.tsx` now
+  carry per-panel `tint` and `blur` values from the tuner's
+  "Legibility-tuned" preset: Kitchen temp (0.36/14), Bulk progress (0.36/14),
+  Dough story (0.54/16).
 
 ---
 

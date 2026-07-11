@@ -36,6 +36,8 @@ export interface GlassRegistration {
   radius: number;
   /** Optional per-card tint strength multiplier (0..1.5); default 1. */
   tint?: number;
+  /** Optional per-card blur sigma override; default uses shared animated sigma. */
+  blur?: number;
 }
 
 /** A glass panel resolved to current on-screen coordinates for the renderer. */
@@ -46,6 +48,7 @@ export interface GlassScreenRect {
   h: number;
   radius: number;
   tint: number;
+  blur: number | null;
 }
 
 const rects = new Map<string, GlassRegistration>();
@@ -83,6 +86,7 @@ export function screenRects(): GlassScreenRect[] {
       h: r.h,
       radius: r.radius,
       tint: r.tint ?? 1,
+      blur: r.blur ?? null,
     });
   }
   return out;

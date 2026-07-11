@@ -4,7 +4,7 @@
  * them, so the living fermentation animation shows through the controls.
  *
  * Why a plain module store (not React context/state):
- * The fullscreen SkiaFermentationScene already re-renders ~30fps off its own
+ * The fullscreen SkiaFermentationScene already re-renders ~60fps off its own
  * requestAnimationFrame clock. It reads this registry once per frame via
  * `screenRects()`. Card positions and scroll offset are written here as plain
  * mutations — NO React re-render is triggered by a scroll event, which would

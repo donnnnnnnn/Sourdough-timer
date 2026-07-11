@@ -82,6 +82,7 @@ import {
   BlurStyle,
   TileMode,
   ClipOp,
+  type SkPicture,
 } from '@shopify/react-native-skia';
 import {
   computeDoughState,
@@ -162,16 +163,54 @@ function flow(x: number, y: number, t: number) {
 }
 
 // ── low-level additive primitives (RN Skia canvas API mirrors CanvasKit) ─────
+// These run hundreds of times per recorded frame, so they must not allocate.
+// Skia draw calls SNAPSHOT paint/path state into the recording at call time,
+// so one scratch paint (reset per call), one scratch path, and a small
+// rotating pool of color arrays are safe to mutate between calls. The
+// previous versions allocated fresh Paint + parsed-string Color (+ often a
+// MaskFilter) objects per call — tens of thousands of short-lived objects a
+// second, and the resulting GC pauses visibly hitched the JS-driven clock.
+const SCRATCH_PAINT = Skia.Paint();
 function additivePaint() {
-  const p = Skia.Paint();
+  const p = SCRATCH_PAINT;
+  p.setShader(null);
+  p.setMaskFilter(null);
+  p.setStyle(PaintStyle.Fill);
+  p.setStrokeCap(StrokeCap.Butt);
   p.setAntiAlias(true);
   p.setBlendMode(BlendMode.Plus);
   return p;
 }
+
+// Rotating color pool: a single gradient uses at most 3 colors at once, so 8
+// slots is ample headroom before a slot gets overwritten.
+const COLOR_POOL = Array.from({ length: 8 }, () => new Float32Array(4));
+let colorSlot = 0;
 function col(rgb: RGB, a: number) {
   const aa = a < 0 ? 0 : a > 1 ? 1 : a;
-  return Skia.Color(`rgba(${rgb[0]},${rgb[1]},${rgb[2]},${aa})`);
+  const c = COLOR_POOL[(colorSlot = (colorSlot + 1) & 7)];
+  c[0] = rgb[0] / 255;
+  c[1] = rgb[1] / 255;
+  c[2] = rgb[2] / 255;
+  c[3] = aa;
+  return c;
 }
+
+// Blur mask filters are immutable and position-independent — cache by sigma,
+// quantized to 0.25px steps so animated sigmas keep the cache small (the
+// quantization is invisible; sigmas here are 1–20px soft glows).
+const MASK_CACHE = new Map<number, ReturnType<typeof Skia.MaskFilter.MakeBlur>>();
+function blurMask(sigma: number) {
+  const key = Math.max(0.25, Math.round(sigma * 4) / 4);
+  let f = MASK_CACHE.get(key);
+  if (!f) {
+    f = Skia.MaskFilter.MakeBlur(BlurStyle.Normal, key, false);
+    MASK_CACHE.set(key, f);
+  }
+  return f;
+}
+
+const SCRATCH_PATH = Skia.Path.Make();
 
 function glowOrb(
   canvas: any,
@@ -199,7 +238,7 @@ function halo(canvas: any, x: number, y: number, r: number, rgb: RGB, a: number,
   if (a <= 0.002) return;
   const p = additivePaint();
   p.setColor(col(rgb, a));
-  p.setMaskFilter(Skia.MaskFilter.MakeBlur(BlurStyle.Normal, sigma, false));
+  p.setMaskFilter(blurMask(sigma));
   canvas.drawCircle(x, y, r, p);
 }
 function dot(canvas: any, x: number, y: number, r: number, rgb: RGB, a: number) {
@@ -223,7 +262,7 @@ function ring(
   p.setStyle(PaintStyle.Stroke);
   p.setStrokeWidth(w);
   p.setColor(col(rgb, a));
-  if (sigma > 0) p.setMaskFilter(Skia.MaskFilter.MakeBlur(BlurStyle.Normal, sigma, false));
+  if (sigma > 0) p.setMaskFilter(blurMask(sigma));
   canvas.drawCircle(x, y, r, p);
 }
 
@@ -699,12 +738,8 @@ function drawOrganisms(
 function drawGlassPanels(
   canvas: any,
   glass: GlassScreenRect[],
-  st: DoughState,
-  layout: SceneLayout,
-  W: number,
-  H: number,
+  orgPicture: SkPicture,
   time: number,
-  dim: number,
 ) {
   for (const g of glass) {
     if (g.w <= 1 || g.h <= 1) continue;
@@ -720,7 +755,9 @@ function drawGlassPanels(
     const blurPaint = Skia.Paint();
     blurPaint.setImageFilter(Skia.ImageFilter.MakeBlur(sigma, sigma, TileMode.Clamp));
     canvas.saveLayer(blurPaint, null);
-    drawOrganisms(canvas, st, layout, W, H, time, dim);
+    // Replay the once-per-frame organism recording instead of re-recording
+    // every draw call per panel — replay is native-side and near-free.
+    canvas.drawPicture(orgPicture);
     canvas.restore(); // composite the blurred layer back
     canvas.restore(); // pop the clip
 
@@ -759,23 +796,21 @@ function drawGlassPanels(
 
 function drawScene(
   canvas: any,
-  st: DoughState,
-  layout: SceneLayout,
-  W: number,
-  H: number,
-  time: number,
-  dim: number,
+  orgPicture: SkPicture,
   glass: GlassScreenRect[],
+  time: number,
 ) {
   // Organisms draw first, across the FULL canvas — this is the "full focus"
-  // layer visible in the gaps between UI cards.
-  drawOrganisms(canvas, st, layout, W, H, time, dim);
+  // layer visible in the gaps between UI cards. They were recorded ONCE this
+  // frame (see the orgPicture memo in the component); everything here just
+  // replays that recording.
+  canvas.drawPicture(orgPicture);
   // Glass panels draw LAST, on top, but each one is clipped to its own
   // rounded-rect region (see drawGlassPanels) — so only the area under a
   // card gets the blurred/tinted treatment; everywhere else keeps the
   // full-focus organisms drawn above.
   if (glass.length > 0) {
-    drawGlassPanels(canvas, glass, st, layout, W, H, time, dim);
+    drawGlassPanels(canvas, glass, orgPicture, time);
   }
 }
 
@@ -1171,7 +1206,7 @@ function drawStrand(
   p.setStrokeWidth(thick);
   p.setStrokeCap(StrokeCap.Round);
   p.setColor(col(P.gluten, alpha));
-  p.setMaskFilter(Skia.MaskFilter.MakeBlur(BlurStyle.Normal, lerp(0.6, 2.2, alpha), false));
+  p.setMaskFilter(blurMask(lerp(0.6, 2.2, alpha)));
   const dx = b.x - a.x;
   const dy = b.y - a.y;
   const len = Math.hypot(dx, dy) || 1;
@@ -1189,14 +1224,16 @@ function drawStrand(
     const gap = lerp(0.12, 0.34, fray);
     const recoil = meta.bowSign * 9 * fray;
     p.setColor(col(P.gluten, alpha * 0.7));
-    const path = Skia.Path.Make();
+    const path = SCRATCH_PATH;
+    path.reset();
     path.moveTo(a.x, a.y);
     path.quadTo(lerp(a.x, cx, 0.5), lerp(a.y, cy, 0.5), lerp(a.x, cx, 1 - gap) + nx * recoil, lerp(a.y, cy, 1 - gap) + ny * recoil);
     path.moveTo(lerp(cx, b.x, gap) - nx * recoil, lerp(cy, b.y, gap) - ny * recoil);
     path.quadTo(lerp(cx, b.x, 0.5), lerp(cy, b.y, 0.5), b.x, b.y);
     canvas.drawPath(path, p);
   } else {
-    const path = Skia.Path.Make();
+    const path = SCRATCH_PATH;
+    path.reset();
     path.moveTo(a.x, a.y);
     path.quadTo(cx, cy, b.x, b.y);
     canvas.drawPath(path, p);
@@ -1235,7 +1272,13 @@ export function SkiaFermentationScene({
   //   autolyse → a fixed early point; at this progress doughState naturally
   //              yields strong amylase, forming gluten, and ~no microbes.
   //   idle     → progress 0 (near-empty resting field), rendered extra-dim.
-  const progress = mode === 'bulk' ? clamp(fraction, 0, 1) : mode === 'autolyse' ? 0.06 : 0.0;
+  // `fraction` ticks every second (it derives from the timer screen's clock),
+  // and every distinct value would rebuild `st` AND the whole organism layout
+  // below — a visible once-per-second hitch. Quantize to 0.5% steps: a 2-hour
+  // bulk then refreshes the layout every ~36s, and all per-frame motion comes
+  // from the animation clock anyway, not from progress.
+  const rawProgress = mode === 'bulk' ? clamp(fraction, 0, 1) : mode === 'autolyse' ? 0.06 : 0.0;
+  const progress = Math.round(rawProgress * 200) / 200;
   const dim = mode === 'idle' ? 0.28 : 1.0;
 
   // State is computed once on the JS thread — it does NOT depend on the clock.
@@ -1251,25 +1294,30 @@ export function SkiaFermentationScene({
   // main performance lever: the hot per-frame path only layers motion on top.
   const layout = useMemo(() => buildLayout(st, W, H), [st, W, H]);
 
-  // Animation clock, driven on the JS thread (~30fps — ample for this slow,
-  // ambient motion). We deliberately do NOT use Skia's useClock +
-  // reanimated useDerivedValue: on this Skia 2.6.2 + reanimated 4.3 / worklets
-  // 0.8 combo, calling createPicture() inside a reanimated worklet throws
-  // "undefined is not a function" and crashes the app (see docs/SKIA-HANDOFF.md).
-  // Driving from JS keeps the drawing byte-for-byte identical — every drawScene
-  // call and Skia GPU primitive is unchanged — only the per-frame trigger moves
-  // off the UI thread. This component re-renders per frame in isolation; `st`
-  // and `layout` (useMemo above) are NOT recomputed each frame, so only the
-  // picture rebuilds.
+  // Animation clock, driven on the JS thread at 60fps. We deliberately do NOT
+  // use Skia's useClock + reanimated useDerivedValue: on this Skia 2.6.2 +
+  // reanimated 4.3 / worklets 0.8 combo, calling createPicture() inside a
+  // reanimated worklet throws "undefined is not a function" and crashes the
+  // app (see docs/SKIA-HANDOFF.md). Driving from JS keeps the drawing
+  // byte-for-byte identical — only the per-frame trigger moves off the UI
+  // thread. This component re-renders per frame in isolation; `st` and
+  // `layout` (useMemo above) are NOT recomputed each frame, so only the
+  // pictures rebuild.
+  //
+  // The gate was 30fps, which judders on a 120Hz phone: rAF ticks every
+  // ~8.3ms, so a 33.3ms threshold fires after 33.3 OR 41.7ms — visibly
+  // uneven — and 30fps is itself choppy for continuous ambient drift. The
+  // 1ms epsilon keeps a frame from slipping a whole vsync tick when the
+  // timestamp lands fractionally early.
   const [timeSec, setTimeSec] = useState(0);
   useEffect(() => {
     let raf = 0;
     let start: number | null = null;
-    let last = 0;
-    const FRAME_MS = 1000 / 30;
+    let last = -Infinity;
+    const FRAME_MS = 1000 / 60;
     const loop = (ts: number) => {
       if (start === null) start = ts;
-      if (ts - last >= FRAME_MS) {
+      if (ts - last >= FRAME_MS - 1) {
         last = ts;
         setTimeSec((ts - start) / 1000); // seconds — matches scene.js clock units
       }
@@ -1282,16 +1330,23 @@ export function SkiaFermentationScene({
   // Glass panel positions (screen-space rects of every registered GlassCard).
   const glass = glassEnabled ? screenRects() : EMPTY_GLASS;
 
-  // SkPicture rebuilt each frame as timeSec advances — plain Skia, no worklet.
-  // drawScene renders organisms once across the full canvas, then (only if
-  // there are glass panels to paint) redraws them a second time per panel
-  // inside a saveLayer with a blur image filter, clipped to that panel's
-  // rounded rect. See the drawGlassPanels comment for why this avoids
+  // Two-stage recording, rebuilt each frame as timeSec advances — plain Skia,
+  // no worklet. The organisms are recorded ONCE into their own picture; the
+  // scene picture replays it across the full canvas, then (only if there are
+  // glass panels to paint) replays it again per panel inside a saveLayer
+  // with a blur image filter, clipped to that panel's rounded rect. Replaying
+  // a nested picture is native-side — without this, every visible panel
+  // re-recorded the whole organism pass in JS (4× the recording cost with
+  // three panels on screen). See drawGlassPanels for why this avoids
   // backdrop filters entirely.
+  const orgPicture = useMemo(
+    () => createPicture((canvas) => drawOrganisms(canvas, st, layout, W, H, timeSec, dim)),
+    [st, layout, W, H, timeSec, dim],
+  );
   const picture = useMemo(
-    () => createPicture((canvas) => drawScene(canvas, st, layout, W, H, timeSec, dim, glass)),
+    () => createPicture((canvas) => drawScene(canvas, orgPicture, glass, timeSec)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [st, layout, W, H, timeSec, dim, glass],
+    [orgPicture, glass, timeSec],
   );
 
   return (

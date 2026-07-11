@@ -68,6 +68,31 @@ layer with `ImageFilter.MakeBlur`, redraw organisms into that layer (Skia
 rasterizes just this clipped region and blurs during composite-back), restore.
 See `drawGlassPanels()` at ~line 699.
 
+### 4. Keep the per-frame path allocation-free (smoothness)
+
+The scene re-records an SkPicture on the JS thread every frame, so anything
+allocated inside a draw function happens hundreds of times per frame. The
+owner reported visible choppiness on a Pixel 9; the causes and their fixes
+(July 11 2026) — do not reintroduce them:
+
+- **Primitives must not allocate.** `additivePaint()` returns one module-level
+  scratch paint (reset per call), `col()` returns a slot from a rotating
+  Float32Array pool, `blurMask()` caches MaskFilters by quantized sigma, and
+  gluten strands reuse `SCRATCH_PATH`. This is safe because Skia draw calls
+  snapshot paint/path state into the recording. Previously every call
+  allocated Paint + parsed-string Color (+ MaskFilter) — tens of thousands of
+  short-lived objects per second, and the GC pauses read as stutter.
+- **Organisms are recorded once per frame** into `orgPicture`, then replayed
+  (`canvas.drawPicture`) for the full-canvas pass AND inside each glass
+  panel's blur layer. Never call `drawOrganisms` per panel — with 3 panels
+  that quadruples JS recording work.
+- **`progress` is quantized to 0.5% steps** before feeding `computeDoughState`
+  / `buildLayout`. The `fraction` prop ticks every second (the timer clock);
+  unquantized it rebuilt the entire organism layout every second — a visible
+  once-per-second hitch.
+- **The clock runs at 60fps** with a `FRAME_MS - 1` epsilon. The old 30fps
+  gate double-juddered on a 120Hz display (frames landed 33 or 42ms apart).
+
 ---
 
 ## Glass panel system — how it works

@@ -50,10 +50,30 @@ jobs:
       - name: Sign release build with the debug keystore
         working-directory: android/app
         run: |
-          sed -i \
-            's/signingConfig signingConfigs.release/signingConfig signingConfigs.debug/' \
-            build.gradle
-          grep -n "signingConfig signingConfigs" build.gradle
+          # Expo SDK 56 may generate build.gradle.kts (Kotlin DSL) or build.gradle (Groovy).
+          # Handle both, and also handle the case where no release signingConfig line exists
+          # (meaning the release buildType inherits null → unsigned → packageRelease fails).
+          if [ -f build.gradle.kts ]; then
+            TARGET=build.gradle.kts
+            # Kotlin DSL: signingConfig = signingConfigs.getByName("release")
+            # Replace with debug, or inject if absent
+            if grep -q 'signingConfig.*release' "$TARGET"; then
+              sed -i 's/signingConfig = signingConfigs.getByName("release")/signingConfig = signingConfigs.getByName("debug")/' "$TARGET"
+            else
+              # Inject signingConfig into the release block
+              sed -i '/buildTypes {/,/}/ { /release {/a\            signingConfig = signingConfigs.getByName("debug")' "$TARGET"
+            fi
+          else
+            TARGET=build.gradle
+            if grep -q 'signingConfig signingConfigs.release' "$TARGET"; then
+              sed -i 's/signingConfig signingConfigs.release/signingConfig signingConfigs.debug/' "$TARGET"
+            else
+              # Inject signingConfig into release block
+              sed -i '/buildTypes/,/}/ { /release/a\            signingConfig signingConfigs.debug' "$TARGET"
+            fi
+          fi
+          echo "--- Signing config lines in $TARGET ---"
+          grep -n "signingConfig" "$TARGET" || echo "(none found — build may fail)"
 
       - name: Cache Gradle
         uses: actions/cache@v4

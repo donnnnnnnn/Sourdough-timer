@@ -62,13 +62,17 @@ interface GlassCardProps {
   style?: ViewStyle | ViewStyle[];
   /** Corner radius; must match the container's borderRadius. Default 20. */
   radius?: number;
-  /** Per-card tint strength (0..1.5). Lower = clearer glass. Default 1. */
+  /**
+   * Espresso-overlay opacity (0..0.92) — the final alpha drawn over the
+   * blurred organisms. Same units as the frosted-glass tuner's readout, so
+   * tuner values paste in directly. Lower = clearer glass. Default 0.44.
+   */
   tint?: number;
   /** Per-card blur sigma override. Omit to use the shared animated sigma. */
   blur?: number;
 }
 
-export function GlassCard({ children, style, radius = 20, tint = 1, blur }: GlassCardProps) {
+export function GlassCard({ children, style, radius = 20, tint = 0.44, blur }: GlassCardProps) {
   const ref = useRef<View>(null);
   const idRef = useRef<string>(nextGlassId());
   const { contentNode, measureTick } = useContext(GlassStageContext);

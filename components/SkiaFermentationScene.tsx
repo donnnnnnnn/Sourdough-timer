@@ -728,8 +728,10 @@ function drawGlassPanels(
     canvas.clipRRect(rr, ClipOp.Intersect, true);
 
     // Warm espresso tint (normal blend mutes the additive glow into a pane).
+    // g.tint IS the final overlay opacity — the same number the frosted-glass
+    // tuner's readout shows — so tuner values port into GlassCard props 1:1.
     const tintPaint = Skia.Paint();
-    tintPaint.setColor(Skia.Color(`rgba(22,16,13,${clamp(0.44 * g.tint, 0, 0.92)})`));
+    tintPaint.setColor(Skia.Color(`rgba(22,16,13,${clamp(g.tint, 0, 0.92)})`));
     canvas.drawRRect(rr, tintPaint);
 
     // Top-down warm sheen.

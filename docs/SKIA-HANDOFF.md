@@ -63,16 +63,13 @@ them. Instead:
 - Get a stack/log from the device (adb logcat) rather than guessing again —
   three build cycles have been spent on hypotheses without direct on-device
   instrumentation.
-- Sanity-check `components/glassStage.ts`'s coordinate math — `contentTop` is
-  set via `setContentTop()` but that setter is **never called anywhere in the
-  app** (grepped, confirmed). It's silently relying on the Skia canvas and the
-  ScrollView sharing the same absolute-position origin (both are direct
-  children of the same `flex:1` parent in `app/(tabs)/index.tsx`). If a future
-  layout change adds a header/inset above that parent, `contentTop` staying 0
-  will silently misplace every glass panel — worth wiring up properly or at
-  least confirming it's not already the culprit (rects computing to 0-size or
-  off-screen would make `drawGlassPanels`'s `g.w <= 1 || g.h <= 1` guard skip
-  them entirely — indistinguishable from "no blur" without on-device logging).
+- Sanity-check `components/glassStage.ts`'s coordinate math — `contentTop`
+  is now wired up (`onContentRef` in `app/(tabs)/index.tsx` measures the
+  content container via `measureInWindow` → `setContentTop()`), but if
+  panels misbehave this math is still the first suspect: a wrong
+  `contentTop`/`contentY`/`scrollY` puts rects off-screen, and
+  `drawGlassPanels`'s `g.w <= 1 || g.h <= 1` guard plus off-screen clipping
+  are indistinguishable from "no blur" without on-device logging.
 - Consider a temporary high-contrast debug fill (e.g. solid opaque red) in
   place of the tint paint in `drawGlassPanels`, to separate "panels aren't
   being drawn at all" from "panels draw but the blur inside them doesn't work."

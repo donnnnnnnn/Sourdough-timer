@@ -34,7 +34,11 @@ export interface GlassRegistration {
   contentY: number;
   /** Corner radius, px. */
   radius: number;
-  /** Optional per-card tint strength multiplier (0..1.5); default 1. */
+  /**
+   * Optional espresso-overlay opacity (0..0.92) — the FINAL alpha drawn over
+   * the blurred organisms, matching the frosted-glass tuner's readout 1:1.
+   * Default 0.44 (medium glass).
+   */
   tint?: number;
   /** Optional per-card blur sigma override; default uses shared animated sigma. */
   blur?: number;
@@ -85,7 +89,7 @@ export function screenRects(): GlassScreenRect[] {
       w: r.w,
       h: r.h,
       radius: r.radius,
-      tint: r.tint ?? 1,
+      tint: r.tint ?? 0.44,
       blur: r.blur ?? null,
     });
   }

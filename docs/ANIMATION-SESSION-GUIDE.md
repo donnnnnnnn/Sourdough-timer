@@ -68,6 +68,31 @@ layer with `ImageFilter.MakeBlur`, redraw organisms into that layer (Skia
 rasterizes just this clipped region and blurs during composite-back), restore.
 See `drawGlassPanels()` at ~line 699.
 
+### 4. Keep the per-frame path allocation-free (smoothness)
+
+The scene re-records an SkPicture on the JS thread every frame, so anything
+allocated inside a draw function happens hundreds of times per frame. The
+owner reported visible choppiness on a Pixel 9; the causes and their fixes
+(July 11 2026) — do not reintroduce them:
+
+- **Primitives must not allocate.** `additivePaint()` returns one module-level
+  scratch paint (reset per call), `col()` returns a slot from a rotating
+  Float32Array pool, `blurMask()` caches MaskFilters by quantized sigma, and
+  gluten strands reuse `SCRATCH_PATH`. This is safe because Skia draw calls
+  snapshot paint/path state into the recording. Previously every call
+  allocated Paint + parsed-string Color (+ MaskFilter) — tens of thousands of
+  short-lived objects per second, and the GC pauses read as stutter.
+- **Organisms are recorded once per frame** into `orgPicture`, then replayed
+  (`canvas.drawPicture`) for the full-canvas pass AND inside each glass
+  panel's blur layer. Never call `drawOrganisms` per panel — with 3 panels
+  that quadruples JS recording work.
+- **`progress` is quantized to 0.5% steps** before feeding `computeDoughState`
+  / `buildLayout`. The `fraction` prop ticks every second (the timer clock);
+  unquantized it rebuilt the entire organism layout every second — a visible
+  once-per-second hitch.
+- **The clock runs at 60fps** with a `FRAME_MS - 1` epsilon. The old 30fps
+  gate double-juddered on a 120Hz display (frames landed 33 or 42ms apart).
+
 ---
 
 ## Glass panel system — how it works
@@ -88,20 +113,24 @@ screenY = contentTop + contentY - scrollY
 
 ### Per-card tint prop
 
-Each `<GlassCard tint={n}>` scales the espresso-brown overlay opacity:
+Each `<GlassCard tint={n}>` sets the espresso-brown overlay opacity
+**directly** — `tint` IS the final alpha, the same number the tuner's
+readout shows (this used to be a ×0.44 multiplier; the unit mismatch made
+every panel render ~56% lighter than tuned, so the multiplier was removed):
 
 ```typescript
-// SkiaFermentationScene.tsx ~line 730
-tintPaint.setColor(Skia.Color(`rgba(22,16,13,${clamp(0.44 * g.tint, 0, 0.92)})`));
+// SkiaFermentationScene.tsx ~line 734
+tintPaint.setColor(Skia.Color(`rgba(22,16,13,${clamp(g.tint, 0, 0.92)})`));
 ```
 
 - `tint=0` → fully transparent panel (the big timer clock)
-- `tint=1` (default) → medium glass (0.44 opacity)
-- `tint=1.5` → heavy glass (0.66 opacity, capped at 0.92)
+- `tint=0.44` (default) → medium glass
+- values are capped at 0.92
 
-Currently **none of the GlassCards in `index.tsx` pass a tint prop** — they
-all use the default of 1. The tuner tool has per-window presets that were
-designed before the cards shipped.
+The GlassCards in `index.tsx` carry the tuner's "Legibility-tuned" preset:
+Kitchen temp `0.36/14`, Bulk progress `0.36/14`, Dough story `0.54/16`
+(tint/blur). Re-tune in the tuner, then paste its readout values straight
+into the props — the units match 1:1.
 
 ### Blur (sigma)
 
@@ -131,10 +160,12 @@ server needed. It provides:
 ### How to apply tuner values to the real app
 
 1. Opacity → set `tint` prop on each `<GlassCard>` in `app/(tabs)/index.tsx`
-   (maps to the `0.44 * g.tint` multiplier in `drawGlassPanels`)
-2. Blur → change the base sigma in `drawGlassPanels` (~line 711)
-3. Glass hue → change the `rgba(22,16,13,...)` in the tintPaint (~line 730)
-4. Edge stroke → change the `rgba(255,238,212,0.22)` in the edgePaint (~line 750)
+   (used verbatim as the overlay alpha in `drawGlassPanels` — 1:1 with the
+   tuner readout)
+2. Blur → set the `blur` prop on each `<GlassCard>` (per-panel sigma), or
+   change the shared animated base sigma in `drawGlassPanels` (~line 711)
+3. Glass hue → change the `rgba(22,16,13,...)` in the tintPaint (~line 734)
+4. Edge stroke → change the `rgba(255,238,212,0.22)` in the edgePaint (~line 752)
 
 The tuner's canvas scene is a simplified port of the real organisms — it's for
 judging GLASS legibility over a busy background, not a pixel-match.
@@ -144,9 +175,14 @@ judging GLASS legibility over a busy background, not a pixel-match.
 ## Open work / known gaps
 
 - **Glass blur awaiting device test:** Build #6 (commit `d38c62b`) shipped
-  the `saveLayer` approach. As of this writing it has not been confirmed
-  on-device. See `docs/SKIA-HANDOFF.md` → "If build #6 STILL shows no blur"
-  for next-step instructions if it fails.
+  the `saveLayer` approach, but **no build before July 11 2026 ever actually
+  drew a glass panel** — card registration silently failed because
+  `measureLayout` was given a `findNodeHandle` number, which the New
+  Architecture rejects via the (previously empty) failure callback. The
+  owner-visible symptom was "organisms draw over the panels": the cards are
+  transparent, the missing Skia slab is the glass. Fixed by passing the
+  container View ref itself; the next build is the FIRST real test of the
+  saveLayer blur. See `docs/SKIA-HANDOFF.md` for the full chain.
 - ~~**`contentTop` is never wired up**~~ **Done.** `onContentRef` in
   `index.tsx` now calls `measureInWindow` and feeds the result to
   `setContentTop()`.
@@ -158,6 +194,12 @@ judging GLASS legibility over a busy background, not a pixel-match.
   carry per-panel `tint` and `blur` values from the tuner's
   "Legibility-tuned" preset: Kitchen temp (0.36/14), Bulk progress (0.36/14),
   Dough story (0.54/16).
+- **Tint unit mismatch fixed (July 11 2026):** those preset numbers were
+  originally pasted into a prop that MULTIPLIED a 0.44 base opacity, so
+  panels rendered ~56% lighter than tuned. `tint` is now the final overlay
+  opacity itself (1:1 with the tuner readout); the pasted values became
+  correct without changing them. Any device test of the glass should judge
+  darkness against the tuner's "Legibility-tuned" preset.
 
 ---
 

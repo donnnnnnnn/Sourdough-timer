@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, Platform, Animated, Easing, StyleSheet, findNodeHandle, type NativeSyntheticEvent, type NativeScrollEvent } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Platform, Animated, Easing, StyleSheet, type NativeSyntheticEvent, type NativeScrollEvent } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import * as Haptics from 'expo-haptics';
 import { useBakeStore } from '@/store/useBakeStore';
@@ -766,10 +766,14 @@ export default function HomeScreen() {
   // Frosted-glass stage: the scroll content container node (glass cards measure
   // their position against it) and a tick that asks all cards to re-measure
   // once scrolling settles, so any drift self-corrects.
-  const [contentNode, setContentNode] = useState<number | null>(null);
+  // The RAW View ref is stored, NOT findNodeHandle(node): on the New
+  // Architecture, measureLayout rejects numeric node handles (silently, via
+  // its failure callback), which left glassStage empty — no card ever
+  // registered, so no glass panel was ever drawn.
+  const [contentNode, setContentNode] = useState<View | null>(null);
   const [measureTick, setMeasureTick] = useState(0);
   const onContentRef = useCallback((node: View | null) => {
-    setContentNode(node ? findNodeHandle(node) : null);
+    setContentNode(node);
     if (node) {
       node.measureInWindow((_x: number, y: number) => {
         setContentTop(y);

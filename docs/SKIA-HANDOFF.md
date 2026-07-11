@@ -15,8 +15,22 @@ UI cards (`components/GlassCard.tsx` / `components/glassStage.ts`):
    (ovoid yeast with nucleus/vacuoles, capsule LAB rods, knobby amylase toroid;
    see `drawYeast`/`drawLAB`/`drawAmylase` in `SkiaFermentationScene.tsx`).
    Owner confirmed this looks better on-device.
-2. **Glass panels don't blur the organisms behind them — still unresolved,
-   awaiting device test of the current fix (build #6, commit `d38c62b`).**
+2. **Glass panels don't blur the organisms behind them — ROOT CAUSE FOUND
+   (July 11, 2026), fix awaiting device test.** Owner reported zero blur AND
+   zero tint in every build. The tint is a plain semi-transparent rectangle
+   that doesn't depend on the blur working, so "no tint either" meant
+   `drawGlassPanels` was receiving an EMPTY rect list — the cards were never
+   registering. Cause: `index.tsx` passed `findNodeHandle(node)` (a number)
+   as the measurement target, and on the New Architecture
+   `measureLayout` rejects numeric node handles by silently invoking its
+   failure callback — which `GlassCard` had as `() => {}`. Every card's
+   measurement failed silently on every build; the saveLayer blur (attempt
+   #4 below) has therefore NEVER actually been exercised on-device. Fixed by
+   passing the content container's View ref itself and warning loudly on
+   measure failure. The "organisms draw over the panels" symptom is this
+   same bug seen from the front: GlassCard containers are intentionally
+   transparent (the Skia scene paints the frosted slab under them), so with
+   zero slabs registered the full-focus organisms show through unfiltered.
 
 ### Attempts on the glass blur, in order (so the next session doesn't repeat them)
 
@@ -63,16 +77,13 @@ them. Instead:
 - Get a stack/log from the device (adb logcat) rather than guessing again —
   three build cycles have been spent on hypotheses without direct on-device
   instrumentation.
-- Sanity-check `components/glassStage.ts`'s coordinate math — `contentTop` is
-  set via `setContentTop()` but that setter is **never called anywhere in the
-  app** (grepped, confirmed). It's silently relying on the Skia canvas and the
-  ScrollView sharing the same absolute-position origin (both are direct
-  children of the same `flex:1` parent in `app/(tabs)/index.tsx`). If a future
-  layout change adds a header/inset above that parent, `contentTop` staying 0
-  will silently misplace every glass panel — worth wiring up properly or at
-  least confirming it's not already the culprit (rects computing to 0-size or
-  off-screen would make `drawGlassPanels`'s `g.w <= 1 || g.h <= 1` guard skip
-  them entirely — indistinguishable from "no blur" without on-device logging).
+- Sanity-check `components/glassStage.ts`'s coordinate math — `contentTop`
+  is now wired up (`onContentRef` in `app/(tabs)/index.tsx` measures the
+  content container via `measureInWindow` → `setContentTop()`), but if
+  panels misbehave this math is still the first suspect: a wrong
+  `contentTop`/`contentY`/`scrollY` puts rects off-screen, and
+  `drawGlassPanels`'s `g.w <= 1 || g.h <= 1` guard plus off-screen clipping
+  are indistinguishable from "no blur" without on-device logging.
 - Consider a temporary high-contrast debug fill (e.g. solid opaque red) in
   place of the tint paint in `drawGlassPanels`, to separate "panels aren't
   being drawn at all" from "panels draw but the blur inside them doesn't work."

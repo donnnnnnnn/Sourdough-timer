@@ -30,8 +30,15 @@ import { C } from './theme';
 import { nextGlassId, removeGlass, upsertGlass } from './glassStage';
 
 interface GlassStageValue {
-  /** Native node of the scroll content container to measure cards against. */
-  contentNode: unknown | null;
+  /**
+   * Ref to the scroll content container View to measure cards against.
+   * Must be the component ref itself, NOT a findNodeHandle() number — on the
+   * New Architecture, measureLayout rejects numeric handles by silently
+   * calling its failure callback, which is exactly how every glass panel
+   * once failed to register (zero blur/tint on-device, organisms showing
+   * through the transparent cards at full sharpness).
+   */
+  contentNode: View | null;
   /** Bumped to ask every card to re-measure (e.g. after scroll settles). */
   measureTick: number;
 }
@@ -46,7 +53,7 @@ export function GlassStageProvider({
   measureTick,
   children,
 }: {
-  contentNode: unknown | null;
+  contentNode: View | null;
   measureTick: number;
   children: ReactNode;
 }) {
@@ -62,15 +69,20 @@ interface GlassCardProps {
   style?: ViewStyle | ViewStyle[];
   /** Corner radius; must match the container's borderRadius. Default 20. */
   radius?: number;
-  /** Per-card tint strength (0..1.5). Lower = clearer glass. Default 1. */
+  /**
+   * Espresso-overlay opacity (0..0.92) — the final alpha drawn over the
+   * blurred organisms. Same units as the frosted-glass tuner's readout, so
+   * tuner values paste in directly. Lower = clearer glass. Default 0.44.
+   */
   tint?: number;
   /** Per-card blur sigma override. Omit to use the shared animated sigma. */
   blur?: number;
 }
 
-export function GlassCard({ children, style, radius = 20, tint = 1, blur }: GlassCardProps) {
+export function GlassCard({ children, style, radius = 20, tint = 0.44, blur }: GlassCardProps) {
   const ref = useRef<View>(null);
   const idRef = useRef<string>(nextGlassId());
+  const warnedRef = useRef(false);
   const { contentNode, measureTick } = useContext(GlassStageContext);
 
   const measure = useCallback(() => {
@@ -78,15 +90,28 @@ export function GlassCard({ children, style, radius = 20, tint = 1, blur }: Glas
     if (!node || !contentNode) return;
     // measureLayout gives this card's frame relative to the scroll content
     // container — a scroll-INDEPENDENT position we can combine with the live
-    // scroll offset each frame.
+    // scroll offset each frame. The second argument must be the container's
+    // component ref (a number node handle fails on the New Architecture).
     node.measureLayout(
-      contentNode as number,
+      contentNode,
       (x: number, y: number, w: number, h: number) => {
         if (w > 0 && h > 0) {
           upsertGlass({ id: idRef.current, x, w, h, contentY: y, radius, tint, blur });
         }
       },
-      () => {},
+      // Never fail silently: an unregistered card means its glass panel
+      // simply doesn't render, which is invisible in the UI and burned
+      // several device-test builds before anyone saw a log line.
+      () => {
+        if (!warnedRef.current) {
+          warnedRef.current = true;
+          console.warn(
+            `[GlassCard ${idRef.current}] measureLayout failed — this card's ` +
+              'frosted-glass panel will NOT render. Check that GlassStageProvider ' +
+              'receives the content container View ref (not a node handle).',
+          );
+        }
+      },
     );
   }, [contentNode, radius, tint, blur]);
 

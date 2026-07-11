@@ -4,11 +4,11 @@
   A faithful, standalone preview of the bulk-fermenting timer: the microbial
   scene runs full-bleed behind frosted-glass panels, each with its own
   opacity + blur. Use it to dial the material, then port the values into the
-  real thing: each GlassCard (components/GlassCard.tsx) takes a per-card
-  `tint` prop (0..1.5) that scales the panel's opacity; blur is a shared
-  sigma computed in components/SkiaFermentationScene.tsx (~line 689,
-  currently `8 + sin(...) * 1.5`) — there is no per-panel blur control in the
-  live app today, only the shared tint knob per card.
+  real thing: each GlassCard (components/GlassCard.tsx) takes per-card
+  `tint` and `blur` props whose units match this tool's readout 1:1 —
+  `tint` is the final overlay opacity (0..0.92) and `blur` is the Skia
+  sigma. Omit `blur` to fall back to the shared animated sigma in
+  components/SkiaFermentationScene.tsx (`8 + sin(...) * 1.5`).
 
   Zero dependencies — just open tools/frosted-glass-tuner.html in a browser
   (or double-click it). No build step. The canvas scene is a self-contained

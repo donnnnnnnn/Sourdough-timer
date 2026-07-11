@@ -150,9 +150,14 @@ judging GLASS legibility over a busy background, not a pixel-match.
 ## Open work / known gaps
 
 - **Glass blur awaiting device test:** Build #6 (commit `d38c62b`) shipped
-  the `saveLayer` approach. As of this writing it has not been confirmed
-  on-device. See `docs/SKIA-HANDOFF.md` → "If build #6 STILL shows no blur"
-  for next-step instructions if it fails.
+  the `saveLayer` approach, but **no build before July 11 2026 ever actually
+  drew a glass panel** — card registration silently failed because
+  `measureLayout` was given a `findNodeHandle` number, which the New
+  Architecture rejects via the (previously empty) failure callback. The
+  owner-visible symptom was "organisms draw over the panels": the cards are
+  transparent, the missing Skia slab is the glass. Fixed by passing the
+  container View ref itself; the next build is the FIRST real test of the
+  saveLayer blur. See `docs/SKIA-HANDOFF.md` for the full chain.
 - ~~**`contentTop` is never wired up**~~ **Done.** `onContentRef` in
   `index.tsx` now calls `measureInWindow` and feeds the result to
   `setContentTop()`.

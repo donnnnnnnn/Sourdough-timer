@@ -15,8 +15,22 @@ UI cards (`components/GlassCard.tsx` / `components/glassStage.ts`):
    (ovoid yeast with nucleus/vacuoles, capsule LAB rods, knobby amylase toroid;
    see `drawYeast`/`drawLAB`/`drawAmylase` in `SkiaFermentationScene.tsx`).
    Owner confirmed this looks better on-device.
-2. **Glass panels don't blur the organisms behind them — still unresolved,
-   awaiting device test of the current fix (build #6, commit `d38c62b`).**
+2. **Glass panels don't blur the organisms behind them — ROOT CAUSE FOUND
+   (July 11, 2026), fix awaiting device test.** Owner reported zero blur AND
+   zero tint in every build. The tint is a plain semi-transparent rectangle
+   that doesn't depend on the blur working, so "no tint either" meant
+   `drawGlassPanels` was receiving an EMPTY rect list — the cards were never
+   registering. Cause: `index.tsx` passed `findNodeHandle(node)` (a number)
+   as the measurement target, and on the New Architecture
+   `measureLayout` rejects numeric node handles by silently invoking its
+   failure callback — which `GlassCard` had as `() => {}`. Every card's
+   measurement failed silently on every build; the saveLayer blur (attempt
+   #4 below) has therefore NEVER actually been exercised on-device. Fixed by
+   passing the content container's View ref itself and warning loudly on
+   measure failure. The "organisms draw over the panels" symptom is this
+   same bug seen from the front: GlassCard containers are intentionally
+   transparent (the Skia scene paints the frosted slab under them), so with
+   zero slabs registered the full-focus organisms show through unfiltered.
 
 ### Attempts on the glass blur, in order (so the next session doesn't repeat them)
 

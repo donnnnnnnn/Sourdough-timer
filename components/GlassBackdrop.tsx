@@ -82,10 +82,10 @@ export function GlassBackdrop({ w, h, x, contentY, tint, blur }: GlassBackdropPr
   useEffect(() => {
     let n = 0;
     return subscribeScenePicture(() => {
-      // While scrolling, do nothing: the pane rides natively with its card,
-      // and any JS-driven content update would lag that motion and read as
-      // stutter inside the glass. Updates resume on scroll settle.
-      if (isScrolling()) return;
+      // Content keeps animating during scroll — every 2nd frame, always.
+      // Only the scene OFFSET freezes while scrolling (render body below):
+      // repositioning from a JS scrollY that lags native card motion was
+      // the stutter; fresh animation frames drawn at a held offset are not.
       n = (n + 1) & 1;
       if (n === 0) force();
     });

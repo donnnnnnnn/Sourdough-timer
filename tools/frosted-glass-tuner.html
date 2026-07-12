@@ -381,22 +381,22 @@
   // tint stored 0..90 (= 0.00..0.90), blur in tuner units 0..30.
   const PANELS = {
     before: [
-      { id: 'lastBake',     name: 'Last-bake banner', note: 'accent border', tint: 24, blur: 10 },
-      { id: 'kitchenTemp',  name: 'Kitchen temp',                            tint: 36, blur: 14 },
-      { id: 'autolysePill', name: 'Autolyse pill',                           tint: 24, blur: 10 },
-      { id: 'alertChips',   name: 'Alert chips',      note: '30 / 45 / 60',  tint: 24, blur: 10 },
-      { id: 'expectedBulk', name: 'Expected bulk',                           tint: 36, blur: 14 },
-      { id: 'plannedFolds', name: 'Planned folds',                           tint: 36, blur: 14 },
-      { id: 'startCTA',     name: 'Start Bulk',       note: 'amber CTA', cta: true, glass: false, tint: 24, blur: 10 },
+      { id: 'lastBake',     name: 'Last-bake banner', note: 'accent border', tint: 9,  blur: 7 },
+      { id: 'kitchenTemp',  name: 'Kitchen temp',                            tint: 13, blur: 16 },
+      { id: 'autolysePill', name: 'Autolyse pill',                           tint: 8,  blur: 11 },
+      { id: 'alertChips',   name: 'Alert chips',      note: '30 / 45 / 60',  tint: 0,  blur: 6 },
+      { id: 'expectedBulk', name: 'Expected bulk',                           tint: 16, blur: 12 },
+      { id: 'plannedFolds', name: 'Planned folds',                           tint: 16, blur: 9 },
+      { id: 'startCTA',     name: 'Start Bulk',       note: 'amber CTA', cta: true, glass: true, tint: 46, blur: 14 },
     ],
     during: [
-      { id: 'phaseCaption', name: 'Phase caption',                           tint: 54, blur: 16 },
-      { id: 'bulkProgress', name: 'Bulk progress',                           tint: 36, blur: 14 },
-      { id: 'nextFold',     name: 'Next fold in',                            tint: 36, blur: 14 },
-      { id: 'foldCTA',      name: 'Folds completed',  note: 'soft CTA', cta: true, glass: false, tint: 24, blur: 10 },
-      { id: 'doughStory',   name: 'Dough story',                             tint: 54, blur: 16 },
-      { id: 'riseTracker',  name: 'Dough rise',                              tint: 36, blur: 14 },
-      { id: 'endCTA',       name: 'End Bulk & Log',   note: 'amber CTA', cta: true, glass: false, tint: 24, blur: 10 },
+      { id: 'phaseCaption', name: 'Phase caption',                           tint: 0,  blur: 13 },
+      { id: 'bulkProgress', name: 'Bulk progress',                           tint: 12, blur: 11 },
+      { id: 'nextFold',     name: 'Next fold in',                            tint: 13, blur: 12 },
+      { id: 'foldCTA',      name: 'Folds completed',  note: 'soft CTA', cta: true, glass: true, tint: 0, blur: 7 },
+      { id: 'doughStory',   name: 'Dough story',                             tint: 26, blur: 9 },
+      { id: 'riseTracker',  name: 'Dough rise',                              tint: 8,  blur: 11 },
+      { id: 'endCTA',       name: 'End Bulk & Log',   note: 'amber CTA', cta: true, glass: true, tint: 0, blur: 9 },
     ],
   };
   const SCREENS = ['before', 'during'];
@@ -490,10 +490,10 @@
   // ── presets ───────────────────────────────────────────────────────────
   const PRESETS = {
     current: {
-      lastBake:{t:24,b:10}, kitchenTemp:{t:36,b:14}, autolysePill:{t:24,b:10}, alertChips:{t:24,b:10},
-      expectedBulk:{t:36,b:14}, plannedFolds:{t:36,b:14}, startCTA:{t:24,b:10,g:false},
-      phaseCaption:{t:54,b:16}, bulkProgress:{t:36,b:14}, nextFold:{t:36,b:14},
-      foldCTA:{t:24,b:10,g:false}, doughStory:{t:54,b:16}, riseTracker:{t:36,b:14}, endCTA:{t:24,b:10,g:false},
+      lastBake:{t:9,b:7}, kitchenTemp:{t:13,b:16}, autolysePill:{t:8,b:11}, alertChips:{t:0,b:6},
+      expectedBulk:{t:16,b:12}, plannedFolds:{t:16,b:9}, startCTA:{t:46,b:14,g:true},
+      phaseCaption:{t:0,b:13}, bulkProgress:{t:12,b:11}, nextFold:{t:13,b:12},
+      foldCTA:{t:0,b:7,g:true}, doughStory:{t:26,b:9}, riseTracker:{t:8,b:11}, endCTA:{t:0,b:9,g:true},
     },
     airy: null,  // derived below
     frost: null,

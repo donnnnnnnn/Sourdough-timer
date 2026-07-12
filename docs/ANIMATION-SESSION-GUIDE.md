@@ -110,6 +110,13 @@ owner reported visible choppiness on a Pixel 9; the causes and their fixes
   once-per-second hitch.
 - **The clock runs at 60fps** with a `FRAME_MS - 1` epsilon. The old 30fps
   gate double-juddered on a 120Hz display (frames landed 33 or 42ms apart).
+- **Pane updates are capped: ~20fps when visible, zero when off-screen**
+  (July 13 2026, on-device: "choppiness, especially in later stages of
+  bulk"). With ~8 panes mounted during bulk, per-pane React/GPU updates at
+  30fps competed with the 60fps scene recording — whose cost itself grows
+  through bulk as the organism cast fills out. Behind the blur, 20fps is
+  indistinguishable; off-screen panes (checked against the LIVE offset and
+  `getSceneHeight()`, with a 120px margin) skip updates outright.
 - **Glass panes hold their scene OFFSET during scroll** (July 2026,
   on-device: blur was "very choppy when scrolling"). Native scrolling moves
   the cards on the UI thread; repositioning the pane content from a JS
@@ -159,20 +166,29 @@ CSS-px blur rendered visibly ~2× stronger on the Pixel 9 (device pixel
 density + different Gaussian). Re-tune in the tuner, paste readout values
 straight into the props; re-calibrate globally only via `TUNER_BLUR_SCALE`.
 
-### Panel inventory (July 12 2026 — everything glassed except the timer + CTAs)
+### Panel inventory (owner-tuned July 13 2026 — everything glassed except the timer)
 
 | Panel | tint/blur | Notes |
 |-------|-----------|-------|
-| Timer hero (big clock) | — | Intentionally bare, per the tuner's hero=0/0 |
-| "Your last bake" banner | 0.24/10 | Keeps accent border via style override |
-| Autolyse picker box + "Autolyse first" pill | 0.24/10 | |
-| Alert chips 30/45/60 | 0.24/10 | Active chip: accent border + accentSoft overlay inside |
-| Kitchen temp | 0.36/14 | |
-| Expected bulk time / Planned folds | 0.36/14 | |
-| Bulk progress / Next-fold trio / Dough rise tracker | 0.36/14 | |
-| PhaseCaption / Dough story | 0.54/16 | Caption tier — smallest text, heaviest glass |
-| Start Bulk / fold counter / End bulk / cancel buttons | — | Solid accent CTAs stay solid |
-| Modals (autolyse picker sheet, late-fold confirm) | — | Overlay surfaces, not over the scene |
+| Timer hero (big clock) | — | Intentionally bare |
+| "Your last bake" banner | 0.09/7 | Keeps accent border via style override |
+| Kitchen temp | 0.13/16 | |
+| Autolyse picker box + pill | 0.08/11 | |
+| Alert chips 30/45/60 | 0.00/6 | Active chip: accent border + accentSoft overlay inside |
+| Expected bulk time | 0.16/12 | |
+| Planned folds | 0.16/9 | |
+| Start Bulk CTA | 0.46/14 | Glassed; accent border + accent text (was solid amber) |
+| Phase caption | 0.00/13 | |
+| Bulk progress | 0.12/11 | |
+| Next-fold trio | 0.13/12 | |
+| Folds-completed CTA | 0.00/7 | Glassed; accentBorder kept |
+| Dough story | 0.26/9 | |
+| Dough rise tracker | 0.08/11 | |
+| End Bulk & Shape CTA | 0.00/9 | Glassed; red border + red text kept |
+| Modals (autolyse sheet, late-fold confirm) | — | Overlay surfaces, not over the scene |
+
+When re-tuning, keep the tuner's `PANELS` defaults and its "Current app
+values" preset in sync with this table.
 
 ---
 

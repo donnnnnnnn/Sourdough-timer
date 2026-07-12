@@ -45,10 +45,15 @@ import {
 import {
   getContentTop,
   getScenePicture,
+  getSceneHeight,
   getScrollY,
   isScrolling,
   subscribeScenePicture,
 } from './glassStage';
+
+// Panes within this many px beyond the screen edge keep updating, so a pane
+// entering the viewport never shows a stale frame.
+const OFFSCREEN_MARGIN = 120;
 
 /**
  * Tuner-px → Skia-sigma calibration. The frosted-glass tuner expresses blur
@@ -82,14 +87,30 @@ export function GlassBackdrop({ w, h, x, contentY, tint, blur }: GlassBackdropPr
   useEffect(() => {
     let n = 0;
     return subscribeScenePicture(() => {
-      // Content keeps animating during scroll — every 2nd frame, always.
-      // Only the scene OFFSET freezes while scrolling (render body below):
-      // repositioning from a JS scrollY that lags native card motion was
-      // the stutter; fresh animation frames drawn at a held offset are not.
-      n = (n + 1) & 1;
-      if (n === 0) force();
+      // Content keeps animating during scroll; only the scene OFFSET
+      // freezes while scrolling (render body below): repositioning from a
+      // JS scrollY that lags native card motion was the stutter; fresh
+      // animation frames drawn at a held offset are not.
+      //
+      // Two per-frame cost caps (with ~8 panes mounted during bulk, pane
+      // updates competed with the 60fps scene recording and read as
+      // scene-wide choppiness, worst in late bulk when the organism cast
+      // is largest):
+      // 1. Visible panes redraw on every 3rd scene frame (~20fps) — behind
+      //    the blur that is indistinguishable from faster updates.
+      // 2. Panes whose slice is entirely off-screen skip updates outright.
+      //    Visibility uses the LIVE offset (not the scroll-frozen one) so
+      //    a pane scrolled back into view resumes immediately.
+      n = (n + 1) % 3;
+      if (n !== 0) return;
+      const sceneH = getSceneHeight();
+      if (sceneH > 0) {
+        const liveY = getContentTop() + contentY - getScrollY();
+        if (liveY + h < -OFFSCREEN_MARGIN || liveY > sceneH + OFFSCREEN_MARGIN) return;
+      }
+      force();
     });
-  }, []);
+  }, [contentY, h]);
 
   const pic = getScenePicture() as SkPicture | null;
 

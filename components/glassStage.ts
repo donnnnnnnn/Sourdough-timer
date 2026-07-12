@@ -62,6 +62,20 @@ export function isScrolling(): boolean {
   return scrolling;
 }
 
+// Scene canvas height (px), published by the scene. GlassBackdrops use it to
+// skip updates entirely while their slice is off-screen — with ~8 panes
+// mounted during bulk, updating the invisible ones was measurable JS + GPU
+// work per frame for nothing.
+let sceneHeight = 0;
+
+export function setSceneHeight(h: number): void {
+  sceneHeight = h;
+}
+
+export function getSceneHeight(): number {
+  return sceneHeight;
+}
+
 // ── Scene picture channel ────────────────────────────────────────────────────
 
 type SceneListener = () => void;

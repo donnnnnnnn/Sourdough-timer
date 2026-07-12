@@ -89,7 +89,7 @@ import {
   type FoldEvent,
   type DoughState,
 } from '../model/doughState';
-import { publishScenePicture } from './glassStage';
+import { publishScenePicture, setSceneHeight } from './glassStage';
 
 // ── Palette (0..255 rgb) — matches fermentation-art-spec.md & scene.js ───────
 const P = {
@@ -1243,6 +1243,9 @@ export function SkiaFermentationScene({
     () => createPicture((canvas) => drawOrganisms(canvas, st, layout, W, H, timeSec, dim)),
     [st, layout, W, H, timeSec, dim],
   );
+  useEffect(() => {
+    setSceneHeight(H);
+  }, [H]);
   useEffect(() => {
     if (glassEnabled) publishScenePicture(orgPicture);
   }, [orgPicture, glassEnabled]);

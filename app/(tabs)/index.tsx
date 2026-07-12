@@ -427,7 +427,7 @@ function RiseTracker({
   const isManual = pct > 0;
   const inZone = display >= RISE_SWEET_LOW && display <= RISE_SWEET_HIGH;
   return (
-    <GlassCard radius={20} tint={0.36} blur={14} style={{ padding: 20 }}>
+    <GlassCard radius={20} tint={0.08} blur={11} style={{ padding: 20 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
           <ArrowUp color={C.textMuted} size={13} />
@@ -697,7 +697,7 @@ function PhaseCaption({ copy, phaseLabel }: { copy: PhaseCopy; phaseLabel?: stri
   const c = shown.current;
   return (
     <Animated.View style={{ opacity: fade }}>
-      <GlassCard radius={20} tint={0.54} blur={16} style={{ padding: 18 }}>
+      <GlassCard radius={20} tint={0.0} blur={13} style={{ padding: 18 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 }}>
         <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: C.accent }} />
         <Text style={{ ...label, color: C.accent }}>
@@ -1133,8 +1133,8 @@ export default function HomeScreen() {
       {recentLog && !isActive && (
         <GlassCard
           radius={20}
-          tint={0.24}
-          blur={10}
+          tint={0.09}
+          blur={7}
           style={{
             borderColor: C.accentBorder,
             borderTopColor: C.accentBorder,
@@ -1196,8 +1196,8 @@ export default function HomeScreen() {
                 (showAutolysePicker ? (
                   <GlassCard
                     radius={16}
-                    tint={0.24}
-                    blur={10}
+                    tint={0.08}
+                    blur={11}
                     style={{
                       marginTop: 16,
                       padding: 14,
@@ -1227,8 +1227,8 @@ export default function HomeScreen() {
                 ) : (
                   <GlassCard
                     radius={12}
-                    tint={0.24}
-                    blur={10}
+                    tint={0.08}
+                    blur={11}
                     style={{ marginTop: 16, alignSelf: 'flex-start' }}>
                     <TouchableOpacity
                       onPress={() => {
@@ -1256,7 +1256,7 @@ export default function HomeScreen() {
           {autolyseRunning && <PhaseCaption copy={AUTOLYSE_COPY} phaseLabel="Pre-ferment" />}
 
           {/* Coach: kitchen temp in, suggested bulk time out */}
-          <GlassCard radius={20} tint={0.36} blur={14} style={{ padding: 20 }}>
+          <GlassCard radius={20} tint={0.13} blur={16} style={{ padding: 20 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 14 }}>
               <Thermometer color={C.textMuted} size={13} />
               <Text style={{ ...label }}>Kitchen temp</Text>
@@ -1328,8 +1328,8 @@ export default function HomeScreen() {
                   <View key={mins} style={{ flex: 1 }}>
                     <GlassCard
                       radius={18}
-                      tint={0.24}
-                      blur={10}
+                      tint={0.0}
+                      blur={6}
                       style={
                         active
                           ? { borderWidth: 1.5, borderColor: C.accent, borderTopColor: C.accent }
@@ -1361,7 +1361,7 @@ export default function HomeScreen() {
             <Text style={{ ...label, marginBottom: 14 }}>
               Expected bulk time
             </Text>
-            <GlassCard radius={18} tint={0.36} blur={14} style={{
+            <GlassCard radius={18} tint={0.16} blur={12} style={{
               flexDirection: 'row',
               alignItems: 'center',
               justifyContent: 'center',
@@ -1394,7 +1394,7 @@ export default function HomeScreen() {
             <Text style={{ ...label, marginBottom: 14 }}>
               Planned folds
             </Text>
-            <GlassCard radius={18} tint={0.36} blur={14} style={{
+            <GlassCard radius={18} tint={0.16} blur={9} style={{
               flexDirection: 'row',
               alignItems: 'center',
               justifyContent: 'center',
@@ -1444,23 +1444,22 @@ export default function HomeScreen() {
                   }}
                 />
               )}
-              <Springy
-                onPress={handleStart}
-                pressScale={0.97}
-                style={{
-                  backgroundColor: C.accent,
-                  borderRadius: 22,
-                  paddingVertical: 26,
-                  alignItems: 'center',
-                  shadowColor: C.accent,
-                  shadowOffset: { width: 0, height: 8 },
-                  shadowOpacity: 0.35,
-                  shadowRadius: 24,
-                  elevation: 8,
-                }}>
-                <Text style={{ color: C.onAccent, fontSize: 26, fontWeight: '800', letterSpacing: -0.3 }}>
-                  Start Bulk
-                </Text>
+              <Springy onPress={handleStart} pressScale={0.97}>
+                <GlassCard
+                  radius={22}
+                  tint={0.46}
+                  blur={14}
+                  style={{
+                    borderWidth: 1.5,
+                    borderColor: C.accent,
+                    borderTopColor: C.accent,
+                    paddingVertical: 26,
+                    alignItems: 'center',
+                  }}>
+                  <Text style={{ color: C.accent, fontSize: 26, fontWeight: '800', letterSpacing: -0.3 }}>
+                    Start Bulk
+                  </Text>
+                </GlassCard>
               </Springy>
             </View>
             <Text
@@ -1520,7 +1519,7 @@ export default function HomeScreen() {
           />
 
           {/* Whole-bulk progress toward the planned end time */}
-          <GlassCard radius={20} tint={0.36} blur={14} style={{ padding: 20 }}>
+          <GlassCard radius={20} tint={0.12} blur={11} style={{ padding: 20 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
               <Text style={{ ...label }}>Bulk progress</Text>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -1560,8 +1559,8 @@ export default function HomeScreen() {
           {foldsComplete ? (
             <GlassCard
               radius={20}
-              tint={0.36}
-              blur={14}
+              tint={0.13}
+              blur={12}
               style={{
                 paddingVertical: 14,
                 paddingHorizontal: 20,
@@ -1575,7 +1574,7 @@ export default function HomeScreen() {
               </Text>
             </GlassCard>
           ) : foldIsLate ? (
-            <GlassCard radius={20} tint={0.36} blur={14} style={{ padding: 20 }}>
+            <GlassCard radius={20} tint={0.13} blur={12} style={{ padding: 20 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
                 <Clock color={C.orange} size={16} />
                 <Text style={{ ...label, color: C.orange }}>{foldLatenessAdvice(lateMinutes, doughTempF).title}</Text>
@@ -1587,8 +1586,8 @@ export default function HomeScreen() {
           ) : (
             <GlassCard
               radius={20}
-              tint={0.36}
-              blur={14}
+              tint={0.13}
+              blur={12}
               style={{
                 padding: 20,
                 alignItems: 'center',
@@ -1627,7 +1626,7 @@ export default function HomeScreen() {
           )}
 
           {/* The dough's story so far */}
-          <GlassCard radius={20} tint={0.54} blur={16} style={{ padding: 20 }}>
+          <GlassCard radius={20} tint={0.26} blur={9} style={{ padding: 20 }}>
             <Text style={{ ...label, marginBottom: 16 }}>Dough story</Text>
             <DoughStory
               startTs={bulkStartTimestamp ?? now}
@@ -1648,15 +1647,18 @@ export default function HomeScreen() {
 
           <Springy
             onPress={handleFold}
-            pressScale={0.97}
-            style={{
-              backgroundColor: C.accentSoft,
-              borderWidth: 1.5,
-              borderColor: C.accentBorder,
-              borderRadius: 22,
-              paddingVertical: 26,
-              alignItems: 'center',
-            }}>
+            pressScale={0.97}>
+            <GlassCard
+              radius={22}
+              tint={0.0}
+              blur={7}
+              style={{
+                borderWidth: 1.5,
+                borderColor: C.accentBorder,
+                borderTopColor: C.accentBorder,
+                paddingVertical: 26,
+                alignItems: 'center',
+              }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
               <Hand color={C.accent} size={14} />
               <Text style={{ ...label, color: C.accent }}>
@@ -1678,22 +1680,24 @@ export default function HomeScreen() {
               <FoldDots completed={completedFolds} planned={defaultFoldCount} />
             </View>
             <Text style={{ color: C.textDim, fontSize: 13 }}>tap to record a fold</Text>
+            </GlassCard>
           </Springy>
 
-          <TouchableOpacity
-            onPress={handleEnd}
-            activeOpacity={0.8}
-            style={{
-              backgroundColor: C.redSoft,
-              borderWidth: 1,
-              borderColor: C.redBorder,
-              borderRadius: 22,
-              paddingVertical: 24,
-              alignItems: 'center',
-            }}>
-            <Text style={{ color: C.red, fontSize: 20, fontWeight: '700' }}>
-              End Bulk & Shape
-            </Text>
+          <TouchableOpacity onPress={handleEnd} activeOpacity={0.8}>
+            <GlassCard
+              radius={22}
+              tint={0.0}
+              blur={9}
+              style={{
+                borderColor: C.redBorder,
+                borderTopColor: C.redBorder,
+                paddingVertical: 24,
+                alignItems: 'center',
+              }}>
+              <Text style={{ color: C.red, fontSize: 20, fontWeight: '700' }}>
+                End Bulk & Shape
+              </Text>
+            </GlassCard>
           </TouchableOpacity>
         </Animated.View>
       )}

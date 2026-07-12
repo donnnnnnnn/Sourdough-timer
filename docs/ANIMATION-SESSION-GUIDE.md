@@ -110,6 +110,16 @@ owner reported visible choppiness on a Pixel 9; the causes and their fixes
   once-per-second hitch.
 - **The clock runs at 60fps** with a `FRAME_MS - 1` epsilon. The old 30fps
   gate double-juddered on a 120Hz display (frames landed 33 or 42ms apart).
+- **Glass panes freeze during scroll** (July 13 2026, on-device: blur was
+  "very choppy when scrolling"). Native scrolling moves the cards on the UI
+  thread; any JS-driven update to the pane content lags that by 1–2 frames
+  and reads as stutter inside the glass. While `glassStage.isScrolling()`
+  is true, `GlassBackdrop` skips scene-picture updates AND holds its frozen
+  scene offset (a mid-scroll re-render — e.g. the 1-second clock tick —
+  must not recompute from stale scrollY). `index.tsx` tracks motion with a
+  begin-drag / end-drag / momentum handshake and re-syncs on settle. Do not
+  "fix" the frozen content by updating it live from onScroll — that IS the
+  stutter.
 
 ---
 

@@ -46,6 +46,23 @@ export function getScrollY(): number {
   return scrollY;
 }
 
+// While a scroll gesture/fling is in motion, GlassBackdrops FREEZE: they skip
+// content updates and keep their last scene offset, riding rigidly with
+// their card (which moves natively). Repositioning the blurred content from
+// JS during a scroll always lags the native card motion by a frame or two —
+// on-device that read as the blur "stuttering" inside a smoothly-moving
+// pane. The slice re-syncs on settle; in a blurred field the snap is
+// invisible.
+let scrolling = false;
+
+export function setScrolling(v: boolean): void {
+  scrolling = v;
+}
+
+export function isScrolling(): boolean {
+  return scrolling;
+}
+
 // ── Scene picture channel ────────────────────────────────────────────────────
 
 type SceneListener = () => void;

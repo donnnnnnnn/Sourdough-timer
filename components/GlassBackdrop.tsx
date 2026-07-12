@@ -28,7 +28,7 @@
  * every SECOND publish (~30fps) — halving React work for content that is
  * blurred anyway.
  */
-import { useEffect, useReducer } from 'react';
+import { useEffect, useReducer, useRef } from 'react';
 import { StyleSheet } from 'react-native';
 import {
   Canvas,
@@ -46,6 +46,7 @@ import {
   getContentTop,
   getScenePicture,
   getScrollY,
+  isScrolling,
   subscribeScenePicture,
 } from './glassStage';
 
@@ -75,24 +76,39 @@ interface GlassBackdropProps {
 
 export function GlassBackdrop({ w, h, x, contentY, tint, blur }: GlassBackdropProps) {
   const [, force] = useReducer((c: number) => c + 1, 0);
+  // Last scene offset, held FROZEN while a scroll is in motion (see below).
+  const frozenY = useRef<number | null>(null);
 
   useEffect(() => {
     let n = 0;
     return subscribeScenePicture(() => {
+      // While scrolling, do nothing: the pane rides natively with its card,
+      // and any JS-driven content update would lag that motion and read as
+      // stutter inside the glass. Updates resume on scroll settle.
+      if (isScrolling()) return;
       n = (n + 1) & 1;
       if (n === 0) force();
     });
   }, []);
 
   const pic = getScenePicture() as SkPicture | null;
-  if (!pic || w <= 0 || h <= 0) return null;
 
   // Where this card currently sits over the fullscreen scene. Shifting the
   // picture by the negative of that puts the correct scene slice under the
-  // card. Slightly stale scrollY during a fling only shifts WHICH blurred
-  // organisms show — never where the pane itself sits.
+  // card. During a scroll we reuse the frozen offset — a re-render can still
+  // arrive mid-scroll (e.g. the timer's 1-second clock tick), and computing
+  // from a stale scrollY then would visibly jump the content.
+  let sceneY: number;
+  if (isScrolling() && frozenY.current !== null) {
+    sceneY = frozenY.current;
+  } else {
+    sceneY = getContentTop() + contentY - getScrollY();
+    frozenY.current = sceneY;
+  }
+
+  if (!pic || w <= 0 || h <= 0) return null;
+
   const sceneX = x;
-  const sceneY = getContentTop() + contentY - getScrollY();
 
   const tintAlpha = Math.min(0.92, Math.max(0, tint));
 

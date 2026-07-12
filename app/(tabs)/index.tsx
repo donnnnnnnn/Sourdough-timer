@@ -21,7 +21,7 @@ import {
 // on-device (see components/SkiaErrorBoundary.tsx and docs/SKIA-HANDOFF.md).
 import { SafeSkiaFermentationScene } from '@/components/SkiaErrorBoundary';
 import { GlassStageProvider, GlassCard } from '@/components/GlassCard';
-import { setScrollY, setContentTop } from '@/components/glassStage';
+import { setScrollY, setContentTop, setScrolling } from '@/components/glassStage';
 import { syncBulkPanel, clearBulkPanel } from '@/lib/bulkStatusPanel';
 
 const AUTOLYSE_OPTIONS = [20, 30, 45, 60];
@@ -795,6 +795,37 @@ export default function HomeScreen() {
     measureContentTop();
     setMeasureTick((t) => t + 1);
   }, [measureContentTop]);
+  // Scroll-motion tracking for the glass panes: while a drag or fling is in
+  // motion the panes freeze and ride natively with their cards (see
+  // glassStage.setScrolling). Settle detection needs a handshake: lifting
+  // the finger fires onScrollEndDrag even when a fling follows, so end-drag
+  // only settles if no momentum begins within a tick.
+  const momentumActiveRef = useRef(false);
+  const endDragTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const glassScrollSettled = useCallback(() => {
+    setScrolling(false);
+    remeasureGlass();
+  }, [remeasureGlass]);
+  const onScrollBeginDrag = useCallback(() => {
+    if (endDragTimerRef.current) clearTimeout(endDragTimerRef.current);
+    momentumActiveRef.current = false;
+    setScrolling(true);
+  }, []);
+  const onMomentumScrollBegin = useCallback(() => {
+    if (endDragTimerRef.current) clearTimeout(endDragTimerRef.current);
+    momentumActiveRef.current = true;
+    setScrolling(true);
+  }, []);
+  const onScrollEndDrag = useCallback(() => {
+    if (endDragTimerRef.current) clearTimeout(endDragTimerRef.current);
+    endDragTimerRef.current = setTimeout(() => {
+      if (!momentumActiveRef.current) glassScrollSettled();
+    }, 64);
+  }, [glassScrollSettled]);
+  const onMomentumScrollEnd = useCallback(() => {
+    momentumActiveRef.current = false;
+    glassScrollSettled();
+  }, [glassScrollSettled]);
 
   // Coach: suggested bulk time from kitchen temp + the user's own history.
   const suggestion = useMemo(() => suggestBulk(doughTempF, bakeLogs), [doughTempF, bakeLogs]);
@@ -1093,8 +1124,10 @@ export default function HomeScreen() {
           contentContainerStyle={{ padding: 0 }}
           scrollEventThrottle={16}
           onScroll={onScroll}
-          onMomentumScrollEnd={remeasureGlass}
-          onScrollEndDrag={remeasureGlass}>
+          onScrollBeginDrag={onScrollBeginDrag}
+          onScrollEndDrag={onScrollEndDrag}
+          onMomentumScrollBegin={onMomentumScrollBegin}
+          onMomentumScrollEnd={onMomentumScrollEnd}>
           <View ref={onContentRef} onLayout={remeasureGlass} style={{ padding: 24, paddingBottom: 48 }}>
 
       {recentLog && !isActive && (

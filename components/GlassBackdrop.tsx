@@ -1,35 +1,34 @@
 /**
  * GlassBackdrop — the frosted-glass pane INSIDE a GlassCard.
  *
- * A small Skia canvas that fills the card and paints, in order: an opaque
- * black base (hiding the sharp organisms of the fullscreen scene behind the
- * card), a BLURRED replay of the scene's organism picture offset so the
- * correct slice shows through, the warm espresso tint, and a top sheen.
+ * v3: WORLD-ANCHORED via native counter-scroll. The pane hosts a canvas the
+ * size of the WHOLE scene (black base → blurred scene picture → espresso
+ * tint), clipped by the card, and counter-translated by an RN Animated
+ * transform bound to the ScrollView's native-driven scroll value:
  *
- * Why this exists (two hard-won on-device facts, July 2026):
+ *     translateY = scrollY − (contentTop + contentY)
  *
- * 1. ALIGNMENT — the previous design drew glass slabs in the fullscreen
- *    canvas at positions reported from JS. Native scrolling moves the cards
- *    on the UI thread; the slabs followed one-to-three frames later and
- *    visibly detached during scroll. This canvas is a CHILD of the card, so
- *    it scrolls natively with it — slab/card alignment is perfect by
- *    construction. Only the *content offset* (which slice of the scene shows
- *    through) lags slightly during scroll, which is imperceptible in an
- *    abstract, blurred field.
+ * Because the transform runs on the UI thread in the same frame as the
+ * scroll, the blurred world stays pixel-locked under the moving glass at any
+ * fling speed. The two JS-driven designs both failed on-device:
+ *   • live JS offsets  → content lags native card motion 1–2 frames = the
+ *     "very choppy when scrolling" stutter;
+ *   • frozen offsets   → sprites ride along with the card and snap on
+ *     settle — glaring through the owner's near-clear tuned glass
+ *     ("totally breaks the illusion of frosted glass over the ferment").
  *
- * 2. BLUR — every blur recorded inside an SkPicture (saveLayer image filter,
- *    offscreen-surface snapshot, backdrop filter) showed NO blur on a
- *    Pixel 9. The declarative `layer` blur used here is RN Skia's
- *    mainstream, documented path and runs in this canvas's own scene graph,
- *    not inside a recorded picture.
+ * Content updates (fresh scene pictures) still arrive over glassStage's
+ * pub/sub channel: every 3rd frame (~20fps — indistinguishable behind blur)
+ * and only while the pane is on-screen. The card-anchored sheen gradient
+ * lives in its own tiny static canvas so it doesn't ride the world
+ * transform.
  *
- * The organism picture arrives via glassStage's scene-picture channel
- * (published by SkiaFermentationScene each frame). This component updates on
- * every SECOND publish (~30fps) — halving React work for content that is
- * blurred anyway.
+ * Cost note: each visible pane rasterizes + blurs a scene-sized layer on
+ * update. If this GPU load ever shows on-device, the levers are (in order)
+ * lowering the update rate, then an overscan-window canvas with re-anchoring.
  */
-import { useEffect, useReducer, useRef } from 'react';
-import { StyleSheet } from 'react-native';
+import { useEffect, useMemo, useReducer, useRef } from 'react';
+import { Animated, StyleSheet } from 'react-native';
 import {
   Canvas,
   Fill,
@@ -46,14 +45,11 @@ import {
   getContentTop,
   getScenePicture,
   getSceneHeight,
+  getSceneWidth,
+  getScrollAnim,
   getScrollY,
-  isScrolling,
   subscribeScenePicture,
 } from './glassStage';
-
-// Panes within this many px beyond the screen edge keep updating, so a pane
-// entering the viewport never shows a stale frame.
-const OFFSCREEN_MARGIN = 120;
 
 /**
  * Tuner-px → Skia-sigma calibration. The frosted-glass tuner expresses blur
@@ -62,8 +58,13 @@ const OFFSCREEN_MARGIN = 120;
  * Skia's Gaussian differ from the browser's backdrop-filter. This factor
  * keeps the tuner readout pasteable 1:1 into the `blur` prop. Tweak HERE to
  * re-calibrate globally; tweak per-card props for per-panel character.
+ * MUST stay equal to TUNER_BLUR_SCALE in tools/frosted-glass-tuner.html.
  */
 const TUNER_BLUR_SCALE = 0.5;
+
+// Panes within this many px beyond the screen edge keep updating, so a pane
+// entering the viewport never shows a stale frame.
+const OFFSCREEN_MARGIN = 120;
 
 interface GlassBackdropProps {
   /** Card size from onLayout, px. */
@@ -75,32 +76,19 @@ interface GlassBackdropProps {
   contentY: number;
   /** Final espresso-overlay opacity (0..0.92) — 1:1 with the tuner readout. */
   tint: number;
-  /** Blur sigma, px. */
+  /** Blur in tuner units, px. */
   blur: number;
 }
 
 export function GlassBackdrop({ w, h, x, contentY, tint, blur }: GlassBackdropProps) {
   const [, force] = useReducer((c: number) => c + 1, 0);
-  // Last scene offset, held FROZEN while a scroll is in motion (see below).
-  const frozenY = useRef<number | null>(null);
 
   useEffect(() => {
     let n = 0;
     return subscribeScenePicture(() => {
-      // Content keeps animating during scroll; only the scene OFFSET
-      // freezes while scrolling (render body below): repositioning from a
-      // JS scrollY that lags native card motion was the stutter; fresh
-      // animation frames drawn at a held offset are not.
-      //
-      // Two per-frame cost caps (with ~8 panes mounted during bulk, pane
-      // updates competed with the 60fps scene recording and read as
-      // scene-wide choppiness, worst in late bulk when the organism cast
-      // is largest):
-      // 1. Visible panes redraw on every 3rd scene frame (~20fps) — behind
-      //    the blur that is indistinguishable from faster updates.
-      // 2. Panes whose slice is entirely off-screen skip updates outright.
-      //    Visibility uses the LIVE offset (not the scroll-frozen one) so
-      //    a pane scrolled back into view resumes immediately.
+      // Cost caps: visible panes redraw on every 3rd scene frame (~20fps —
+      // indistinguishable behind blur); panes whose slice is entirely
+      // off-screen skip updates outright.
       n = (n + 1) % 3;
       if (n !== 0) return;
       const sceneH = getSceneHeight();
@@ -112,50 +100,67 @@ export function GlassBackdrop({ w, h, x, contentY, tint, blur }: GlassBackdropPr
     });
   }, [contentY, h]);
 
+  // World anchor: static base −(contentTop + contentY), plus the live native
+  // scroll value. setValue keeps working on native-driven values, so measure
+  // corrections land without re-creating the node.
+  const baseRef = useRef(new Animated.Value(-(getContentTop() + contentY)));
+  useEffect(() => {
+    baseRef.current.setValue(-(getContentTop() + contentY));
+  });
+  const scrollAnim = getScrollAnim() as Animated.Value | null;
+  const translateY = useMemo(
+    () => (scrollAnim ? Animated.add(scrollAnim, baseRef.current) : null),
+    [scrollAnim],
+  );
+
   const pic = getScenePicture() as SkPicture | null;
-
-  // Where this card currently sits over the fullscreen scene. Shifting the
-  // picture by the negative of that puts the correct scene slice under the
-  // card. During a scroll we reuse the frozen offset — a re-render can still
-  // arrive mid-scroll (e.g. the timer's 1-second clock tick), and computing
-  // from a stale scrollY then would visibly jump the content.
-  let sceneY: number;
-  if (isScrolling() && frozenY.current !== null) {
-    sceneY = frozenY.current;
-  } else {
-    sceneY = getContentTop() + contentY - getScrollY();
-    frozenY.current = sceneY;
-  }
-
-  if (!pic || w <= 0 || h <= 0) return null;
-
-  const sceneX = x;
+  const sceneW = getSceneWidth();
+  const sceneH = getSceneHeight();
+  if (!pic || !translateY || w <= 0 || h <= 0 || sceneW <= 0 || sceneH <= 0) return null;
 
   const tintAlpha = Math.min(0.92, Math.max(0, tint));
+  const sigma = blur * TUNER_BLUR_SCALE;
 
   return (
-    <Canvas pointerEvents="none" style={StyleSheet.absoluteFill}>
-      {/* Opaque base: hides the sharp full-focus organisms behind the card
-          (the card View itself is transparent). The scene background is pure
-          black, so this reads as "the scene, out of focus" not "a hole". */}
-      <Fill color="black" />
-      <Group layer={<Paint><Blur blur={blur * TUNER_BLUR_SCALE} /></Paint>}>
-        <Group transform={[{ translateX: -sceneX }, { translateY: -sceneY }]}>
-          <Picture picture={pic} />
-        </Group>
-      </Group>
-      {/* Warm espresso tint — mutes the additive glow into a pane. */}
-      <Fill color={`rgba(22,16,13,${tintAlpha})`} />
-      {/* Top-down warm sheen. */}
-      <Rect x={0} y={0} width={w} height={h}>
-        <LinearGradient
-          start={vec(0, 0)}
-          end={vec(0, h)}
-          colors={['rgba(255,240,220,0.12)', 'rgba(255,240,220,0.0)']}
-          positions={[0, 0.5]}
-        />
-      </Rect>
-    </Canvas>
+    <>
+      {/* Scene-sized, world-locked layer. The uniform black base and tint
+          ride the transform too, but being uniform they read as static. */}
+      <Animated.View
+        pointerEvents="none"
+        style={{
+          position: 'absolute',
+          left: -x,
+          top: 0,
+          width: sceneW,
+          height: sceneH,
+          transform: [{ translateY }],
+        }}>
+        <Canvas pointerEvents="none" style={{ width: sceneW, height: sceneH }}>
+          {/* Opaque base: hides the sharp full-focus organisms behind the
+              card (the card View itself is transparent). The scene
+              background is pure black, so this reads as "the scene, out of
+              focus" not "a hole". */}
+          <Fill color="black" />
+          <Group layer={<Paint><Blur blur={sigma} /></Paint>}>
+            <Picture picture={pic} />
+          </Group>
+          {/* Warm espresso tint — mutes the additive glow into a pane. */}
+          {tintAlpha > 0.004 && <Fill color={`rgba(22,16,13,${tintAlpha})`} />}
+        </Canvas>
+      </Animated.View>
+      {/* Card-anchored top sheen: must NOT ride the world transform. Static
+          tiny canvas — never re-renders except on card resize. */}
+      <Canvas pointerEvents="none" style={StyleSheet.absoluteFill}>
+        <Rect x={0} y={0} width={w} height={h}>
+          <LinearGradient
+            start={vec(0, 0)}
+            end={vec(0, h)}
+            colors={['rgba(255,240,220,0.12)', 'rgba(255,240,220,0.0)']}
+            positions={[0, 0.5]}
+          />
+        </Rect>
+      </Canvas>
+    </>
   );
 }
 

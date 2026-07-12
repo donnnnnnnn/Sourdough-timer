@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, Platform, Animated, Easing, StyleSheet, type NativeSyntheticEvent, type NativeScrollEvent } from 'react-native';
+import { View, Text, TouchableOpacity, Platform, Animated, Easing, StyleSheet, type NativeSyntheticEvent, type NativeScrollEvent } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import * as Haptics from 'expo-haptics';
 import { useBakeStore } from '@/store/useBakeStore';
@@ -21,7 +21,7 @@ import {
 // on-device (see components/SkiaErrorBoundary.tsx and docs/SKIA-HANDOFF.md).
 import { SafeSkiaFermentationScene } from '@/components/SkiaErrorBoundary';
 import { GlassStageProvider, GlassCard } from '@/components/GlassCard';
-import { setScrollY, setContentTop, setScrolling } from '@/components/glassStage';
+import { setScrollY, setContentTop, setScrollAnim } from '@/components/glassStage';
 import { syncBulkPanel, clearBulkPanel } from '@/lib/bulkStatusPanel';
 
 const AUTOLYSE_OPTIONS = [20, 30, 45, 60];
@@ -787,45 +787,32 @@ export default function HomeScreen() {
     },
     [measureContentTop],
   );
-  const onScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
-    scrollYRef.current = e.nativeEvent.contentOffset.y;
-    setScrollY(e.nativeEvent.contentOffset.y);
-  }, []);
+  // Glass world-anchoring: the scroll offset is exported BOTH as a plain
+  // number (for measurements and visibility checks) and as a NATIVE-driven
+  // Animated.Value that each GlassBackdrop binds its counter-translation to.
+  // The native value updates on the UI thread in the same frame as the
+  // scroll, so the blurred world stays pixel-locked under the moving glass —
+  // no JS-driven variant survived on-device (lag = stutter; freeze = sprites
+  // dragging along with the panels).
+  const scrollAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    setScrollAnim(scrollAnim);
+  }, [scrollAnim]);
+  const onScroll = useMemo(
+    () =>
+      Animated.event([{ nativeEvent: { contentOffset: { y: scrollAnim } } }], {
+        useNativeDriver: true,
+        listener: (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+          scrollYRef.current = e.nativeEvent.contentOffset.y;
+          setScrollY(e.nativeEvent.contentOffset.y);
+        },
+      }),
+    [scrollAnim],
+  );
   const remeasureGlass = useCallback(() => {
     measureContentTop();
     setMeasureTick((t) => t + 1);
   }, [measureContentTop]);
-  // Scroll-motion tracking for the glass panes: while a drag or fling is in
-  // motion the panes freeze and ride natively with their cards (see
-  // glassStage.setScrolling). Settle detection needs a handshake: lifting
-  // the finger fires onScrollEndDrag even when a fling follows, so end-drag
-  // only settles if no momentum begins within a tick.
-  const momentumActiveRef = useRef(false);
-  const endDragTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const glassScrollSettled = useCallback(() => {
-    setScrolling(false);
-    remeasureGlass();
-  }, [remeasureGlass]);
-  const onScrollBeginDrag = useCallback(() => {
-    if (endDragTimerRef.current) clearTimeout(endDragTimerRef.current);
-    momentumActiveRef.current = false;
-    setScrolling(true);
-  }, []);
-  const onMomentumScrollBegin = useCallback(() => {
-    if (endDragTimerRef.current) clearTimeout(endDragTimerRef.current);
-    momentumActiveRef.current = true;
-    setScrolling(true);
-  }, []);
-  const onScrollEndDrag = useCallback(() => {
-    if (endDragTimerRef.current) clearTimeout(endDragTimerRef.current);
-    endDragTimerRef.current = setTimeout(() => {
-      if (!momentumActiveRef.current) glassScrollSettled();
-    }, 64);
-  }, [glassScrollSettled]);
-  const onMomentumScrollEnd = useCallback(() => {
-    momentumActiveRef.current = false;
-    glassScrollSettled();
-  }, [glassScrollSettled]);
 
   // Coach: suggested bulk time from kitchen temp + the user's own history.
   const suggestion = useMemo(() => suggestBulk(doughTempF, bakeLogs), [doughTempF, bakeLogs]);
@@ -1119,15 +1106,13 @@ export default function HomeScreen() {
       </View>
 
       <GlassStageProvider contentNode={contentNode} measureTick={measureTick}>
-        <ScrollView
+        <Animated.ScrollView
           style={{ flex: 1 }}
           contentContainerStyle={{ padding: 0 }}
           scrollEventThrottle={16}
           onScroll={onScroll}
-          onScrollBeginDrag={onScrollBeginDrag}
-          onScrollEndDrag={onScrollEndDrag}
-          onMomentumScrollBegin={onMomentumScrollBegin}
-          onMomentumScrollEnd={onMomentumScrollEnd}>
+          onMomentumScrollEnd={remeasureGlass}
+          onScrollEndDrag={remeasureGlass}>
           <View ref={onContentRef} onLayout={remeasureGlass} style={{ padding: 24, paddingBottom: 48 }}>
 
       {recentLog && !isActive && (
@@ -1702,7 +1687,7 @@ export default function HomeScreen() {
         </Animated.View>
       )}
           </View>
-        </ScrollView>
+        </Animated.ScrollView>
       </GlassStageProvider>
 
     {celebrating && (

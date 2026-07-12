@@ -46,34 +46,42 @@ export function getScrollY(): number {
   return scrollY;
 }
 
-// While a scroll gesture/fling is in motion, each GlassBackdrop HOLDS its
-// scene offset (the animation itself keeps playing): repositioning the
-// blurred content from a JS scrollY that lags native card motion by a frame
-// or two read on-device as the blur "stuttering" inside a smoothly-moving
-// pane. Fresh animation frames drawn at a held offset are jitter-free. The
-// slice re-syncs on settle; in a blurred field the snap is invisible.
-let scrolling = false;
-
-export function setScrolling(v: boolean): void {
-  scrolling = v;
-}
-
-export function isScrolling(): boolean {
-  return scrolling;
-}
-
-// Scene canvas height (px), published by the scene. GlassBackdrops use it to
-// skip updates entirely while their slice is off-screen — with ~8 panes
-// mounted during bulk, updating the invisible ones was measurable JS + GPU
-// work per frame for nothing.
+// Scene canvas size (px), published by the scene. GlassBackdrops size their
+// world-anchored canvases to it, and use the height to skip updates while
+// their slice is off-screen — with ~8 panes mounted during bulk, updating
+// the invisible ones was measurable JS + GPU work per frame for nothing.
+let sceneWidth = 0;
 let sceneHeight = 0;
 
-export function setSceneHeight(h: number): void {
+export function setSceneSize(w: number, h: number): void {
+  sceneWidth = w;
   sceneHeight = h;
+}
+
+export function getSceneWidth(): number {
+  return sceneWidth;
 }
 
 export function getSceneHeight(): number {
   return sceneHeight;
+}
+
+// The ScrollView's live scroll offset as a NATIVE-driven RN Animated.Value
+// (registered by index.tsx). Each GlassBackdrop binds its counter-translation
+// to this value, so the world stays pixel-locked under the glass in the same
+// UI-thread frame as the scroll itself. Every JS-driven alternative failed
+// on-device: live JS offsets lag native card motion and stutter; freezing
+// the offset drags the sprites along with the card and snaps on settle
+// (glaring through the owner's near-clear tuned glass). Typed `unknown` to
+// keep this module dependency-free.
+let scrollAnim: unknown = null;
+
+export function setScrollAnim(v: unknown): void {
+  scrollAnim = v;
+}
+
+export function getScrollAnim(): unknown {
+  return scrollAnim;
 }
 
 // ── Scene picture channel ────────────────────────────────────────────────────

@@ -117,15 +117,20 @@ owner reported visible choppiness on a Pixel 9; the causes and their fixes
   through bulk as the organism cast fills out. Behind the blur, 20fps is
   indistinguishable; off-screen panes (checked against the LIVE offset and
   `getSceneHeight()`, with a 120px margin) skip updates outright.
-- **Glass panes hold their scene OFFSET during scroll** (July 2026,
-  on-device: blur was "very choppy when scrolling"). Native scrolling moves
-  the cards on the UI thread; repositioning the pane content from a JS
-  scrollY that lags by 1–2 frames reads as stutter inside the glass. While
-  `glassStage.isScrolling()` is true, `GlassBackdrop` keeps drawing fresh
-  animation frames (owner wants the organisms alive mid-scroll) but at a
-  HELD offset, re-syncing on settle. `index.tsx` tracks motion with a
-  begin-drag / end-drag / momentum handshake. Do not "fix" the held offset
-  by updating it live from onScroll — that IS the stutter.
+- **Glass panes are world-anchored via NATIVE counter-scroll** (July 2026,
+  after two failed JS-driven designs, both confirmed on-device): live JS
+  offsets lag native card motion by 1–2 frames → "very choppy when
+  scrolling"; frozen offsets drag the sprites along with the card and snap
+  on settle → "totally breaks the illusion of frosted glass". The working
+  design: each pane hosts a SCENE-SIZED canvas counter-translated by an RN
+  `Animated` transform bound (useNativeDriver) to the ScrollView's scroll
+  value (`glassStage.getScrollAnim()`), so the world stays pixel-locked
+  under the glass in the same UI-thread frame as the scroll. Do not move
+  this back to JS in any form. The card-anchored sheen lives in a separate
+  static card-sized canvas.
+- **Tuner scene parity:** the tuner's Before-bulk screen previews the app's
+  dim idle field (progress 0, brightness ×0.28) — tuning pre-bulk glass
+  over a lively scene made values look far darker in the real app.
 
 ---
 

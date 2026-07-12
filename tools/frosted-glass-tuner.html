@@ -340,6 +340,11 @@
 
     <div class="card">
       <div class="lbl" style="margin-bottom:12px">Scene (preview only — not exported)</div>
+      <p class="sub" style="margin:0 0 10px; font-size:12px;">
+        "Before bulk" always previews the app's dim, near-empty <b>idle</b> field —
+        that's what pre-bulk glass really sits over. These sliders drive the
+        "During bulk" scene only.
+      </p>
       <div class="sceneRow">
         <div class="duo"><span class="k">Phase</span><input type="range" id="s-phase" min="0" max="100" value="45"><output id="o-phase">0.45</output></div>
         <div class="duo"><span class="k">Bright</span><input type="range" id="s-bright" min="30" max="160" value="100"><output id="o-bright">1.00×</output></div>
@@ -599,8 +604,14 @@
 
   function frame(t) {
     const time = t / 1000;
-    const f = scene.phase / 100;
-    const B = scene.bright / 100;
+    // PARITY: the app's pre-bulk screen runs the scene in IDLE mode — a
+    // near-empty field at 0.28 brightness. Previewing before-bulk glass
+    // over the lively mid-bulk scene made the owner tune values that then
+    // looked far darker in the app. Phase/bright sliders drive the
+    // During-bulk preview only.
+    const isBefore = activeScreen === 'before';
+    const f = isBefore ? 0.0 : scene.phase / 100;
+    const B = (scene.bright / 100) * (isBefore ? 0.28 : 1);
     const active = smooth(0.08, 0.5, f) * (1 - 0.3 * smooth(0.8, 1, f));
     const acid = smooth(0.5, 1, f);
 

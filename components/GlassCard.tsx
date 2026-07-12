@@ -1,42 +1,45 @@
 /**
- * GlassCard — a frosted-glass panel that floats over the fullscreen Skia
- * fermentation scene. It does two things:
+ * GlassCard — a frosted-glass panel floating over the fullscreen Skia
+ * fermentation scene.
  *
- *  1. Renders its children in a rounded container with a TRANSPARENT interior
- *     plus a hairline warm border and a faint top sheen — so it always reads
- *     as an intentional glass panel even before/without the Skia blur.
+ * The glass pane is rendered INSIDE the card: a small Skia canvas
+ * (GlassBackdrop) fills the card behind its children and paints a blurred,
+ * tinted window onto the scene's organism picture. Because the pane is a
+ * child of the card, native scrolling moves card and glass together —
+ * slab/card alignment is perfect by construction. (The previous design drew
+ * the slabs in the fullscreen canvas at JS-reported positions; they trailed
+ * the natively-scrolled cards by a few frames and visibly detached during
+ * scroll — confirmed on a Pixel 9.)
  *
- *  2. Measures its own on-screen rectangle and registers it with `glassStage`,
- *     so the Skia scene draws a real backdrop-blurred, tinted glass slab at
- *     exactly that spot. The living organisms beneath show through, blurred —
- *     the "microscope slide" look.
+ * Measurement (relative to the scroll content container) is still needed,
+ * but only to pick WHICH slice of the scene shows through the blur — a
+ * slightly stale value there is imperceptible; it can no longer misplace the
+ * pane itself.
  *
- * Measurement is relative to the scroll content container (scroll-independent),
- * so the registered position stays correct as the user scrolls; the scene
- * combines it with the live scroll offset each frame. Cards re-measure on
- * layout and whenever the provider bumps `measureTick` (e.g. after scroll
- * settles), which self-corrects any drift.
+ * GlassBackdrop is require()d lazily inside render, NEVER imported at module
+ * scope: @shopify/react-native-skia runs real JSI code at module-evaluation
+ * time, and a static import chain from a route module would crash before any
+ * error boundary exists (the original Skia crash saga — docs/SKIA-HANDOFF.md).
  */
 import {
+  Component,
   createContext,
   useCallback,
   useContext,
   useEffect,
   useRef,
+  useState,
   type ReactNode,
 } from 'react';
-import { View, type ViewStyle, type LayoutChangeEvent } from 'react-native';
+import { Platform, View, type ViewStyle, type LayoutChangeEvent } from 'react-native';
 import { C } from './theme';
-import { nextGlassId, removeGlass, upsertGlass } from './glassStage';
 
 interface GlassStageValue {
   /**
    * Ref to the scroll content container View to measure cards against.
    * Must be the component ref itself, NOT a findNodeHandle() number — on the
    * New Architecture, measureLayout rejects numeric handles by silently
-   * calling its failure callback, which is exactly how every glass panel
-   * once failed to register (zero blur/tint on-device, organisms showing
-   * through the transparent cards at full sharpness).
+   * calling its failure callback (which once left every card unregistered).
    */
   contentNode: View | null;
   /** Bumped to ask every card to re-measure (e.g. after scroll settles). */
@@ -75,64 +78,91 @@ interface GlassCardProps {
    * tuner values paste in directly. Lower = clearer glass. Default 0.44.
    */
   tint?: number;
-  /** Per-card blur sigma override. Omit to use the shared animated sigma. */
+  /** Blur sigma, px. Default 12. */
   blur?: number;
 }
 
-export function GlassCard({ children, style, radius = 20, tint = 0.44, blur }: GlassCardProps) {
+// Lazily-resolved GlassBackdrop. undefined = not attempted, null = unavailable.
+let BackdropComp: React.ComponentType<any> | null | undefined;
+function resolveBackdrop(): React.ComponentType<any> | null {
+  if (BackdropComp === undefined) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      BackdropComp = require('./GlassBackdrop').GlassBackdrop ?? null;
+    } catch {
+      BackdropComp = null;
+    }
+  }
+  return BackdropComp ?? null;
+}
+
+/** Silent boundary: a glass pane failing must never take the card's content
+ * (timer controls!) down with it — the card just stays transparent. */
+class SilentBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  componentDidCatch(err: unknown) {
+    console.warn('[GlassCard] backdrop crashed; card renders without glass:', err);
+  }
+  render() {
+    return this.state.failed ? null : this.props.children;
+  }
+}
+
+export function GlassCard({ children, style, radius = 20, tint = 0.44, blur = 12 }: GlassCardProps) {
   const ref = useRef<View>(null);
-  const idRef = useRef<string>(nextGlassId());
   const warnedRef = useRef(false);
   const { contentNode, measureTick } = useContext(GlassStageContext);
+
+  const [size, setSize] = useState({ w: 0, h: 0 });
+  // Position within the scroll content (scroll-independent), used by the
+  // backdrop to pick which slice of the scene shows through the blur.
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
 
   const measure = useCallback(() => {
     const node = ref.current;
     if (!node || !contentNode) return;
-    // measureLayout gives this card's frame relative to the scroll content
-    // container — a scroll-INDEPENDENT position we can combine with the live
-    // scroll offset each frame. The second argument must be the container's
-    // component ref (a number node handle fails on the New Architecture).
     node.measureLayout(
       contentNode,
-      (x: number, y: number, w: number, h: number) => {
-        if (w > 0 && h > 0) {
-          upsertGlass({ id: idRef.current, x, w, h, contentY: y, radius, tint, blur });
-        }
+      (x: number, y: number) => {
+        setPos((prev) =>
+          prev && Math.abs(prev.x - x) < 0.5 && Math.abs(prev.y - y) < 0.5 ? prev : { x, y },
+        );
       },
-      // Never fail silently: an unregistered card means its glass panel
-      // simply doesn't render, which is invisible in the UI and burned
-      // several device-test builds before anyone saw a log line.
       () => {
         if (!warnedRef.current) {
           warnedRef.current = true;
           console.warn(
-            `[GlassCard ${idRef.current}] measureLayout failed — this card's ` +
-              'frosted-glass panel will NOT render. Check that GlassStageProvider ' +
-              'receives the content container View ref (not a node handle).',
+            '[GlassCard] measureLayout failed — the glass pane will show the ' +
+              'wrong scene slice. Check that GlassStageProvider receives the ' +
+              'content container View ref (not a node handle).',
           );
         }
       },
     );
-  }, [contentNode, radius, tint, blur]);
+  }, [contentNode]);
 
   // Re-measure whenever the provider asks (scroll settle, layout shifts).
   useEffect(() => {
     measure();
   }, [measure, measureTick]);
 
-  // Unregister on unmount so stale panels don't linger.
-  useEffect(() => {
-    const id = idRef.current;
-    return () => removeGlass(id);
-  }, []);
-
   const onLayout = useCallback(
-    (_e: LayoutChangeEvent) => {
-      // Defer a tick so the layout has committed before we measure.
+    (e: LayoutChangeEvent) => {
+      const { width, height } = e.nativeEvent.layout;
+      setSize((prev) =>
+        Math.abs(prev.w - width) < 0.5 && Math.abs(prev.h - height) < 0.5
+          ? prev
+          : { w: width, h: height },
+      );
       measure();
     },
     [measure],
   );
+
+  const Backdrop = Platform.OS === 'web' ? null : resolveBackdrop();
 
   return (
     <View
@@ -150,6 +180,18 @@ export function GlassCard({ children, style, radius = 20, tint = 0.44, blur }: G
         },
         style as ViewStyle,
       ]}>
+      {Backdrop && pos && size.w > 0 && size.h > 0 && (
+        <SilentBoundary>
+          <Backdrop
+            w={size.w}
+            h={size.h}
+            x={pos.x}
+            contentY={pos.y}
+            tint={tint}
+            blur={blur}
+          />
+        </SilentBoundary>
+      )}
       {children}
     </View>
   );

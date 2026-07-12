@@ -6,29 +6,39 @@ code — it records hard-won constraints that cost real build cycles to learn.
 
 ---
 
-## Architecture overview
+## Architecture overview (glass-in-card, July 12 2026)
 
 ```
 app/(tabs)/index.tsx
 ├── SafeSkiaFermentationScene   ← error boundary + lazy require
-│     └── SkiaFermentationScene ← the real 1 314-line scene
-│           └── reads glassStage.screenRects() each frame
+│     └── SkiaFermentationScene ← organisms only; publishes its per-frame
+│                                  SkPicture via glassStage
 ├── GlassStageProvider          ← context with contentNode + measureTick
-│     └── GlassCard (×3)        ← each measures itself → glassStage registry
+│     └── GlassCard (×3)        ← hosts its OWN small canvas...
+│           └── GlassBackdrop   ← ...that replays the published picture
+│                                  through a declarative layer blur
 └── ScrollView (onScroll → setScrollY)
 ```
+
+The glass pane lives INSIDE each card, so native scrolling moves card and
+glass together — alignment is structural, not synchronized. The fullscreen
+scene knows nothing about panels anymore. The measured card position + live
+scroll offset only choose WHICH slice of the scene shows through the blur
+(stale values there are imperceptible in a blurred abstract field; they can
+no longer misplace the pane).
 
 ### File map
 
 | File | What it does |
 |------|-------------|
-| `components/SkiaFermentationScene.tsx` | Full scene: organisms, glow, glass blur. 1 314 lines. |
-| `components/GlassCard.tsx` | React Native `<View>` wrapper that measures itself relative to the scroll content container and registers its position + `tint` prop into `glassStage`. |
-| `components/glassStage.ts` | Module-level registry (not React state). Cards write positions, scene reads `screenRects()` each frame. No re-render storm on scroll. |
+| `components/SkiaFermentationScene.tsx` | Organisms/glow scene. Records one SkPicture per frame, draws it, and publishes it via `glassStage.publishScenePicture`. |
+| `components/GlassBackdrop.tsx` | The frosted pane inside a card: opaque black base → blurred replay of the scene picture (declarative `Group layer` blur) → tint → sheen. Updates on every 2nd published frame (~30fps). |
+| `components/GlassCard.tsx` | RN `<View>` wrapper; lazy-`require()`s GlassBackdrop (never a static Skia import — module-eval crash history) behind a silent error boundary, measures its scroll-content position for the slice offset. |
+| `components/glassStage.ts` | Module-level bridge (not React state): `contentTop`/`scrollY` setters+getters and the scene-picture pub/sub channel. No re-render storm on scroll. |
 | `components/SkiaErrorBoundary.tsx` | Error boundary + lazy `require()` so a scene crash never kills the app. |
 | `components/theme.ts` | Shared palette: `C.glassBorder`, `C.glassSheen`, etc. |
 | `tools/frosted-glass-tuner.html` | Standalone design tool — open in browser, sliders for per-panel opacity + blur, phone mockup with a canvas scene. |
-| `docs/SKIA-HANDOFF.md` | Full investigation history: worklet crash, glass-blur attempts #1–#4. |
+| `docs/SKIA-HANDOFF.md` | Full investigation history: worklet crash, every failed glass-blur approach. |
 
 ---
 
@@ -50,7 +60,15 @@ switch to Skia's `useClock` + reanimated `useDerivedValue` (UI-thread worklet)
 A UI-thread variant is parked on branch `claude/skia-ui-thread` if someone
 wants to revisit it later with a newer Skia.
 
-### 3. No backdrop filters for glass blur
+### 3. No blur inside a recorded SkPicture — and no backdrop filters
+
+**Blur recorded inside `createPicture()` does not render on the Pixel 9,
+period.** Confirmed empirically across saveLayer-with-image-filter (even
+with the panel blacked out first, build #13) and offscreen-surface
+snapshots. Glass blur must use the DECLARATIVE path: a `<Group
+layer={<Paint><Blur .../></Paint>}>` in a normal `<Canvas>` scene graph —
+that is what `GlassBackdrop.tsx` does. The pre-existing bans below still
+hold too:
 
 Three approaches were tried and confirmed broken on a Pixel 9:
 
@@ -97,51 +115,39 @@ owner reported visible choppiness on a Pixel 9; the causes and their fixes
 
 ## Glass panel system — how it works
 
-### Coordinate model (all in screen / Skia-canvas pixels)
+The pane is a Skia `<Canvas>` INSIDE each GlassCard (`GlassBackdrop.tsx`),
+painted in four passes: opaque black base → blurred replay of the scene's
+organism picture → espresso tint → top sheen. The RN View's `overflow:
+'hidden'` + `borderRadius` clip it to the card shape; the RN border supplies
+the hairline edge.
+
+### Coordinate model (content slice only)
 
 ```
-screenY = contentTop + contentY - scrollY
+sceneY = contentTop + contentY - scrollY   // which slice shows through
 ```
 
-- `contentTop` — screen Y where the scroll content's origin sits. Set via
-  `setContentTop()` in `glassStage.ts`. **Currently always 0** — relies on
-  the Skia canvas and ScrollView sharing the same parent origin. If a header
-  or inset is ever added, wire this up or panels will silently misplace.
+- `contentTop` — content container's Y relative to the ROOT view the scene
+  canvas fills (NOT the window — window coords include the status bar +
+  header and misplace the slice). Computed in `index.tsx` by measuring both
+  and differencing, plus the scroll offset at measure time.
 - `contentY` — a card's Y within the scroll content (scroll-independent);
-  measured via `measureLayout` against the content container ref.
-- `scrollY` — live vertical scroll offset, updated from `onScroll`.
+  measured via `measureLayout` against the content container ref (the ref
+  itself — a `findNodeHandle` number fails silently on the New Architecture).
+- `scrollY` — live scroll offset, written to `glassStage` from `onScroll`.
 
-### Per-card tint prop
+These values ONLY pick the scene slice shown through the blur. The pane
+itself is a child of the card and cannot misalign.
 
-Each `<GlassCard tint={n}>` sets the espresso-brown overlay opacity
-**directly** — `tint` IS the final alpha, the same number the tuner's
-readout shows (this used to be a ×0.44 multiplier; the unit mismatch made
-every panel render ~56% lighter than tuned, so the multiplier was removed):
+### Per-card tint + blur props
 
-```typescript
-// SkiaFermentationScene.tsx ~line 734
-tintPaint.setColor(Skia.Color(`rgba(22,16,13,${clamp(g.tint, 0, 0.92)})`));
-```
-
-- `tint=0` → fully transparent panel (the big timer clock)
-- `tint=0.44` (default) → medium glass
-- values are capped at 0.92
-
-The GlassCards in `index.tsx` carry the tuner's "Legibility-tuned" preset:
-Kitchen temp `0.36/14`, Bulk progress `0.36/14`, Dough story `0.54/16`
-(tint/blur). Re-tune in the tuner, then paste its readout values straight
-into the props — the units match 1:1.
-
-### Blur (sigma)
-
-Shared across all panels, animated:
-
-```typescript
-// SkiaFermentationScene.tsx ~line 711
-const sigma = 8 + Math.sin((time * TAU) / 7 + g.x * 0.01) * 1.5;
-```
-
-Base 8, oscillates ±1.5. No per-panel blur control in the live app.
+`<GlassCard tint={n} blur={sigma}>` — `tint` is the final espresso-overlay
+alpha (0..0.92), identical to the tuner readout (it was once a ×0.44
+multiplier; that unit mismatch shipped panels ~56% lighter than tuned).
+`blur` is the Skia sigma (default 12). The cards in `index.tsx` carry the
+tuner's "Legibility-tuned" preset: Kitchen temp `0.36/14`, Bulk progress
+`0.36/14`, Dough story `0.54/16`. Re-tune in the tuner, paste the readout
+values straight into the props — units match 1:1.
 
 ---
 
@@ -185,14 +191,14 @@ judging GLASS legibility over a busy background, not a pixel-match.
      starts below the status bar + tab header. Fixed: measure the content
      container AND the root view (which the canvas fills) and use the
      difference, plus the live scroll offset at measure time.
-  3. **Still zero blur — root cause was compositing, not the filter.** The
-     scene paints sharp organisms across the full canvas first; the panel
-     then composited a translucent BLURRED copy over the sharp original,
-     which stays fully visible through it. Every "no blur" result since
-     attempt #1 is explained by this. Fixed: black-fill the panel interior
-     (scene background is pure black) before drawing the blurred copy, so
-     only blurred organisms exist inside a panel. Awaiting device
-     confirmation of fixes 2–3.
+  3. ~~Compositing theory~~ — build #13 black-filled the panel before the
+     blurred redraw and STILL showed no blur, and panels detached from cards
+     during scroll. Conclusion: blur inside a recorded SkPicture simply does
+     not render on this device, and fullscreen-canvas panels can never track
+     natively-scrolled cards. Both fixed structurally July 12 2026 by the
+     **glass-in-card architecture** (see Architecture overview):
+     `GlassBackdrop` inside each card, declarative layer blur, scene
+     publishes its picture via `glassStage`. Awaiting device test.
 - ~~**`contentTop` is never wired up**~~ **Done.** `onContentRef` in
   `index.tsx` now calls `measureInWindow` and feeds the result to
   `setContentTop()`.

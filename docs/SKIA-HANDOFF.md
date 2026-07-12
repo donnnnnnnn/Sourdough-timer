@@ -58,19 +58,29 @@ UI cards (`components/GlassCard.tsx` / `components/glassStage.ts`):
    Caught from reading the commit message alone, before a device test burned a
    build. **Lesson: always sanity-check "draw X last" against whether X is
    clipped — an unclipped last-drawn layer covers everything before it.**
-4½. **THE ACTUAL "no blur" ROOT CAUSE (found July 11 2026, on-device
-   screenshot):** the blur filter was probably fine all along. The scene
-   draws sharp organisms across the FULL canvas first, then each panel
-   composites a translucent blurred copy ON TOP of them — and a blurred
-   copy over a sharp original does not hide the original; the sharp strokes
-   stay visible straight through it. Every attempt since #1 layered its
-   blur over an unblurred base, so every attempt "showed no blur"
-   regardless of whether its filter worked. Fix: black-fill the panel
-   interior (the scene background is pure black) before drawing the blurred
-   copy, so the only organisms inside a panel are blurred ones. The same
-   session also fixed slab positions being ~a header-height too low
-   (`contentTop` was measured against the window instead of the root view
-   the canvas fills).
+4½. **Compositing theory (July 11 2026) — necessary but not sufficient.**
+   Blurred-copy-over-sharp-original compositing WAS masking any blur, so
+   build #13 black-filled each panel before the blurred redraw (and fixed
+   slab positions being ~a header-height too low: `contentTop` had been
+   measured against the window instead of the root view the canvas fills).
+   **Device result (build #13): STILL no blur**, and a new symptom became
+   obvious — slabs aligned at rest but visibly detached from their cards
+   during scroll (native scrolling moves cards on the UI thread; JS-fed slab
+   positions trail by 1–3 frames; unfixable in this architecture).
+
+5¾. **FINAL ARCHITECTURE (July 12 2026): glass-in-card.** Two conclusions
+   from the accumulated evidence: (a) blur recorded inside an SkPicture
+   does not render on this device — every in-picture variant failed even
+   with correct compositing; (b) panels drawn in the fullscreen canvas can
+   never track natively-scrolled cards. Both are solved structurally by
+   moving the pane INSIDE the card: `components/GlassBackdrop.tsx` is a
+   small per-card `<Canvas>` (black base → blurred replay of the scene's
+   published organism picture via declarative `Group layer` blur — RN
+   Skia's mainstream path, not a recorded picture → tint → sheen). The
+   scene publishes its per-frame SkPicture through `glassStage`'s pub/sub
+   channel and no longer knows panels exist. Card position only selects
+   which scene slice shows through the blur, so scroll staleness is
+   imperceptible instead of misaligning the pane.
 
 5. **The saveLayer mechanism (commit `d38c62b`, build #6):**
    `canvas.saveLayer(paintWithBlurImageFilter, null)` — NOT a backdrop filter.

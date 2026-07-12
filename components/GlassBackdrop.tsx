@@ -49,6 +49,16 @@ import {
   subscribeScenePicture,
 } from './glassStage';
 
+/**
+ * Tuner-px → Skia-sigma calibration. The frosted-glass tuner expresses blur
+ * in CSS px in a desktop browser; on-device (build #14, Pixel 9) the same
+ * number rendered visibly ~2× stronger — the phone's ~2.6× pixel density and
+ * Skia's Gaussian differ from the browser's backdrop-filter. This factor
+ * keeps the tuner readout pasteable 1:1 into the `blur` prop. Tweak HERE to
+ * re-calibrate globally; tweak per-card props for per-panel character.
+ */
+const TUNER_BLUR_SCALE = 0.5;
+
 interface GlassBackdropProps {
   /** Card size from onLayout, px. */
   w: number;
@@ -92,7 +102,7 @@ export function GlassBackdrop({ w, h, x, contentY, tint, blur }: GlassBackdropPr
           (the card View itself is transparent). The scene background is pure
           black, so this reads as "the scene, out of focus" not "a hole". */}
       <Fill color="black" />
-      <Group layer={<Paint><Blur blur={blur} /></Paint>}>
+      <Group layer={<Paint><Blur blur={blur * TUNER_BLUR_SCALE} /></Paint>}>
         <Group transform={[{ translateX: -sceneX }, { translateY: -sceneY }]}>
           <Picture picture={pic} />
         </Group>

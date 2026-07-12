@@ -141,13 +141,29 @@ itself is a child of the card and cannot misalign.
 
 ### Per-card tint + blur props
 
-`<GlassCard tint={n} blur={sigma}>` — `tint` is the final espresso-overlay
+`<GlassCard tint={n} blur={b}>` — `tint` is the final espresso-overlay
 alpha (0..0.92), identical to the tuner readout (it was once a ×0.44
 multiplier; that unit mismatch shipped panels ~56% lighter than tuned).
-`blur` is the Skia sigma (default 12). The cards in `index.tsx` carry the
-tuner's "Legibility-tuned" preset: Kitchen temp `0.36/14`, Bulk progress
-`0.36/14`, Dough story `0.54/16`. Re-tune in the tuner, paste the readout
-values straight into the props — units match 1:1.
+`blur` is in TUNER units: `GlassBackdrop` multiplies it by
+`TUNER_BLUR_SCALE` (0.5) before handing Skia the sigma, because the tuner's
+CSS-px blur rendered visibly ~2× stronger on the Pixel 9 (device pixel
+density + different Gaussian). Re-tune in the tuner, paste readout values
+straight into the props; re-calibrate globally only via `TUNER_BLUR_SCALE`.
+
+### Panel inventory (July 12 2026 — everything glassed except the timer + CTAs)
+
+| Panel | tint/blur | Notes |
+|-------|-----------|-------|
+| Timer hero (big clock) | — | Intentionally bare, per the tuner's hero=0/0 |
+| "Your last bake" banner | 0.24/10 | Keeps accent border via style override |
+| Autolyse picker box + "Autolyse first" pill | 0.24/10 | |
+| Alert chips 30/45/60 | 0.24/10 | Active chip: accent border + accentSoft overlay inside |
+| Kitchen temp | 0.36/14 | |
+| Expected bulk time / Planned folds | 0.36/14 | |
+| Bulk progress / Next-fold trio / Dough rise tracker | 0.36/14 | |
+| PhaseCaption / Dough story | 0.54/16 | Caption tier — smallest text, heaviest glass |
+| Start Bulk / fold counter / End bulk / cancel buttons | — | Solid accent CTAs stay solid |
+| Modals (autolyse picker sheet, late-fold confirm) | — | Overlay surfaces, not over the scene |
 
 ---
 

@@ -427,14 +427,7 @@ function RiseTracker({
   const isManual = pct > 0;
   const inZone = display >= RISE_SWEET_LOW && display <= RISE_SWEET_HIGH;
   return (
-    <View
-      style={{
-        backgroundColor: C.card,
-        borderWidth: 1,
-        borderColor: C.cardBorder,
-        borderRadius: 20,
-        padding: 20,
-      }}>
+    <GlassCard radius={20} tint={0.36} blur={14} style={{ padding: 20 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
           <ArrowUp color={C.textMuted} size={13} />
@@ -508,7 +501,7 @@ function RiseTracker({
       {isManual && estimated !== undefined && estimated > 0 && (
         <RiseAdvisory actual={pct} estimated={estimated} />
       )}
-    </View>
+    </GlassCard>
   );
 }
 
@@ -703,15 +696,8 @@ function PhaseCaption({ copy, phaseLabel }: { copy: PhaseCopy; phaseLabel?: stri
   }, [copy, fade]);
   const c = shown.current;
   return (
-    <Animated.View
-      style={{
-        opacity: fade,
-        backgroundColor: C.card,
-        borderWidth: 1,
-        borderColor: C.cardBorder,
-        borderRadius: 20,
-        padding: 18,
-      }}>
+    <Animated.View style={{ opacity: fade }}>
+      <GlassCard radius={20} tint={0.54} blur={16} style={{ padding: 18 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 }}>
         <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: C.accent }} />
         <Text style={{ ...label, color: C.accent }}>
@@ -726,6 +712,7 @@ function PhaseCaption({ copy, phaseLabel }: { copy: PhaseCopy; phaseLabel?: stri
       <Text style={{ color: C.textMuted, fontSize: 14, lineHeight: 20, marginTop: 4, fontStyle: 'italic' }}>
         {c.sensory}
       </Text>
+      </GlassCard>
     </Animated.View>
   );
 }
@@ -1111,12 +1098,13 @@ export default function HomeScreen() {
           <View ref={onContentRef} onLayout={remeasureGlass} style={{ padding: 24, paddingBottom: 48 }}>
 
       {recentLog && !isActive && (
-        <View
+        <GlassCard
+          radius={20}
+          tint={0.24}
+          blur={10}
           style={{
-            backgroundColor: C.accentSoft,
-            borderWidth: 1,
             borderColor: C.accentBorder,
-            borderRadius: 20,
+            borderTopColor: C.accentBorder,
             padding: 18,
             marginBottom: 24,
             flexDirection: 'row',
@@ -1132,7 +1120,7 @@ export default function HomeScreen() {
               {formatMinutes(recentLog.bulkDurationMinutes)} · {recentLog.foldCount} fold{recentLog.foldCount !== 1 ? 's' : ''}
             </Text>
           </View>
-        </View>
+        </GlassCard>
       )}
 
       {!isActive ? (
@@ -1173,13 +1161,12 @@ export default function HomeScreen() {
 
               {!autolyseDone &&
                 (showAutolysePicker ? (
-                  <View
+                  <GlassCard
+                    radius={16}
+                    tint={0.24}
+                    blur={10}
                     style={{
                       marginTop: 16,
-                      backgroundColor: C.card,
-                      borderWidth: 1,
-                      borderColor: C.cardBorder,
-                      borderRadius: 16,
                       padding: 14,
                     }}>
                     <Text style={{ ...label, marginBottom: 10 }}>Autolyse for</Text>
@@ -1203,32 +1190,32 @@ export default function HomeScreen() {
                         </View>
                       ))}
                     </View>
-                  </View>
+                  </GlassCard>
                 ) : (
-                  <TouchableOpacity
-                    onPress={() => {
-                      thump(Haptics.ImpactFeedbackStyle.Light);
-                      setShowAutolysePicker(true);
-                    }}
-                    activeOpacity={0.7}
-                    style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      gap: 6,
-                      marginTop: 16,
-                      alignSelf: 'flex-start',
-                      paddingVertical: 8,
-                      paddingHorizontal: 14,
-                      borderRadius: 12,
-                      borderWidth: 1,
-                      borderColor: C.cardBorder,
-                      backgroundColor: C.card,
-                    }}>
-                    <FlaskConical color={C.textMuted} size={14} />
-                    <Text style={{ color: C.textMuted, fontSize: 13, fontWeight: '600' }}>
-                      Autolyse first
-                    </Text>
-                  </TouchableOpacity>
+                  <GlassCard
+                    radius={12}
+                    tint={0.24}
+                    blur={10}
+                    style={{ marginTop: 16, alignSelf: 'flex-start' }}>
+                    <TouchableOpacity
+                      onPress={() => {
+                        thump(Haptics.ImpactFeedbackStyle.Light);
+                        setShowAutolysePicker(true);
+                      }}
+                      activeOpacity={0.7}
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: 6,
+                        paddingVertical: 8,
+                        paddingHorizontal: 14,
+                      }}>
+                      <FlaskConical color={C.textMuted} size={14} />
+                      <Text style={{ color: C.textMuted, fontSize: 13, fontWeight: '600' }}>
+                        Autolyse first
+                      </Text>
+                    </TouchableOpacity>
+                  </GlassCard>
                 ))}
             </View>
           )}
@@ -1306,24 +1293,31 @@ export default function HomeScreen() {
                 const active = selectedInterval === mins;
                 return (
                   <View key={mins} style={{ flex: 1 }}>
-                    <Springy
-                      onPress={() => setSelectedInterval(mins)}
-                      pressScale={0.93}
-                      style={{
-                        paddingVertical: 22,
-                        borderRadius: 18,
-                        alignItems: 'center',
-                        backgroundColor: active ? C.accentSoft : C.card,
-                        borderWidth: 1.5,
-                        borderColor: active ? C.accent : C.cardBorder,
-                      }}>
-                      <Text style={{ fontSize: 30, fontWeight: '700', color: active ? C.accent : C.text }}>
-                        {mins}
-                      </Text>
-                      <Text style={{ fontSize: 12, color: active ? C.accent : C.textDim, marginTop: 2 }}>
-                        min
-                      </Text>
-                    </Springy>
+                    <GlassCard
+                      radius={18}
+                      tint={0.24}
+                      blur={10}
+                      style={
+                        active
+                          ? { borderWidth: 1.5, borderColor: C.accent, borderTopColor: C.accent }
+                          : undefined
+                      }>
+                      <Springy
+                        onPress={() => setSelectedInterval(mins)}
+                        pressScale={0.93}
+                        style={{
+                          paddingVertical: 22,
+                          alignItems: 'center',
+                          backgroundColor: active ? C.accentSoft : 'transparent',
+                        }}>
+                        <Text style={{ fontSize: 30, fontWeight: '700', color: active ? C.accent : C.text }}>
+                          {mins}
+                        </Text>
+                        <Text style={{ fontSize: 12, color: active ? C.accent : C.textDim, marginTop: 2 }}>
+                          min
+                        </Text>
+                      </Springy>
+                    </GlassCard>
                   </View>
                 );
               })}
@@ -1334,14 +1328,10 @@ export default function HomeScreen() {
             <Text style={{ ...label, marginBottom: 14 }}>
               Expected bulk time
             </Text>
-            <View style={{
+            <GlassCard radius={18} tint={0.36} blur={14} style={{
               flexDirection: 'row',
               alignItems: 'center',
               justifyContent: 'center',
-              backgroundColor: C.card,
-              borderWidth: 1,
-              borderColor: C.cardBorder,
-              borderRadius: 18,
               padding: 8,
             }}>
               <TouchableOpacity
@@ -1364,21 +1354,17 @@ export default function HomeScreen() {
                 style={{ paddingVertical: 12, paddingHorizontal: 28 }}>
                 <Text style={{ color: plannedTarget < TARGET_MAX ? C.text : C.textDim, fontSize: 28, fontWeight: '300' }}>+</Text>
               </TouchableOpacity>
-            </View>
+            </GlassCard>
           </View>
 
           <View>
             <Text style={{ ...label, marginBottom: 14 }}>
               Planned folds
             </Text>
-            <View style={{
+            <GlassCard radius={18} tint={0.36} blur={14} style={{
               flexDirection: 'row',
               alignItems: 'center',
               justifyContent: 'center',
-              backgroundColor: C.card,
-              borderWidth: 1,
-              borderColor: C.cardBorder,
-              borderRadius: 18,
               padding: 8,
             }}>
               <TouchableOpacity
@@ -1401,7 +1387,7 @@ export default function HomeScreen() {
                 style={{ paddingVertical: 12, paddingHorizontal: 28 }}>
                 <Text style={{ color: foldCount < MAX_PLANNED_FOLDS ? C.text : C.textDim, fontSize: 28, fontWeight: '300' }}>+</Text>
               </TouchableOpacity>
-            </View>
+            </GlassCard>
           </View>
 
           <View>
@@ -1539,12 +1525,11 @@ export default function HomeScreen() {
           </GlassCard>
 
           {foldsComplete ? (
-            <View
+            <GlassCard
+              radius={20}
+              tint={0.36}
+              blur={14}
               style={{
-                backgroundColor: C.card,
-                borderWidth: 1,
-                borderColor: C.cardBorder,
-                borderRadius: 20,
                 paddingVertical: 14,
                 paddingHorizontal: 20,
                 flexDirection: 'row',
@@ -1555,16 +1540,9 @@ export default function HomeScreen() {
               <Text style={{ color: C.text, fontSize: 15, fontWeight: '600' }}>
                 All {defaultFoldCount} folds done — watch the dough for shape readiness
               </Text>
-            </View>
+            </GlassCard>
           ) : foldIsLate ? (
-            <View
-              style={{
-                backgroundColor: C.card,
-                borderWidth: 1,
-                borderColor: C.cardBorder,
-                borderRadius: 20,
-                padding: 20,
-              }}>
+            <GlassCard radius={20} tint={0.36} blur={14} style={{ padding: 20 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
                 <Clock color={C.orange} size={16} />
                 <Text style={{ ...label, color: C.orange }}>{foldLatenessAdvice(lateMinutes, doughTempF).title}</Text>
@@ -1572,14 +1550,13 @@ export default function HomeScreen() {
               <Text style={{ color: C.textMuted, fontSize: 14, lineHeight: 20 }}>
                 {foldLatenessAdvice(lateMinutes, doughTempF).body}
               </Text>
-            </View>
+            </GlassCard>
           ) : (
-            <View
+            <GlassCard
+              radius={20}
+              tint={0.36}
+              blur={14}
               style={{
-                backgroundColor: C.card,
-                borderWidth: 1,
-                borderColor: C.cardBorder,
-                borderRadius: 20,
                 padding: 20,
                 alignItems: 'center',
               }}>
@@ -1613,7 +1590,7 @@ export default function HomeScreen() {
               <Text style={{ color: C.textDim, fontSize: 13, marginTop: 10 }}>
                 every {foldIntervalMinutes} min
               </Text>
-            </View>
+            </GlassCard>
           )}
 
           {/* The dough's story so far */}

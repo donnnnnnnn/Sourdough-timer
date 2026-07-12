@@ -752,6 +752,17 @@ function drawGlassPanels(
     // saveLayer whose paint carries the blur image filter.
     canvas.save();
     canvas.clipRRect(rr, ClipOp.Intersect, true);
+
+    // CRITICAL: erase the sharp organisms already painted under this panel
+    // before drawing the blurred copy. Compositing a translucent blurred
+    // copy OVER the sharp original leaves the sharp strokes fully visible
+    // through it — which read as "no blur at all" on-device and survived
+    // every previous blur attempt. The scene background is pure black, so a
+    // black fill restores an empty slate inside the panel.
+    const basePaint = Skia.Paint();
+    basePaint.setColor(Skia.Color('black'));
+    canvas.drawRRect(rr, basePaint);
+
     const blurPaint = Skia.Paint();
     blurPaint.setImageFilter(Skia.ImageFilter.MakeBlur(sigma, sigma, TileMode.Clamp));
     canvas.saveLayer(blurPaint, null);

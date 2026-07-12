@@ -174,15 +174,25 @@ judging GLASS legibility over a busy background, not a pixel-match.
 
 ## Open work / known gaps
 
-- **Glass blur awaiting device test:** Build #6 (commit `d38c62b`) shipped
-  the `saveLayer` approach, but **no build before July 11 2026 ever actually
-  drew a glass panel** — card registration silently failed because
-  `measureLayout` was given a `findNodeHandle` number, which the New
-  Architecture rejects via the (previously empty) failure callback. The
-  owner-visible symptom was "organisms draw over the panels": the cards are
-  transparent, the missing Skia slab is the glass. Fixed by passing the
-  container View ref itself; the next build is the FIRST real test of the
-  saveLayer blur. See `docs/SKIA-HANDOFF.md` for the full chain.
+- **Glass blur — device-tested July 11 2026 (run #12 APK).** Results and the
+  two follow-up fixes, in order:
+  1. **Registration fix confirmed** — slabs finally drew, with visible tint
+     (before this, `measureLayout` was given a `findNodeHandle` number, which
+     the New Architecture rejects via the previously-empty failure callback;
+     no card ever registered, no slab was ever drawn).
+  2. **Slabs were offset ~a header-height below their cards** — `contentTop`
+     had been wired to the content container's WINDOW Y, but the Skia canvas
+     starts below the status bar + tab header. Fixed: measure the content
+     container AND the root view (which the canvas fills) and use the
+     difference, plus the live scroll offset at measure time.
+  3. **Still zero blur — root cause was compositing, not the filter.** The
+     scene paints sharp organisms across the full canvas first; the panel
+     then composited a translucent BLURRED copy over the sharp original,
+     which stays fully visible through it. Every "no blur" result since
+     attempt #1 is explained by this. Fixed: black-fill the panel interior
+     (scene background is pure black) before drawing the blurred copy, so
+     only blurred organisms exist inside a panel. Awaiting device
+     confirmation of fixes 2–3.
 - ~~**`contentTop` is never wired up**~~ **Done.** `onContentRef` in
   `index.tsx` now calls `measureInWindow` and feeds the result to
   `setContentTop()`.

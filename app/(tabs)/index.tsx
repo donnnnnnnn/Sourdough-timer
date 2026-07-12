@@ -772,18 +772,42 @@ export default function HomeScreen() {
   // registered, so no glass panel was ever drawn.
   const [contentNode, setContentNode] = useState<View | null>(null);
   const [measureTick, setMeasureTick] = useState(0);
-  const onContentRef = useCallback((node: View | null) => {
-    setContentNode(node);
-    if (node) {
-      node.measureInWindow((_x: number, y: number) => {
-        setContentTop(y);
+  const rootRef = useRef<View>(null);
+  const contentViewRef = useRef<View | null>(null);
+  const scrollYRef = useRef(0);
+  // contentTop must be the content container's offset relative to the ROOT
+  // view (which the Skia canvas fills), NOT relative to the window — the
+  // window includes the status bar and the tab header above this screen, and
+  // using the window Y drew every glass slab ~a header-height below its card
+  // (confirmed on-device via screenshot). Measure both and take the
+  // difference, adding back the current scroll offset since the content
+  // container's on-screen position moves as the user scrolls.
+  const measureContentTop = useCallback(() => {
+    const content = contentViewRef.current;
+    const root = rootRef.current;
+    if (!content || !root) return;
+    content.measureInWindow((_cx: number, cy: number) => {
+      root.measureInWindow((_rx: number, ry: number) => {
+        setContentTop(cy - ry + scrollYRef.current);
       });
-    }
+    });
   }, []);
+  const onContentRef = useCallback(
+    (node: View | null) => {
+      contentViewRef.current = node;
+      setContentNode(node);
+      measureContentTop();
+    },
+    [measureContentTop],
+  );
   const onScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    scrollYRef.current = e.nativeEvent.contentOffset.y;
     setScrollY(e.nativeEvent.contentOffset.y);
   }, []);
-  const remeasureGlass = useCallback(() => setMeasureTick((t) => t + 1), []);
+  const remeasureGlass = useCallback(() => {
+    measureContentTop();
+    setMeasureTick((t) => t + 1);
+  }, [measureContentTop]);
 
   // Coach: suggested bulk time from kitchen temp + the user's own history.
   const suggestion = useMemo(() => suggestBulk(doughTempF, bakeLogs), [doughTempF, bakeLogs]);
@@ -1070,7 +1094,7 @@ export default function HomeScreen() {
   const recentLog = bakeLogs.length > 0 ? bakeLogs[0] : null;
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#000' }}>
+    <View ref={rootRef} style={{ flex: 1, backgroundColor: '#000' }}>
       {/* Fullscreen living "microscope" backdrop, behind everything. */}
       <View style={StyleSheet.absoluteFill} pointerEvents="none">
         <SafeSkiaFermentationScene mode={sceneMode} fraction={sceneFraction} />

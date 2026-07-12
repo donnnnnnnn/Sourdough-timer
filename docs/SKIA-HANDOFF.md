@@ -58,7 +58,21 @@ UI cards (`components/GlassCard.tsx` / `components/glassStage.ts`):
    Caught from reading the commit message alone, before a device test burned a
    build. **Lesson: always sanity-check "draw X last" against whether X is
    clipped — an unclipped last-drawn layer covers everything before it.**
-4. **Current fix (commit `d38c62b`, build #6, awaiting device test):**
+4½. **THE ACTUAL "no blur" ROOT CAUSE (found July 11 2026, on-device
+   screenshot):** the blur filter was probably fine all along. The scene
+   draws sharp organisms across the FULL canvas first, then each panel
+   composites a translucent blurred copy ON TOP of them — and a blurred
+   copy over a sharp original does not hide the original; the sharp strokes
+   stay visible straight through it. Every attempt since #1 layered its
+   blur over an unblurred base, so every attempt "showed no blur"
+   regardless of whether its filter worked. Fix: black-fill the panel
+   interior (the scene background is pure black) before drawing the blurred
+   copy, so the only organisms inside a panel are blurred ones. The same
+   session also fixed slab positions being ~a header-height too low
+   (`contentTop` was measured against the window instead of the root view
+   the canvas fills).
+
+5. **The saveLayer mechanism (commit `d38c62b`, build #6):**
    `canvas.saveLayer(paintWithBlurImageFilter, null)` — NOT a backdrop filter.
    A saveLayer image filter only affects content drawn *after* saveLayer opens,
    not the existing canvas, so it can't trigger the backdrop-sampling

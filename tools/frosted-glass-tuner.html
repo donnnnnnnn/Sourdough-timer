@@ -1,20 +1,26 @@
 <!--
-  Frosted-glass tuner — design tool for the timer screen.
+  Frosted-glass tuner — WYSIWYG design tool for the timer screen.
 
-  A faithful, standalone preview of the bulk-fermenting timer: the microbial
-  scene runs full-bleed behind frosted-glass panels, each with its own
-  opacity + blur. Use it to dial the material, then port the values into the
-  real thing: each GlassCard (components/GlassCard.tsx) takes per-card
-  `tint` and `blur` props whose units match this tool's readout 1:1 —
-  `tint` is the final overlay opacity (0..0.92) and `blur` is the Skia
-  sigma. Omit `blur` to fall back to the shared animated sigma in
-  components/SkiaFermentationScene.tsx (`8 + sin(...) * 1.5`).
+  PARITY CONTRACT (why this preview matches the phone):
+  • The phone mockup screen is exactly 411 CSS px wide = the app's 411 dp —
+    so 1 slider unit of blur here covers the same fraction of screen as on
+    the device.
+  • Each pane is composited EXACTLY like components/GlassBackdrop.tsx:
+    black base → blurred scene → rgba(22,16,13, tint) espresso overlay →
+    top sheen gradient → GlassCard border (glassBorder / glassSheen top).
+  • The preview multiplies blur by TUNER_BLUR_SCALE (0.5) just like
+    GlassBackdrop does. Sliders and the readout always show RAW tuner
+    units — the numbers you paste straight into GlassCard props.
+    If you re-calibrate TUNER_BLUR_SCALE in GlassBackdrop.tsx, change the
+    constant in this file's <script> to match.
 
-  Zero dependencies — just open tools/frosted-glass-tuner.html in a browser
-  (or double-click it). No build step. The canvas scene is a self-contained
-  stand-in for components/SkiaFermentationScene.tsx's cast, kept deliberately
-  simple; it's for judging the GLASS, not a pixel-match of the real engine.
-  Keep the palette in sync with components/theme.ts if tokens change.
+  Two screens (Before bulk / During bulk) mirror app/(tabs)/index.tsx
+  panel-for-panel. The three amber CTAs have glass ⇄ solid toggles so that
+  decision can be made looking at both.
+
+  Zero dependencies — open this file in a browser. The canvas scene is a
+  simplified stand-in for SkiaFermentationScene (for judging GLASS, not a
+  pixel-match). Keep palette in sync with components/theme.ts.
 -->
 <title>Sourdough Timer — Frosted-Glass Tuner</title>
 <style>
@@ -23,417 +29,493 @@
     /* locked app tokens (components/theme.ts) */
     --bg: #171210;
     --accent: #E8A33D;
+    --accent-soft: rgba(232,163,61,0.14);
+    --accent-border: rgba(232,163,61,0.35);
+    --on-accent: #1C1208;
     --text: #F2E8DC;
     --text-muted: rgba(242,232,220,0.55);
     --text-dim: rgba(242,232,220,0.30);
+    --card-border: rgba(255,228,196,0.10);
+    --chip: rgba(255,228,196,0.08);
+    --glass-border: rgba(255,235,205,0.16);
+    --glass-sheen: rgba(255,245,225,0.34);
     --green: #8FBC70;
-
-    /* shared material */
-    --stroke: 0.14;
-    --warmR: 23; --warmG: 18; --warmB: 16;
-
-    /* per-window tint opacity + blur (set by the console) */
-    --tint-hero: 0.00;     --blur-hero: 0px;
-    --tint-caption: 0.54;  --blur-caption: 16px;
-    --tint-progress: 0.36; --blur-progress: 14px;
-    --tint-folds: 0.24;    --blur-folds: 10px;
-
     --font-serif: Georgia, 'Times New Roman', serif;
     --font-mono: Menlo, 'SFMono-Regular', Consolas, monospace;
   }
-
   * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; }
+  html, body { margin: 0; }
   body {
-    background:
-      radial-gradient(1200px 700px at 78% -10%, #221a14 0%, transparent 60%),
-      #100c0a;
+    background: radial-gradient(1200px 700px at 78% -10%, #221a14 0%, transparent 60%), #100c0a;
     color: var(--text);
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     -webkit-font-smoothing: antialiased;
-    min-height: 100%;
-    padding: clamp(16px, 3vw, 40px);
-    display: flex;
-    justify-content: center;
+    padding: clamp(14px, 2.5vw, 36px);
+    display: flex; justify-content: center;
   }
+  .stage { display: flex; gap: clamp(18px, 3vw, 44px); align-items: flex-start; flex-wrap: wrap; max-width: 1200px; }
 
-  .stage {
-    width: 100%;
-    max-width: 1120px;
-    display: grid;
-    grid-template-columns: minmax(320px, 400px) 1fr;
-    gap: clamp(20px, 3.5vw, 52px);
-    align-items: start;
-  }
-  @media (max-width: 900px) {
-    .stage { grid-template-columns: 1fr; justify-items: center; }
-  }
-
-  /* ---------- page intro ---------- */
-  .lede { grid-column: 1 / -1; max-width: 720px; }
-  .eyebrow {
-    font-size: 11px; font-weight: 700; letter-spacing: 3px;
-    text-transform: uppercase; color: var(--accent);
-    display: flex; align-items: center; gap: 10px; margin: 0 0 14px;
-  }
-  .eyebrow::after { content: ""; height: 1px; flex: 1; background: rgba(232,163,61,0.28); }
-  .lede h1 {
-    font-family: var(--font-serif);
-    font-weight: 400; font-size: clamp(26px, 4vw, 40px);
-    line-height: 1.1; letter-spacing: 0.2px; margin: 0 0 12px;
-    text-wrap: balance;
-  }
-  .lede p { margin: 0; color: var(--text-muted); font-size: 15.5px; line-height: 1.6; max-width: 62ch; }
-  .lede b { color: var(--text); font-weight: 600; }
-
-  /* ---------- phone ---------- */
-  .phone-wrap { display: flex; flex-direction: column; align-items: center; gap: 14px; position: sticky; top: 24px; }
+  /* ── phone mockup ─────────────────────────────────────────────────── */
+  .phoneWrap { position: sticky; top: 18px; }
   .phone {
-    position: relative;
-    width: 372px; height: 760px;
-    border-radius: 46px;
-    padding: 12px;
-    background: linear-gradient(160deg, #2b241f, #0d0a08);
-    box-shadow:
-      0 40px 90px -30px rgba(0,0,0,0.85),
-      0 2px 0 rgba(255,240,220,0.06) inset,
-      0 0 0 1px rgba(0,0,0,0.5);
+    width: 439px; /* 411 screen + 2×14 bezel */
+    border-radius: 40px; background: #060403;
+    border: 1px solid rgba(255,228,196,0.14);
+    padding: 14px; box-shadow: 0 30px 80px rgba(0,0,0,0.6);
   }
-  @media (max-width: 420px) { .phone { transform: scale(0.86); transform-origin: top center; } }
-  .screen {
-    position: relative;
-    width: 100%; height: 100%;
-    border-radius: 36px;
-    overflow: hidden;
-    background: var(--bg);
+  .appHeader {
+    height: 56px; display: flex; align-items: center; padding: 0 22px;
+    background: #0d0908; border-radius: 26px 26px 0 0;
+    font-family: var(--font-serif); font-size: 24px;
   }
-  #scene { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .screenArea { position: relative; width: 411px; height: 640px; overflow: hidden; background: #000; }
+  canvas#scene { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .appScroll { position: absolute; inset: 0; overflow-y: auto; scrollbar-width: none; }
+  .appScroll::-webkit-scrollbar { display: none; }
+  .screen { padding: 24px 24px 48px; display: none; flex-direction: column; gap: 24px; }
+  .screen.active { display: flex; }
+  .tabbar {
+    height: 54px; background: #1C1614; border-radius: 0 0 26px 26px;
+    display: flex; align-items: center; justify-content: space-around;
+    font-size: 12px; color: var(--text-dim);
+  }
+  .tabbar b { color: var(--accent); font-weight: 600; }
 
-  .notch {
-    position: absolute; top: 0; left: 50%; transform: translateX(-50%);
-    width: 128px; height: 26px; background: #0d0a08;
-    border-bottom-left-radius: 14px; border-bottom-right-radius: 14px; z-index: 40;
-  }
-
-  .content {
-    position: absolute; inset: 0; z-index: 20;
-    padding: 46px 20px 26px;
-    display: flex; flex-direction: column; gap: 16px;
-    overflow: hidden;
-  }
-
-  /* ---------- the frosted material ----------
-     Each panel supplies its own --tint (opacity) and --blur via a class,
-     so a window with big text can go fully transparent while a window
-     of small body copy keeps more backing. */
-  .glass {
+  /* ── the glass pane: EXACT GlassBackdrop recipe ───────────────────── */
+  .g {
     position: relative;
-    background: rgba(var(--warmR), var(--warmG), var(--warmB), var(--tint));
-    -webkit-backdrop-filter: blur(var(--blur)) saturate(1.2);
-    backdrop-filter: blur(var(--blur)) saturate(1.2);
-    border: 1px solid rgba(255,228,196, var(--stroke));
-    border-radius: 22px;
-    box-shadow:
-      inset 0 1px 0 rgba(255,244,226,0.10),
-      inset 0 -18px 40px -30px rgba(0,0,0,0.9),
-      0 10px 30px -18px rgba(0,0,0,0.6);
+    border-radius: 20px;
+    border: 1px solid var(--glass-border);
+    border-top-color: var(--glass-sheen);
+    background: rgba(22,16,13, var(--t, 0.44));
+    -webkit-backdrop-filter: blur(var(--b, 6px));
+    backdrop-filter: blur(var(--b, 6px));
     overflow: hidden;
   }
-  .glass::before {
-    content: ""; position: absolute; inset: 0; pointer-events: none;
-    background: linear-gradient(180deg, rgba(255,244,226,0.05), transparent 42%);
+  .g::before { /* top-down warm sheen, same stops as GlassBackdrop */
+    content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+    background: linear-gradient(rgba(255,240,220,0.12), rgba(255,240,220,0) 50%);
   }
+  .g > * { position: relative; }
 
-  .g-hero     { --tint: var(--tint-hero);     --blur: var(--blur-hero); }
-  .g-caption  { --tint: var(--tint-caption);  --blur: var(--blur-caption); }
-  .g-progress { --tint: var(--tint-progress); --blur: var(--blur-progress); }
-  /* the hero, being a clean window, drops its heavy inner shadow and border so
-     it doesn't darken or frame the view into the colony */
-  .g-hero {
-    box-shadow: inset 0 1px 0 rgba(255,244,226,0.12), 0 8px 24px -18px rgba(0,0,0,0.5);
-    border-color: transparent;
+  /* in-app text bits */
+  .lbl { font-size: 11px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); }
+  .mono { font-family: var(--font-mono); }
+  .muted { color: var(--text-muted); }
+  .dim { color: var(--text-dim); }
+  .acc { color: var(--accent); }
+  .rowline { display: flex; align-items: center; }
+  .bar { height: 6px; border-radius: 3px; background: var(--chip); overflow: hidden; }
+  .bar > i { display: block; height: 100%; border-radius: 3px; background: var(--accent); }
+  .stepBtn { font-size: 28px; font-weight: 300; padding: 8px 24px; color: var(--text); }
+
+  /* CTAs — solid vs glass */
+  .cta { border-radius: 22px; padding: 22px; text-align: center; position: relative; overflow: hidden; }
+  .cta.solid-amber { background: var(--accent); color: var(--on-accent); }
+  .cta.solid-soft { background: var(--accent-soft); border: 1.5px solid var(--accent-border); color: var(--accent); }
+  .cta.glassed {
+    background: rgba(22,16,13, var(--t, 0.24));
+    -webkit-backdrop-filter: blur(var(--b, 5px));
+    backdrop-filter: blur(var(--b, 5px));
+    border: 1.5px solid var(--accent-border);
+    color: var(--accent);
   }
-  .g-hero::before { display: none; }
+  .cta.glassed.was-amber { border-color: var(--accent); }
 
-  .label { font-size: 11px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); }
-
-  .hero { align-items: center; text-align: center; padding: 22px 16px 26px; }
-  .status { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-  .status .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 12px 2px rgba(232,163,61,0.7); }
-  .status .txt { font-size: 11px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--accent); }
-  .clock {
-    font-family: var(--font-mono); font-variant-numeric: tabular-nums;
-    font-weight: 200; letter-spacing: -3px; line-height: 0.94;
-    font-size: 84px; color: var(--text);
-    text-shadow: 0 2px 34px rgba(0,0,0,0.7);
-    display: flex; align-items: flex-end; justify-content: center; gap: 2px;
+  /* ── console ──────────────────────────────────────────────────────── */
+  .console { width: min(640px, 94vw); display: flex; flex-direction: column; gap: 18px; }
+  h1 { font-family: var(--font-serif); font-size: 26px; font-weight: 500; margin: 0; }
+  .sub { color: var(--text-muted); font-size: 13.5px; line-height: 1.55; margin: 0; }
+  .card {
+    background: rgba(255,228,196,0.04); border: 1px solid rgba(255,228,196,0.10);
+    border-radius: 16px; padding: 16px 18px;
   }
-  .clock .sec { font-size: 27px; font-weight: 300; letter-spacing: 0; color: var(--text-dim); transform: translateY(-8px); }
-
-  .pad { padding: 16px 18px; }
-  .row { display: flex; align-items: center; justify-content: space-between; }
-  .caption-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
-  .phase-pill {
-    font-size: 10px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase;
-    color: var(--accent); background: rgba(232,163,61,0.14);
-    border: 1px solid rgba(232,163,61,0.35); border-radius: 999px; padding: 3px 9px;
+  .screenToggle { display: flex; gap: 8px; }
+  .screenToggle button {
+    flex: 1; font-family: inherit; font-size: 14px; font-weight: 600; padding: 12px;
+    color: var(--text-muted); background: var(--chip); border: 1px solid var(--card-border);
+    border-radius: 12px; cursor: pointer;
   }
-  .caption-title { font-family: var(--font-serif); font-size: 19px; color: var(--text); }
-  .sci { font-size: 12.5px; line-height: 1.55; color: var(--text-muted); margin: 8px 0 0; }
-  .sensory { font-size: 12.5px; line-height: 1.55; color: rgba(232,163,61,0.85); margin: 8px 0 0; font-style: italic; }
+  .screenToggle button[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); border-color: var(--accent-border); }
 
-  .bar { height: 10px; border-radius: 5px; background: rgba(255,228,196,0.10); overflow: hidden; margin-top: 6px; position: relative; }
-  .bar .fill { position: absolute; inset: 0 auto 0 0; width: 58%; border-radius: 5px;
-    background: linear-gradient(90deg, rgba(232,163,61,0.55), var(--accent)); box-shadow: 0 0 14px rgba(232,163,61,0.5); }
-  .bar .zone { position: absolute; top: 0; bottom: 0; left: 52%; right: 8%; background: rgba(143,188,112,0.16); }
-  .ends { display: flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 12px; }
+  .prow { display: grid; grid-template-columns: 140px 1fr 1fr; gap: 10px 12px; align-items: center; padding: 9px 0; border-bottom: 1px dashed rgba(255,228,196,0.07); }
+  .prow:last-child { border-bottom: 0; }
+  .prow .pname { font-size: 13px; font-weight: 600; }
+  .prow .pnote { display: block; font-size: 11px; color: var(--text-dim); font-weight: 400; margin-top: 2px; }
+  .duo { display: flex; align-items: center; gap: 8px; }
+  .duo .k { font-size: 10.5px; letter-spacing: 1px; color: var(--text-dim); text-transform: uppercase; width: 46px; }
+  .duo output { font-family: var(--font-mono); font-size: 12px; width: 40px; text-align: right; }
+  .duo.off { opacity: 0.35; pointer-events: none; }
+  input[type=range] { flex: 1; accent-color: var(--accent); height: 22px; }
+  .ctaToggle { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text-muted); cursor: pointer; margin-top: 4px; }
+  .ctaToggle input { accent-color: var(--accent); }
 
-  .stepper { display: flex; align-items: center; justify-content: center; gap: 4px; margin-top: 14px; }
-  .stepper button { color: var(--text); font-size: 21px; font-weight: 300; background: none; border: none; padding: 4px 20px; cursor: pointer; font-family: inherit; }
-  .stepper .val { font-family: var(--font-mono); font-size: 14px; color: var(--text-muted); min-width: 120px; text-align: center; }
-
-  /* fold buttons — frosted pills, own tint/blur */
-  .folds { display: flex; gap: 10px; }
-  .fold-btn {
-    flex: 1; text-align: center; padding: 14px 6px 12px; cursor: pointer; position: relative;
-    background: rgba(var(--warmR), var(--warmG), var(--warmB), var(--tint-folds));
-    -webkit-backdrop-filter: blur(var(--blur-folds)) saturate(1.2);
-    backdrop-filter: blur(var(--blur-folds)) saturate(1.2);
-    border: 1px solid rgba(255,228,196, var(--stroke)); border-radius: 16px;
-    box-shadow: inset 0 1px 0 rgba(255,244,226,0.10);
-  }
-  .fold-btn.primary { border-color: rgba(232,163,61,0.5); }
-  .fold-btn.primary::after { content:""; position:absolute; inset:0; border-radius:15px; background: rgba(232,163,61,0.10); pointer-events:none; }
-  .fold-btn .big { font-size: 18px; font-weight: 700; color: var(--text); font-family: var(--font-mono); position: relative; }
-  .fold-btn .sub { font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: var(--text-dim); margin-top: 3px; position: relative; }
-  .fold-btn.primary .sub { color: var(--accent); }
-
-  /* ---------- console ---------- */
-  .console { display: flex; flex-direction: column; gap: 18px; max-width: 540px; width: 100%; }
-  .panel { background: rgba(255,228,196,0.035); border: 1px solid rgba(255,228,196,0.09); border-radius: 18px; padding: 22px; }
-  .panel h2 { margin: 0 0 4px; font-family: var(--font-serif); font-weight: 400; font-size: 20px; }
-  .panel .hint { margin: 0 0 18px; font-size: 13px; color: var(--text-muted); line-height: 1.5; }
-
-  /* per-window rows: name + text-size note, opacity slider, blur slider */
-  .win { border-top: 1px solid rgba(255,228,196,0.08); padding: 15px 0 4px; }
-  .win:first-of-type { border-top: none; padding-top: 4px; }
-  .win-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 11px; gap: 10px; }
-  .win-head .name { font-size: 13.5px; font-weight: 700; color: var(--text); }
-  .win-head .note { font-size: 11px; color: var(--text-dim); font-family: var(--font-mono); }
-  .duo { display: grid; grid-template-columns: 74px 1fr 64px; align-items: center; gap: 12px; margin-bottom: 9px; }
-  .duo:last-child { margin-bottom: 0; }
-  .duo .k { font-size: 11px; font-weight: 600; letter-spacing: 0.5px; color: var(--text-muted); text-transform: uppercase; }
-  .duo output { font-family: var(--font-mono); font-size: 12px; color: var(--accent); text-align: right; font-variant-numeric: tabular-nums; }
-
-  .ctrl { display: grid; grid-template-columns: 116px 1fr 58px; align-items: center; gap: 14px; margin-bottom: 15px; }
-  .ctrl:last-child { margin-bottom: 0; }
-  .ctrl label { font-size: 12px; font-weight: 600; letter-spacing: 0.4px; color: var(--text); }
-  .ctrl label small { display: block; font-weight: 400; color: var(--text-dim); font-size: 10.5px; letter-spacing: 0.3px; margin-top: 2px; }
-  .ctrl output { font-family: var(--font-mono); font-size: 12.5px; color: var(--accent); text-align: right; font-variant-numeric: tabular-nums; }
-
-  input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 4px; border-radius: 2px;
-    background: linear-gradient(90deg, rgba(232,163,61,0.7) 0%, rgba(232,163,61,0.7) var(--p,50%), rgba(255,228,196,0.14) var(--p,50%));
-    outline: none; margin: 0; }
-  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; background: #f5e6cf; border: 2px solid #8a6a2e; cursor: pointer; box-shadow: 0 2px 6px rgba(0,0,0,0.5); }
-  input[type=range]::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: #f5e6cf; border: 2px solid #8a6a2e; cursor: pointer; }
-
-  .seg { display: inline-flex; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,228,196,0.1); border-radius: 11px; padding: 3px; gap: 3px; }
-  .seg button { font-family: inherit; font-size: 12px; font-weight: 600; color: var(--text-muted); background: none; border: none; padding: 7px 13px; border-radius: 8px; cursor: pointer; }
-  .seg button[aria-pressed=true] { background: rgba(232,163,61,0.18); color: var(--accent); box-shadow: inset 0 0 0 1px rgba(232,163,61,0.4); }
-
+  .sceneRow { display: flex; gap: 18px; }
+  .sceneRow .duo { flex: 1; }
   .presets { display: flex; flex-wrap: wrap; gap: 8px; }
   .presets button { font-family: inherit; font-size: 12.5px; color: var(--text); background: rgba(255,228,196,0.06); border: 1px solid rgba(255,228,196,0.12); border-radius: 10px; padding: 8px 13px; cursor: pointer; }
   .presets button:hover { border-color: rgba(232,163,61,0.5); }
-
-  .readout { font-family: var(--font-mono); font-size: 11.5px; line-height: 1.7; color: var(--text-muted); background: rgba(0,0,0,0.32); border: 1px solid rgba(255,228,196,0.08); border-radius: 12px; padding: 14px 16px; white-space: pre-wrap; overflow-x: auto; }
-  .readout b { color: var(--accent); font-weight: 400; }
-
-  .foot { grid-column: 1 / -1; text-align: center; color: var(--text-dim); font-size: 12px; margin-top: 8px; line-height: 1.6; }
-  .foot code { font-family: var(--font-mono); color: var(--text-muted); }
-  button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  #readout { font-family: var(--font-mono); font-size: 12px; line-height: 1.75; white-space: pre; color: var(--text-muted); overflow-x: auto; }
+  #readout b { color: var(--accent); font-weight: 600; }
+  .foot { color: var(--text-dim); font-size: 12px; line-height: 1.6; }
+  code { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-muted); }
 </style>
 
 <div class="stage">
-  <div class="lede">
-    <p class="eyebrow">Timer redesign · frosted glass</p>
-    <h1>Each window sets its own transparency — the big timer is a clean opening onto the colony; the small print keeps its backing.</h1>
-    <p>A faithful preview of the <b>bulk-fermenting</b> timer. The microbial scene runs full-bleed behind everything. Every panel has its own <b>opacity</b> and <b>blur</b> — defaults set from how big and bold each window's text is, so the huge timer reads fine at zero tint while the tiny phase notes keep enough glass to stay legible. This lives in the repo at <code style="font-family:var(--font-mono);color:var(--text-muted)">tools/frosted-glass-tuner.html</code> — reopen it whenever the animation grows busier and re-tune, then copy the readout values into the app.</p>
-  </div>
-
-  <div class="phone-wrap">
+  <!-- ═══════════════ PHONE ═══════════════ -->
+  <div class="phoneWrap">
     <div class="phone">
-      <div class="screen">
+      <div class="appHeader">Bulk Timer</div>
+      <div class="screenArea">
         <canvas id="scene"></canvas>
-        <div class="notch"></div>
-        <div class="content">
-          <div class="glass g-hero hero">
-            <div class="status"><span class="dot"></span><span class="txt">Bulk fermenting</span></div>
-            <div class="clock"><span>4:32</span><span class="sec">:18</span></div>
+        <div class="appScroll">
+
+          <!-- ── BEFORE BULK ── -->
+          <div class="screen active" data-screen="before">
+            <div class="g" data-panel="lastBake" style="border-color: var(--accent-border); border-top-color: var(--accent-border); padding: 18px; display:flex; align-items:center; gap:14px;">
+              <span style="font-size:20px">✨</span>
+              <span><span class="lbl">Your last bake</span><br><b style="font-size:18px">4h 05m · 3 folds</b></span>
+            </div>
+
+            <div class="g" data-panel="kitchenTemp" style="padding: 20px;">
+              <div class="lbl" style="margin-bottom:14px">🌡 Kitchen temp</div>
+              <div class="rowline" style="justify-content:center; gap:10px;">
+                <span class="stepBtn">−</span>
+                <span class="mono" style="font-size:44px; font-weight:200;">76°F</span>
+                <span class="stepBtn">+</span>
+              </div>
+              <div style="background:var(--accent-soft); border:1px solid var(--accent-border); border-radius:14px; padding:13px 14px; margin-top:12px;">
+                <div class="rowline" style="justify-content:space-between; gap:10px;">
+                  <b style="font-size:15px">🪄 Suggested bulk: 4h 30m</b>
+                  <span style="background:var(--accent); color:var(--on-accent); font-weight:700; font-size:13px; border-radius:10px; padding:7px 14px;">Use</span>
+                </div>
+                <div class="muted" style="font-size:13px; margin-top:6px;">typical dough at 76°F</div>
+              </div>
+            </div>
+
+            <div class="g" data-panel="autolysePill" style="border-radius:12px; padding:8px 14px; align-self:flex-start; display:flex; align-items:center; gap:6px;">
+              <span class="muted" style="font-size:13px; font-weight:600;">⚗ Autolyse first</span>
+            </div>
+
+            <div>
+              <div class="lbl" style="margin-bottom:14px">Alert me every</div>
+              <div data-panel="alertChips" style="display:flex; gap:10px;">
+                <div class="g chip-live" style="flex:1; border-radius:18px; border-width:1.5px; border-color:var(--accent); border-top-color:var(--accent); text-align:center; padding:22px 0; background: rgba(22,16,13, var(--t)); ">
+                  <div style="position:absolute; inset:0; background:var(--accent-soft);"></div>
+                  <b class="acc" style="font-size:30px; position:relative;">30</b><br><span class="acc" style="font-size:12px; position:relative;">min</span>
+                </div>
+                <div class="g" style="flex:1; border-radius:18px; text-align:center; padding:22px 0;">
+                  <b style="font-size:30px">45</b><br><span class="dim" style="font-size:12px">min</span>
+                </div>
+                <div class="g" style="flex:1; border-radius:18px; text-align:center; padding:22px 0;">
+                  <b style="font-size:30px">60</b><br><span class="dim" style="font-size:12px">min</span>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <div class="lbl" style="margin-bottom:14px">Expected bulk time</div>
+              <div class="g" data-panel="expectedBulk" style="border-radius:18px; padding:8px; display:flex; align-items:center;">
+                <span class="stepBtn">−</span>
+                <span style="flex:1; text-align:center;">
+                  <span class="acc mono" style="font-size:36px; font-weight:200;">4h</span><br>
+                  <span class="dim" style="font-size:12px;">we'll alert you when it's time to end bulk</span>
+                </span>
+                <span class="stepBtn">+</span>
+              </div>
+            </div>
+
+            <div>
+              <div class="lbl" style="margin-bottom:14px">Planned folds</div>
+              <div class="g" data-panel="plannedFolds" style="border-radius:18px; padding:8px; display:flex; align-items:center;">
+                <span class="stepBtn">−</span>
+                <span style="flex:1; text-align:center;">
+                  <span class="acc mono" style="font-size:40px; font-weight:200;">3</span><br>
+                  <span class="dim" style="font-size:12px;">folds</span>
+                </span>
+                <span class="stepBtn">+</span>
+              </div>
+            </div>
+
+            <div>
+              <div class="cta solid-amber was-amber" data-cta="startCTA">
+                <b style="font-size:26px; letter-spacing:-0.3px;">Start Bulk</b>
+              </div>
+              <div class="dim" style="font-size:13px; text-align:center; margin-top:10px;">starter mixed in?</div>
+            </div>
           </div>
 
-          <div class="glass g-caption pad">
-            <div class="caption-head">
-              <span class="phase-pill">Phase 3 / 5</span>
-              <span class="caption-title" id="phaseTitle">First Rise</span>
+          <!-- ── DURING BULK ── -->
+          <div class="screen" data-screen="during">
+            <div style="text-align:center; padding: 10px 0 6px;">
+              <span class="mono" style="font-size:84px; font-weight:200;">00:34</span>
+              <div class="mono muted" style="font-size:26px; margin-top:-8px;">:12</div>
             </div>
-            <p class="sci" id="phaseSci">The dough water is saturated now, so CO₂ inflates the air pockets folded in during mixing — a quiet cross-feeding partnership blowing the first bubbles.</p>
-            <p class="sensory" id="phaseSensory">A faint dome and the first bubbles at the surface. Folded, the dough feels alive — pillowy, starting to billow instead of resist.</p>
+
+            <div class="g" data-panel="phaseCaption" style="padding:18px;">
+              <div class="rowline" style="gap:6px; margin-bottom:10px;">
+                <span style="width:6px;height:6px;border-radius:3px;background:var(--accent);"></span>
+                <span class="lbl acc" id="phasePill">Phase 2/5 · First Rise</span>
+              </div>
+              <div id="phaseSci" style="font-size:14.5px; line-height:1.45;"></div>
+              <div style="height:1px; background:var(--card-border); margin:12px 0;"></div>
+              <span class="dim" style="font-size:12px;">IN THE BOWL</span>
+              <div class="muted" id="phaseSensory" style="font-size:14px; line-height:1.43; font-style:italic; margin-top:4px;"></div>
+            </div>
+
+            <div class="g" data-panel="bulkProgress" style="padding:20px;">
+              <div class="rowline" style="justify-content:space-between; margin-bottom:14px;">
+                <span class="lbl">Bulk progress</span>
+                <span class="muted" style="font-size:13px;">🔔 ends ~12:02 AM</span>
+              </div>
+              <div class="bar"><i style="width:34%"></i></div>
+              <div class="rowline" style="justify-content:space-between; margin-top:8px;">
+                <span class="muted" style="font-size:13px;">1h 22m elapsed</span>
+                <span class="muted" style="font-size:13px;">2h 38m to go</span>
+              </div>
+            </div>
+
+            <div class="g" data-panel="nextFold" style="padding:20px; text-align:center;">
+              <div class="lbl" style="margin-bottom:6px;">Next fold in</div>
+              <span class="mono" style="font-size:38px; font-weight:300;">22:35</span>
+              <div class="bar" style="margin-top:14px;"><i style="width:25%"></i></div>
+              <div class="dim" style="font-size:13px; margin-top:10px;">every 30 min</div>
+            </div>
+
+            <div class="cta solid-soft" data-cta="foldCTA">
+              <span class="lbl acc">✋ Folds completed</span><br>
+              <span class="acc mono" style="font-size:40px; font-weight:200;">1 / 3</span>
+            </div>
+
+            <div class="g" data-panel="doughStory" style="padding:20px;">
+              <div class="lbl" style="margin-bottom:16px;">Dough story</div>
+              <div style="display:flex; flex-direction:column; gap:12px; font-size:13.5px;">
+                <div class="rowline" style="gap:10px;"><span style="color:var(--accent)">●</span><span>Bulk started <span class="dim">· 8:02 PM</span></span></div>
+                <div class="rowline" style="gap:10px;"><span style="color:var(--accent)">●</span><span>Fold 1 <span class="dim">· 8:32 PM</span></span></div>
+                <div class="rowline" style="gap:10px;"><span class="dim">○</span><span class="muted">Fold 2 <span class="dim">· due 9:02 PM</span></span></div>
+                <div class="rowline" style="gap:10px;"><span class="dim">○</span><span class="muted">End of bulk <span class="dim">· ~12:02 AM</span></span></div>
+              </div>
+            </div>
+
+            <div class="g" data-panel="riseTracker" style="padding:20px;">
+              <div class="rowline" style="justify-content:space-between; margin-bottom:4px;">
+                <span class="lbl">↑ Dough rise</span>
+                <span class="dim" style="font-size:12px;">shape at 50–75%</span>
+              </div>
+              <div class="rowline" style="justify-content:center; gap:4px;">
+                <span class="stepBtn">−</span>
+                <span class="mono" style="font-size:44px; font-weight:200; opacity:0.55;">12%</span>
+                <span class="stepBtn">+</span>
+              </div>
+              <div class="bar" style="height:10px; border-radius:5px; margin-top:12px;"><i style="width:12%; opacity:0.4;"></i></div>
+              <div class="dim" style="font-size:12px; text-align:center; margin-top:8px;">still building</div>
+            </div>
+
+            <div class="cta solid-amber was-amber" data-cta="endCTA">
+              <b style="font-size:22px;">End Bulk & Log</b>
+            </div>
           </div>
 
-          <div class="glass g-progress pad">
-            <div class="row" style="margin-bottom:12px">
-              <span class="label">Bulk progress</span>
-              <span class="ends">🔔 ends ~7:45pm</span>
-            </div>
-            <div class="bar"><div class="zone"></div><div class="fill"></div></div>
-            <div class="stepper">
-              <button aria-label="less time">−</button>
-              <span class="val">target 7h 30m</span>
-              <button aria-label="more time">+</button>
-            </div>
-          </div>
-
-          <div class="folds">
-            <div class="fold-btn primary"><div class="big">32:41</div><div class="sub">next fold</div></div>
-            <div class="fold-btn"><div class="big">2 / 4</div><div class="sub">folds done</div></div>
-          </div>
         </div>
       </div>
+      <div class="tabbar"><b>◷ Bulk Timer</b><span>▤ Bake Log</span></div>
     </div>
   </div>
 
+  <!-- ═══════════════ CONSOLE ═══════════════ -->
   <div class="console">
-    <div class="panel">
-      <h2>Per-window glass</h2>
-      <p class="hint">Opacity is the tint behind the text; blur softens the colony seen through it. Defaults scale with legibility — the bigger and bolder the text, the more transparent I let its window go.</p>
+    <h1>Frosted-glass tuner</h1>
+    <p class="sub">
+      WYSIWYG: the mockup is 411&nbsp;px wide (= the app's 411&nbsp;dp), every pane uses the
+      exact <code>GlassBackdrop</code> recipe, and the preview applies the app's ×0.5 blur
+      calibration. <b>Slider numbers are what you paste into the code, unchanged.</b>
+    </p>
 
-      <div class="win" data-win="hero">
-        <div class="win-head"><span class="name">Timer</span><span class="note">84px · a clean window</span></div>
-        <div class="duo"><span class="k">Opacity</span><input type="range" data-k="tint" min="0" max="90" step="1" value="0"><output>0.00</output></div>
-        <div class="duo"><span class="k">Blur</span><input type="range" data-k="blur" min="0" max="30" step="1" value="0"><output>0px</output></div>
-      </div>
+    <div class="screenToggle" id="screenToggle">
+      <button data-screen="before" aria-pressed="true">Before bulk</button>
+      <button data-screen="during" aria-pressed="false">During bulk</button>
+    </div>
 
-      <div class="win" data-win="folds">
-        <div class="win-head"><span class="name">Fold buttons</span><span class="note">18px bold · short labels</span></div>
-        <div class="duo"><span class="k">Opacity</span><input type="range" data-k="tint" min="0" max="90" step="1" value="24"><output>0.24</output></div>
-        <div class="duo"><span class="k">Blur</span><input type="range" data-k="blur" min="0" max="30" step="1" value="10"><output>10px</output></div>
-      </div>
+    <div class="card"><div id="rows"></div></div>
 
-      <div class="win" data-win="progress">
-        <div class="win-head"><span class="name">Bulk progress</span><span class="note">labels + bar · needs contrast</span></div>
-        <div class="duo"><span class="k">Opacity</span><input type="range" data-k="tint" min="0" max="90" step="1" value="36"><output>0.36</output></div>
-        <div class="duo"><span class="k">Blur</span><input type="range" data-k="blur" min="0" max="30" step="1" value="14"><output>14px</output></div>
-      </div>
-
-      <div class="win" data-win="caption">
-        <div class="win-head"><span class="name">Phase notes</span><span class="note">12.5px body · hardest to read</span></div>
-        <div class="duo"><span class="k">Opacity</span><input type="range" data-k="tint" min="0" max="90" step="1" value="54"><output>0.54</output></div>
-        <div class="duo"><span class="k">Blur</span><input type="range" data-k="blur" min="0" max="30" step="1" value="16"><output>16px</output></div>
+    <div class="card">
+      <div class="lbl" style="margin-bottom:12px">Scene (preview only — not exported)</div>
+      <div class="sceneRow">
+        <div class="duo"><span class="k">Phase</span><input type="range" id="s-phase" min="0" max="100" value="45"><output id="o-phase">0.45</output></div>
+        <div class="duo"><span class="k">Bright</span><input type="range" id="s-bright" min="30" max="160" value="100"><output id="o-bright">1.00×</output></div>
       </div>
     </div>
 
-    <div class="panel">
-      <h2>Shared finish</h2>
-      <p class="hint">Applies to every window — the rim light and the hue of the glass.</p>
-      <div class="ctrl">
-        <label>Edge stroke<small>rim brightness</small></label>
-        <input id="s-stroke" type="range" min="0" max="40" step="1" value="14">
-        <output id="o-stroke">0.14</output>
-      </div>
-      <div class="ctrl">
-        <label>Tint warmth<small>hue of the glass</small></label>
-        <div class="seg" role="group" id="warmth">
-          <button data-warm="espresso" aria-pressed="true">Espresso</button>
-          <button data-warm="honey" aria-pressed="false">Honey</button>
-          <button data-warm="neutral" aria-pressed="false">Slate</button>
-        </div>
-        <output></output>
-      </div>
-    </div>
-
-    <div class="panel">
-      <h2>The scene behind</h2>
-      <p class="hint">Not shipped settings — just so you can judge the glass over a calm colony and a raging one.</p>
-      <div class="ctrl">
-        <label>Ferment phase<small>idle → peak → past-peak</small></label>
-        <input id="s-phase" type="range" min="0" max="100" step="1" value="45">
-        <output id="o-phase">0.45</output>
-      </div>
-      <div class="ctrl">
-        <label>Brightness<small>glow of organisms</small></label>
-        <input id="s-bright" type="range" min="40" max="160" step="1" value="100">
-        <output id="o-bright">1.00×</output>
-      </div>
-    </div>
-
-    <div class="panel">
-      <h2>Quick looks</h2>
-      <p class="hint">Compare whole-screen looks in one tap, then fine-tune per window above.</p>
+    <div class="card">
+      <div class="lbl" style="margin-bottom:10px">Presets</div>
       <div class="presets">
-        <button data-preset="legibility">Legibility-tuned (default)</button>
-        <button data-preset="window">All windows open</button>
-        <button data-preset="uniform">Uniform frost</button>
+        <button data-preset="current">Current app values</button>
+        <button data-preset="airy">All windows open</button>
+        <button data-preset="frost">Uniform frost</button>
       </div>
-      <div class="readout" id="readout" style="margin-top:16px"></div>
     </div>
-  </div>
 
-  <p class="foot">
-    Preview only — the real screen renders a fullscreen <code>SkiaFermentationScene</code> and draws each panel's frosted-glass backdrop directly in Skia (blurred + tinted per <code>GlassCard</code> registration in <code>glassStage.ts</code>), not with <code>expo-blur</code>.<br>
-    Committed to the app's single dark “fluorescence-microscopy” world by design.
-  </p>
+    <div class="card">
+      <div class="lbl" style="margin-bottom:10px">Readout — paste into <code>app/(tabs)/index.tsx</code></div>
+      <div id="readout"></div>
+    </div>
+
+    <p class="foot">
+      Blur values are tuner units; the app's <code>GlassBackdrop.tsx</code> multiplies them by
+      <code>TUNER_BLUR_SCALE = 0.5</code>, and this preview does the same — keep the two constants
+      in sync. The big timer stays bare by design (no GlassCard). CTA "glass" toggles preview the
+      amber buttons both ways; flipping one in the app means swapping that button's solid
+      background for a <code>GlassCard</code> wrapper.
+    </p>
+  </div>
 </div>
 
 <script>
 (() => {
-  const root = document.documentElement;
+  // MUST equal TUNER_BLUR_SCALE in components/GlassBackdrop.tsx.
+  const TUNER_BLUR_SCALE = 0.5;
+
   const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  // ---- per-window material state ----
-  const WINDS = ['hero','folds','progress','caption'];
-  const NAMES = { hero:'Timer', folds:'Fold buttons', progress:'Bulk progress', caption:'Phase notes' };
-  const win = {
-    hero:     { tint: 0,  blur: 0 },
-    folds:    { tint: 24, blur: 10 },
-    progress: { tint: 36, blur: 14 },
-    caption:  { tint: 54, blur: 16 },
+  // ── panel model: mirrors app/(tabs)/index.tsx panel-for-panel ────────
+  // tint stored 0..90 (= 0.00..0.90), blur in tuner units 0..30.
+  const PANELS = {
+    before: [
+      { id: 'lastBake',     name: 'Last-bake banner', note: 'accent border', tint: 24, blur: 10 },
+      { id: 'kitchenTemp',  name: 'Kitchen temp',                            tint: 36, blur: 14 },
+      { id: 'autolysePill', name: 'Autolyse pill',                           tint: 24, blur: 10 },
+      { id: 'alertChips',   name: 'Alert chips',      note: '30 / 45 / 60',  tint: 24, blur: 10 },
+      { id: 'expectedBulk', name: 'Expected bulk',                           tint: 36, blur: 14 },
+      { id: 'plannedFolds', name: 'Planned folds',                           tint: 36, blur: 14 },
+      { id: 'startCTA',     name: 'Start Bulk',       note: 'amber CTA', cta: true, glass: false, tint: 24, blur: 10 },
+    ],
+    during: [
+      { id: 'phaseCaption', name: 'Phase caption',                           tint: 54, blur: 16 },
+      { id: 'bulkProgress', name: 'Bulk progress',                           tint: 36, blur: 14 },
+      { id: 'nextFold',     name: 'Next fold in',                            tint: 36, blur: 14 },
+      { id: 'foldCTA',      name: 'Folds completed',  note: 'soft CTA', cta: true, glass: false, tint: 24, blur: 10 },
+      { id: 'doughStory',   name: 'Dough story',                             tint: 54, blur: 16 },
+      { id: 'riseTracker',  name: 'Dough rise',                              tint: 36, blur: 14 },
+      { id: 'endCTA',       name: 'End Bulk & Log',   note: 'amber CTA', cta: true, glass: false, tint: 24, blur: 10 },
+    ],
   };
-  const shared = { stroke: 14, warm: 'espresso' };
-  const scene = { phase: 45, bright: 100 };
+  const SCREENS = ['before', 'during'];
+  const SCREEN_NAMES = { before: 'BEFORE BULK', during: 'DURING BULK' };
+  let activeScreen = 'before';
 
-  const WARMTH = { espresso:[23,18,16], honey:[42,27,13], neutral:[20,22,26] };
+  const byId = {};
+  SCREENS.forEach(s => PANELS[s].forEach(p => { byId[p.id] = p; }));
 
-  function fillTrack(el) {
-    const p = (el.value - el.min) / (el.max - el.min) * 100;
-    el.style.setProperty('--p', p + '%');
-  }
-
-  function applyMaterial() {
-    const [r,g,b] = WARMTH[shared.warm];
-    root.style.setProperty('--warmR', r);
-    root.style.setProperty('--warmG', g);
-    root.style.setProperty('--warmB', b);
-    root.style.setProperty('--stroke', (shared.stroke/100).toFixed(3));
-    WINDS.forEach(w => {
-      root.style.setProperty(`--tint-${w}`, (win[w].tint/100).toFixed(3));
-      root.style.setProperty(`--blur-${w}`, win[w].blur + 'px');
-    });
+  // ── apply model → mockup DOM ─────────────────────────────────────────
+  function applyPanels() {
+    SCREENS.forEach(s => PANELS[s].forEach(p => {
+      const el = p.cta
+        ? document.querySelector(`[data-cta="${p.id}"]`)
+        : document.querySelector(`[data-panel="${p.id}"]`);
+      if (!el) return;
+      el.style.setProperty('--t', (p.tint / 100).toFixed(3));
+      el.style.setProperty('--b', (p.blur * TUNER_BLUR_SCALE).toFixed(2) + 'px');
+      if (p.cta) {
+        el.classList.toggle('glassed', p.glass);
+        el.classList.toggle('solid-amber', !p.glass && el.classList.contains('was-amber'));
+        el.classList.toggle('solid-soft', !p.glass && !el.classList.contains('was-amber'));
+      }
+    }));
     readout();
   }
 
+  // ── readout ─────────────────────────────────────────────────────────
   function readout() {
-    const [r,g,b] = WARMTH[shared.warm];
     let s = '';
-    WINDS.forEach(w => {
-      const t = (win[w].tint/100).toFixed(2);
-      s += `${NAMES[w].padEnd(14)} tint <b>${t}</b>  blur <b>${String(win[w].blur).padStart(2)}px</b>\n`;
+    SCREENS.forEach(scr => {
+      s += `${SCREEN_NAMES[scr]}\n`;
+      PANELS[scr].forEach(p => {
+        const name = p.name.padEnd(18);
+        if (p.cta && !p.glass) {
+          s += `${name} <b>solid</b> (no GlassCard)\n`;
+        } else {
+          const suffix = p.cta ? '  ← wrap CTA in GlassCard' : '';
+          s += `${name} tint <b>${(p.tint / 100).toFixed(2)}</b>  blur <b>${String(p.blur).padStart(2)}</b>${suffix}\n`;
+        }
+      });
+      s += '\n';
     });
-    s += `\nglass hue   <b>rgb(${r}, ${g}, ${b})</b>\n`;
-    s += `border      <b>rgba(255,228,196, ${(shared.stroke/100).toFixed(2)})</b>`;
+    s += `blur = tuner units (GlassBackdrop applies ×${TUNER_BLUR_SCALE})`;
     document.getElementById('readout').innerHTML = s;
   }
 
-  // ---- phase copy ----
+  // ── control rows ─────────────────────────────────────────────────────
+  function buildRows() {
+    const host = document.getElementById('rows');
+    host.innerHTML = '';
+    PANELS[activeScreen].forEach(p => {
+      const row = document.createElement('div');
+      row.className = 'prow';
+      row.innerHTML = `
+        <div class="pname">${p.name}
+          ${p.note ? `<span class="pnote">${p.note}</span>` : ''}
+          ${p.cta ? `<label class="ctaToggle"><input type="checkbox" ${p.glass ? 'checked' : ''}> frosted glass</label>` : ''}
+        </div>
+        <div class="duo${p.cta && !p.glass ? ' off' : ''}" data-d="tint"><span class="k">Opacity</span><input type="range" min="0" max="90" step="1" value="${p.tint}"><output>${(p.tint / 100).toFixed(2)}</output></div>
+        <div class="duo${p.cta && !p.glass ? ' off' : ''}" data-d="blur"><span class="k">Blur</span><input type="range" min="0" max="30" step="1" value="${p.blur}"><output>${p.blur}</output></div>`;
+      host.appendChild(row);
+
+      row.querySelectorAll('.duo input[type=range]').forEach(el => {
+        const k = el.closest('.duo').dataset.d;
+        el.addEventListener('input', () => {
+          p[k] = +el.value;
+          el.nextElementSibling.textContent = k === 'tint' ? (p[k] / 100).toFixed(2) : String(p[k]);
+          applyPanels();
+        });
+      });
+      const chk = row.querySelector('.ctaToggle input');
+      if (chk) chk.addEventListener('change', () => {
+        p.glass = chk.checked;
+        row.querySelectorAll('.duo').forEach(d => d.classList.toggle('off', !p.glass));
+        applyPanels();
+      });
+    });
+  }
+
+  // ── screen toggle ─────────────────────────────────────────────────────
+  document.getElementById('screenToggle').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    activeScreen = b.dataset.screen;
+    [...e.currentTarget.children].forEach(c => c.setAttribute('aria-pressed', String(c === b)));
+    document.querySelectorAll('.screen').forEach(sc =>
+      sc.classList.toggle('active', sc.dataset.screen === activeScreen));
+    buildRows();
+  });
+
+  // ── presets ───────────────────────────────────────────────────────────
+  const PRESETS = {
+    current: {
+      lastBake:{t:24,b:10}, kitchenTemp:{t:36,b:14}, autolysePill:{t:24,b:10}, alertChips:{t:24,b:10},
+      expectedBulk:{t:36,b:14}, plannedFolds:{t:36,b:14}, startCTA:{t:24,b:10,g:false},
+      phaseCaption:{t:54,b:16}, bulkProgress:{t:36,b:14}, nextFold:{t:36,b:14},
+      foldCTA:{t:24,b:10,g:false}, doughStory:{t:54,b:16}, riseTracker:{t:36,b:14}, endCTA:{t:24,b:10,g:false},
+    },
+    airy: null,  // derived below
+    frost: null,
+  };
+  PRESETS.airy = Object.fromEntries(Object.entries(PRESETS.current).map(([k, v]) =>
+    [k, { t: Math.round(v.t * 0.55), b: Math.round(v.b * 0.6), g: v.g }]));
+  PRESETS.frost = Object.fromEntries(Object.keys(PRESETS.current).map(k =>
+    [k, { t: 44, b: 14, g: PRESETS.current[k].g }]));
+
+  document.querySelector('.presets').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    const pr = PRESETS[b.dataset.preset];
+    Object.entries(pr).forEach(([id, v]) => {
+      const p = byId[id]; if (!p) return;
+      p.tint = v.t; p.blur = v.b;
+      if (p.cta && v.g !== undefined) p.glass = v.g;
+    });
+    buildRows();
+    applyPanels();
+  });
+
+  // ── phase copy (mirrors PHASE_SCRIPT flavor) ──────────────────────────
   const PHASES = [
     ['Levain In', 'Your ripe levain hits the dough at full strength. The CO₂ they exhale dissolves into the water first — it must saturate before a bubble can grow.', 'Looks like nothing is happening. Trust it — the engine is already running, you just can’t see it.'],
     ['First Rise', 'The dough water is saturated now, so CO₂ inflates the air pockets folded in during mixing — a quiet cross-feeding partnership blowing the first bubbles.', 'A faint dome and the first bubbles. Folded, the dough feels alive — pillowy, starting to billow instead of resist.'],
@@ -441,89 +523,28 @@
     ['Acid Turn', 'pH is falling fast. Acidity begins to wake proteases that nick the gluten — the network is still standing but starting to give.', 'Softer, slacker, a sharper sour smell. Bubbles getting larger and less even.'],
     ['Past Peak', 'Proteases are winning. Strands snap and recoil, gas escapes, the lattice slumps — an over-proofed dough that won’t hold its shape.', 'Slack, sticky, deflating. The dome has fallen. Time to shape — or you’ve gone too far.'],
   ];
+  const scene = { phase: 45, bright: 100 };
   const phaseIndex = f => Math.max(0, Math.min(4, Math.floor(f * 5)));
   function applyPhaseCopy() {
-    const p = PHASES[phaseIndex(scene.phase/100)];
-    document.getElementById('phaseTitle').textContent = p[0];
+    const i = phaseIndex(scene.phase / 100), p = PHASES[i];
+    document.getElementById('phasePill').textContent = `Phase ${i + 1}/5 · ${p[0]}`;
     document.getElementById('phaseSci').textContent = p[1];
     document.getElementById('phaseSensory').textContent = p[2];
-    document.querySelector('.phase-pill').textContent = `Phase ${phaseIndex(scene.phase/100)+1} / 5`;
   }
-
-  // ---- wire per-window sliders ----
-  document.querySelectorAll('.win').forEach(row => {
-    const w = row.dataset.win;
-    row.querySelectorAll('input[type=range]').forEach(el => {
-      fillTrack(el);
-      const out = el.nextElementSibling;
-      const k = el.dataset.k;
-      out.textContent = k === 'blur' ? win[w][k] + 'px' : (win[w][k]/100).toFixed(2);
-      el.addEventListener('input', () => {
-        win[w][k] = +el.value;
-        out.textContent = k === 'blur' ? el.value + 'px' : (el.value/100).toFixed(2);
-        fillTrack(el);
-        applyMaterial();
-      });
-    });
-  });
-
-  // ---- shared + scene sliders ----
-  const strokeEl = document.getElementById('s-stroke');
-  fillTrack(strokeEl);
-  strokeEl.addEventListener('input', () => {
-    shared.stroke = +strokeEl.value;
-    document.getElementById('o-stroke').textContent = (shared.stroke/100).toFixed(2);
-    fillTrack(strokeEl); applyMaterial();
-  });
-
-  document.getElementById('warmth').addEventListener('click', e => {
-    const b = e.target.closest('button'); if (!b) return;
-    shared.warm = b.dataset.warm;
-    [...e.currentTarget.children].forEach(c => c.setAttribute('aria-pressed', c === b));
-    applyMaterial();
-  });
-
   const phaseEl = document.getElementById('s-phase');
   const brightEl = document.getElementById('s-bright');
-  fillTrack(phaseEl); fillTrack(brightEl);
   phaseEl.addEventListener('input', () => {
     scene.phase = +phaseEl.value;
-    document.getElementById('o-phase').textContent = (scene.phase/100).toFixed(2);
-    fillTrack(phaseEl); applyPhaseCopy();
+    document.getElementById('o-phase').textContent = (scene.phase / 100).toFixed(2);
+    applyPhaseCopy();
   });
   brightEl.addEventListener('input', () => {
     scene.bright = +brightEl.value;
-    document.getElementById('o-bright').textContent = (scene.bright/100).toFixed(2)+'×';
-    fillTrack(brightEl);
+    document.getElementById('o-bright').textContent = (scene.bright / 100).toFixed(2) + '×';
   });
 
-  // ---- presets ----
-  const PRESETS = {
-    legibility: { hero:{tint:0,blur:0},  folds:{tint:24,blur:10}, progress:{tint:36,blur:14}, caption:{tint:54,blur:16} },
-    window:     { hero:{tint:0,blur:0},  folds:{tint:12,blur:6},  progress:{tint:20,blur:10}, caption:{tint:30,blur:12} },
-    uniform:    { hero:{tint:44,blur:14},folds:{tint:44,blur:14}, progress:{tint:44,blur:14}, caption:{tint:44,blur:14} },
-  };
-  document.querySelector('.presets').addEventListener('click', e => {
-    const b = e.target.closest('button'); if (!b) return;
-    const p = PRESETS[b.dataset.preset];
-    WINDS.forEach(w => { win[w] = { ...p[w] }; });
-    // sync every slider + label
-    document.querySelectorAll('.win').forEach(row => {
-      const w = row.dataset.win;
-      row.querySelectorAll('input[type=range]').forEach(el => {
-        const k = el.dataset.k;
-        el.value = win[w][k];
-        el.nextElementSibling.textContent = k === 'blur' ? win[w][k] + 'px' : (win[w][k]/100).toFixed(2);
-        fillTrack(el);
-      });
-    });
-    applyMaterial();
-  });
-
-  // =====================================================================
-  //  Microbial scene — canvas port of the app's FermentationScene cast.
-  //  Additive glow (lighter) over near-black espresso, same palette.
-  // =====================================================================
+  // ═════ Microbial scene — canvas stand-in for SkiaFermentationScene ═════
+  // Pure black base like the app's Canvas backgroundColor.
   const canvas = document.getElementById('scene');
   const ctx = canvas.getContext('2d');
   let W = 0, H = 0, DPR = 1;
@@ -539,17 +560,13 @@
 
   let _s = 1234567;
   const rnd = () => { _s = (_s * 16807) % 2147483647; return _s / 2147483647; };
-  const smooth = (a,b,x) => { const t = Math.max(0, Math.min(1,(x-a)/(b-a))); return t*t*(3-2*t); };
+  const smooth = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 
-  const YEAST = Array.from({length: 14}, () => ({ x: rnd(), y: rnd(), r: 10+rnd()*16, born: rnd()*0.5, ph: rnd()*6.28, sp: 0.4+rnd()*0.6 }));
-  const RODS  = Array.from({length: 9},  () => ({ x: rnd(), y: rnd(), len: 2+((rnd()*3)|0), r: 4+rnd()*2, born: 0.2+rnd()*0.5, ph: rnd()*6.28, ang: rnd()*6.28 }));
-  const AMYL  = Array.from({length: 6},  () => ({ x: rnd(), y: rnd(), r: 9+rnd()*6, ph: rnd()*6.28 }));
-  const BUB   = Array.from({length: 16}, () => ({ x: rnd(), r: 3+rnd()*7, born: rnd(), sp: 0.02+rnd()*0.03, off: rnd() }));
+  const YEAST = Array.from({ length: 14 }, () => ({ x: rnd(), y: rnd(), r: 10 + rnd() * 16, born: rnd() * 0.5, ph: rnd() * 6.28, sp: 0.4 + rnd() * 0.6 }));
+  const RODS = Array.from({ length: 9 }, () => ({ x: rnd(), y: rnd(), len: 2 + ((rnd() * 3) | 0), r: 4 + rnd() * 2, born: 0.2 + rnd() * 0.5, ph: rnd() * 6.28, ang: rnd() * 6.28 }));
+  const AMYL = Array.from({ length: 6 }, () => ({ x: rnd(), y: rnd(), r: 9 + rnd() * 6, ph: rnd() * 6.28 }));
+  const BUB = Array.from({ length: 16 }, () => ({ x: rnd(), r: 3 + rnd() * 7, born: rnd(), sp: 0.02 + rnd() * 0.03, off: rnd() }));
 
-  // Gluten network — an imperfect scaffolding lattice spanning the whole frame.
-  // Nodes sit on a rough grid (jittered off their cells) and link to their
-  // horizontal + vertical neighbours; a few strands are missing and a few extra
-  // diagonals cross-brace it, so it reads as hand-built scaffolding, not a mesh.
   const GCOLS = 5, GROWS = 9, JIT = 0.05;
   const GNODES = [];
   for (let j = 0; j < GROWS; j++) for (let i = 0; i < GCOLS; i++) {
@@ -564,7 +581,6 @@
   for (let j = 0; j < GROWS; j++) for (let i = 0; i < GCOLS; i++) {
     if (i < GCOLS - 1) GEDGES.push({ a: gi(i, j), b: gi(i + 1, j), brk: 0.72 + rnd() * 0.36, miss: rnd() < 0.10 });
     if (j < GROWS - 1) GEDGES.push({ a: gi(i, j), b: gi(i, j + 1), brk: 0.72 + rnd() * 0.36, miss: rnd() < 0.10 });
-    // sparse diagonal cross-brace for an organic, imperfect look
     if (i < GCOLS - 1 && j < GROWS - 1 && rnd() < 0.22)
       GEDGES.push({ a: gi(i, j), b: gi(i + 1, j + 1), brk: 0.6 + rnd() * 0.3, miss: false, diag: true });
   }
@@ -572,113 +588,112 @@
   function orb(x, y, r, col, a) {
     const g = ctx.createRadialGradient(x, y, 0, x, y, r);
     g.addColorStop(0, `rgba(${col},${a})`);
-    g.addColorStop(0.4, `rgba(${col},${a*0.5})`);
+    g.addColorStop(0.4, `rgba(${col},${a * 0.5})`);
     g.addColorStop(1, `rgba(${col},0)`);
     ctx.fillStyle = g;
     ctx.beginPath(); ctx.arc(x, y, r, 0, 6.2832); ctx.fill();
   }
 
-  const P = { yeast:'232,163,61', yeastCore:'246,208,138', lab:'201,168,214', labCore:'228,204,236',
-              amyl:'111,184,168', gluten:'232,163,61', bubble:'246,220,170' };
+  const P = { yeast: '232,163,61', yeastCore: '246,208,138', lab: '201,168,214', labCore: '228,204,236',
+              amyl: '111,184,168', gluten: '232,163,61', bubble: '246,220,170' };
 
   function frame(t) {
     const time = t / 1000;
     const f = scene.phase / 100;
     const B = scene.bright / 100;
-    const active = smooth(0.08, 0.5, f) * (1 - 0.3*smooth(0.8, 1, f));
+    const active = smooth(0.08, 0.5, f) * (1 - 0.3 * smooth(0.8, 1, f));
     const acid = smooth(0.5, 1, f);
 
     ctx.globalCompositeOperation = 'source-over';
-    ctx.fillStyle = '#140f0d';
+    ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, W, H);
-    const dg = ctx.createRadialGradient(W*0.5, H*1.02, 0, W*0.5, H*1.02, H*0.7);
-    dg.addColorStop(0, `rgba(${P.gluten},${(0.10+0.10*active)*B})`);
+    const dg = ctx.createRadialGradient(W * 0.5, H * 1.02, 0, W * 0.5, H * 1.02, H * 0.7);
+    dg.addColorStop(0, `rgba(${P.gluten},${(0.10 + 0.10 * active) * B})`);
     dg.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = dg; ctx.fillRect(0, 0, W, H);
-    if (acid > 0.01) { ctx.fillStyle = `rgba(150,38,22,${0.12*acid})`; ctx.fillRect(0,0,W,H); }
+    if (acid > 0.01) { ctx.fillStyle = `rgba(150,38,22,${0.12 * acid})`; ctx.fillRect(0, 0, W, H); }
 
     ctx.globalCompositeOperation = 'lighter';
 
     const organize = smooth(0.04, 0.5, f), fray = smooth(0.8, 1.06, f);
-    // live node positions — sway grows as the net loosens past peak
     const gp = GNODES.map(n => {
-      const wob = (1 + fray * 5) ;
-      return { x: (n.x + Math.sin(time*0.4 + n.ph) * n.amp * wob) * W,
-               y: (n.y + Math.cos(time*0.33 + n.ph) * n.amp * wob) * H };
+      const wob = (1 + fray * 5);
+      return { x: (n.x + Math.sin(time * 0.4 + n.ph) * n.amp * wob) * W,
+               y: (n.y + Math.cos(time * 0.33 + n.ph) * n.amp * wob) * H };
     });
     ctx.lineCap = 'round';
     GEDGES.forEach(e => {
-      if (e.miss) return;                                // imperfect scaffold — strand never formed
+      if (e.miss) return;
       const A = gp[e.a], D = gp[e.b];
-      const broken = fray > e.brk;                       // strands snap one by one past peak
-      const a = (0.10 + 0.34*organize) * (e.diag ? 0.5 : 1) * (broken ? 0.12 : 1) * B;
+      const broken = fray > e.brk;
+      const a = (0.10 + 0.34 * organize) * (e.diag ? 0.5 : 1) * (broken ? 0.12 : 1) * B;
       if (a < 0.008) return;
       ctx.strokeStyle = `rgba(${P.gluten},${a})`;
-      ctx.lineWidth = (e.diag ? 0.8 : 1.2) + 1.9*organize;
+      ctx.lineWidth = (e.diag ? 0.8 : 1.2) + 1.9 * organize;
       if (broken) {
-        // frayed: draw two recoiling stubs instead of a full strand
-        const mx = (A.x+D.x)/2, my = (A.y+D.y)/2, g = 0.32;
-        ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(A.x+(mx-A.x)*g, A.y+(my-A.y)*g); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(D.x, D.y); ctx.lineTo(D.x+(mx-D.x)*g, D.y+(my-D.y)*g); ctx.stroke();
+        const mx = (A.x + D.x) / 2, my = (A.y + D.y) / 2, g = 0.32;
+        ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(A.x + (mx - A.x) * g, A.y + (my - A.y) * g); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(D.x, D.y); ctx.lineTo(D.x + (mx - D.x) * g, D.y + (my - D.y) * g); ctx.stroke();
       } else {
         ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(D.x, D.y); ctx.stroke();
       }
     });
-    // glowing junction nodes where strands cross-link
     gp.forEach(p => {
-      const a = (0.12 + 0.4*organize) * (1 - 0.4*fray) * B;
-      orb(p.x, p.y, 3.5 + 5*organize, P.gluten, a);
-      orb(p.x, p.y, 1.8, P.yeastCore, a*0.9);
+      const a = (0.12 + 0.4 * organize) * (1 - 0.4 * fray) * B;
+      orb(p.x, p.y, 3.5 + 5 * organize, P.gluten, a);
+      orb(p.x, p.y, 1.8, P.yeastCore, a * 0.9);
     });
 
     const amE = 1 - smooth(0.05, 0.25, f);
     if (amE > 0.02) AMYL.forEach(m => {
-      const x = m.x*W, y = m.y*H + Math.sin(time*0.6+m.ph)*8;
-      ctx.strokeStyle = `rgba(${P.amyl},${0.28*amE*B})`;
+      const x = m.x * W, y = m.y * H + Math.sin(time * 0.6 + m.ph) * 8;
+      ctx.strokeStyle = `rgba(${P.amyl},${0.28 * amE * B})`;
       ctx.lineWidth = 3;
       ctx.beginPath(); ctx.arc(x, y, m.r, 0, 6.2832); ctx.stroke();
-      orb(x, y, m.r*1.6, P.amyl, 0.10*amE*B);
+      orb(x, y, m.r * 1.6, P.amyl, 0.10 * amE * B);
     });
 
     YEAST.forEach(c => {
-      const e = smooth(c.born, c.born+0.14, f); if (e < 0.02) return;
-      const breathe = 1 + 0.12*Math.sin(time*c.sp + c.ph);
-      const x = c.x*W + Math.sin(time*0.3+c.ph)*10;
-      const y = c.y*H + Math.cos(time*0.24+c.ph)*8;
-      const r = c.r*breathe, a = (0.22 + 0.5*active) * e * B;
-      orb(x, y, r*1.7, P.yeast, a*0.5);
+      const e = smooth(c.born, c.born + 0.14, f); if (e < 0.02) return;
+      const breathe = 1 + 0.12 * Math.sin(time * c.sp + c.ph);
+      const x = c.x * W + Math.sin(time * 0.3 + c.ph) * 10;
+      const y = c.y * H + Math.cos(time * 0.24 + c.ph) * 8;
+      const r = c.r * breathe, a = (0.22 + 0.5 * active) * e * B;
+      orb(x, y, r * 1.7, P.yeast, a * 0.5);
       orb(x, y, r, P.yeast, a);
-      orb(x - r*0.2, y - r*0.2, r*0.4, P.yeastCore, a*1.1);
+      orb(x - r * 0.2, y - r * 0.2, r * 0.4, P.yeastCore, a * 1.1);
     });
 
     RODS.forEach(c => {
-      const e = smooth(c.born, c.born+0.16, f); if (e < 0.02) return;
-      const x = c.x*W + Math.sin(time*0.26+c.ph)*9;
-      const y = c.y*H + Math.cos(time*0.3+c.ph)*7;
-      const a = (0.25 + 0.35*active) * e * B;
+      const e = smooth(c.born, c.born + 0.16, f); if (e < 0.02) return;
+      const x = c.x * W + Math.sin(time * 0.26 + c.ph) * 9;
+      const y = c.y * H + Math.cos(time * 0.3 + c.ph) * 7;
+      const a = (0.25 + 0.35 * active) * e * B;
       for (let i = 0; i < c.len; i++) {
-        const bx = x + Math.cos(c.ang)*i*c.r*2.2, by = y + Math.sin(c.ang)*i*c.r*2.2;
-        orb(bx, by, c.r*2.4, P.lab, a*0.6);
+        const bx = x + Math.cos(c.ang) * i * c.r * 2.2, by = y + Math.sin(c.ang) * i * c.r * 2.2;
+        orb(bx, by, c.r * 2.4, P.lab, a * 0.6);
         orb(bx, by, c.r, P.labCore, a);
       }
     });
 
     BUB.forEach(b => {
       if (f < b.born - 0.05) return;
-      const prog = ((time*b.sp + b.off) % 1);
-      const y = H*(1.05 - prog*1.1), x = b.x*W + Math.sin(prog*6.28+b.off*6)*10;
-      const a = 0.5 * (1-prog) * active * B;
+      const prog = ((time * b.sp + b.off) % 1);
+      const y = H * (1.05 - prog * 1.1), x = b.x * W + Math.sin(prog * 6.28 + b.off * 6) * 10;
+      const a = 0.5 * (1 - prog) * active * B;
       ctx.strokeStyle = `rgba(${P.bubble},${a})`;
       ctx.lineWidth = 1.5;
       ctx.beginPath(); ctx.arc(x, y, b.r, 0, 6.2832); ctx.stroke();
-      orb(x, y, b.r*1.4, P.bubble, a*0.3);
+      orb(x, y, b.r * 1.4, P.bubble, a * 0.3);
     });
 
     ctx.globalCompositeOperation = 'source-over';
     if (!reduce) requestAnimationFrame(frame);
   }
 
-  applyMaterial();
+  // ── boot ──────────────────────────────────────────────────────────────
+  buildRows();
+  applyPanels();
   applyPhaseCopy();
   if (reduce) frame(0); else requestAnimationFrame(frame);
 })();

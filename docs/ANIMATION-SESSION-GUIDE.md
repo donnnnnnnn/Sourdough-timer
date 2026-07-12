@@ -170,14 +170,21 @@ straight into the props; re-calibrate globally only via `TUNER_BLUR_SCALE`.
 ## The frosted-glass tuner (`tools/frosted-glass-tuner.html`)
 
 A zero-dependency standalone HTML page. Open it directly in a browser — no dev
-server needed. It provides:
+server needed. Rewritten July 2026 as a WYSIWYG mirror of the app:
 
-- A phone mockup with 4 glass panels (timer, fold buttons, progress, phase
-  notes), each with its own opacity + blur slider
-- A canvas-based mock fermentation scene behind the panels
-- Shared controls: edge stroke opacity, glass hue (espresso/honey/slate)
-- Presets: "Legibility-tuned" (default), "All windows open", "Uniform frost"
-- A live readout of the tuned values to port into the app code
+- The mockup screen is exactly 411 CSS px wide (= the app's 411 dp), panes
+  use the exact `GlassBackdrop` compositing recipe, and the preview applies
+  the same `TUNER_BLUR_SCALE` (0.5) the app does — **the constant in the
+  tuner's `<script>` must be kept equal to the one in `GlassBackdrop.tsx`**.
+- Two screens matching `index.tsx` panel-for-panel: "Before bulk"
+  (banner, kitchen temp, autolyse pill, alert chips, expected bulk, planned
+  folds, Start CTA) and "During bulk" (bare timer, phase caption, progress,
+  next fold, fold CTA, dough story, rise tracker, End CTA).
+- Every panel has its own opacity + blur sliders; the three amber CTAs have
+  a frosted-glass ⇄ solid toggle for deciding that look both ways.
+- Presets: "Current app values" (keep in sync with the shipped props),
+  "All windows open", "Uniform frost".
+- A live readout of paste-ready values (raw tuner units).
 
 ### How to apply tuner values to the real app
 

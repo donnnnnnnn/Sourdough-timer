@@ -110,13 +110,25 @@ owner reported visible choppiness on a Pixel 9; the causes and their fixes
   once-per-second hitch.
 - **The clock runs at 60fps** with a `FRAME_MS - 1` epsilon. The old 30fps
   gate double-juddered on a 120Hz display (frames landed 33 or 42ms apart).
-- **Pane updates are capped: ~20fps when visible, zero when off-screen**
-  (July 13 2026, on-device: "choppiness, especially in later stages of
-  bulk"). With ~8 panes mounted during bulk, per-pane React/GPU updates at
-  30fps competed with the 60fps scene recording — whose cost itself grows
-  through bulk as the organism cast fills out. Behind the blur, 20fps is
-  indistinguishable; off-screen panes (checked against the LIVE offset and
-  `getSceneHeight()`, with a 120px margin) skip updates outright.
+- **Pane updates are staggered and widen through bulk; off-screen panes
+  update zero times** (July 13 2026, two rounds on-device — first "choppy
+  later in bulk" persisted even after a flat 20fps/off-screen-skip cap).
+  Root cause: every pane gated on the SAME `tick % period` condition, so
+  all ~7-8 mounted panes redrew — each re-rasterizing + re-blurring a
+  full-viewport layer — on the SAME published scene frame: a periodic
+  multi-pane GPU burst, worse as the organism cast (hence each redraw's
+  cost) grows through bulk. Fixed two ways, NEITHER of which shrinks a
+  pane or changes what it draws:
+  1. Each pane owns a stable slot (`glassStage.nextPaneSlot()`, assigned via
+     a `useState` lazy initializer — NOT `useRef(nextPaneSlot())`, which
+     would call the mutating counter every render) and only redraws on
+     `tick % period === mySlot % period` — spreads the redraw cost evenly
+     across frames instead of bursting it.
+  2. The period itself widens with `glassStage.getSceneProgress()` (3
+     scene-ticks ≈ 20fps early bulk → 6 ≈ 10fps late bulk), holding each
+     pane's total GPU time roughly constant as its redraw cost grows.
+  Off-screen panes (checked against the LIVE offset and `getSceneHeight()`,
+  120px margin) still skip updates outright regardless of turn.
 - **Glass panes are world-anchored via NATIVE counter-scroll** (July 2026,
   after two failed JS-driven designs, both confirmed on-device): live JS
   offsets lag native card motion by 1–2 frames → "very choppy when

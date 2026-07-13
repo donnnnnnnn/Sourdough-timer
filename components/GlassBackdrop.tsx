@@ -18,16 +18,27 @@
  *     ("totally breaks the illusion of frosted glass over the ferment").
  *
  * Content updates (fresh scene pictures) still arrive over glassStage's
- * pub/sub channel: every 3rd frame (~20fps — indistinguishable behind blur)
- * and only while the pane is on-screen. The card-anchored sheen gradient
- * lives in its own tiny static canvas so it doesn't ride the world
- * transform.
+ * pub/sub channel, throttled two ways (on-device: "gets very choppy later
+ * in bulk" with ~7-8 panes mounted):
  *
- * Cost note: each visible pane rasterizes + blurs a scene-sized layer on
- * update. If this GPU load ever shows on-device, the levers are (in order)
- * lowering the update rate, then an overscan-window canvas with re-anchoring.
+ *   1. STAGGERED, not synchronized. Every pane used to gate on the same
+ *      "tick % 3" condition, so ALL mounted panes redrew — each
+ *      re-rasterizing + re-blurring a full-viewport layer — on the SAME
+ *      published frame: a periodic multi-pane GPU burst. Each pane now owns
+ *      a stable slot (glassStage.nextPaneSlot()) and only redraws on its
+ *      own turn, spreading that cost evenly across frames instead.
+ *   2. WIDENING through bulk. The organism cast a pane replays grows
+ *      through bulk (more yeast, LAB chains, bubbles, fraying gluten), so
+ *      each redraw itself gets costlier over time even with #1 fixed. The
+ *      update period grows with glassStage.getSceneProgress() (3 frames
+ *      early bulk → 6 late bulk, ~20fps → ~10fps) to hold total per-pane
+ *      GPU time roughly constant — imperceptible behind blur.
+ *
+ * Panes fully off-screen skip updates outright regardless of turn. The
+ * card-anchored sheen gradient lives in its own tiny static canvas so it
+ * doesn't ride the world transform.
  */
-import { useEffect, useMemo, useReducer, useRef } from 'react';
+import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { Animated, StyleSheet } from 'react-native';
 import {
   Canvas,
@@ -45,9 +56,11 @@ import {
   getContentTop,
   getScenePicture,
   getSceneHeight,
+  getSceneProgress,
   getSceneWidth,
   getScrollAnim,
   getScrollY,
+  nextPaneSlot,
   subscribeScenePicture,
 } from './glassStage';
 
@@ -66,6 +79,12 @@ const TUNER_BLUR_SCALE = 0.5;
 // entering the viewport never shows a stale frame.
 const OFFSCREEN_MARGIN = 120;
 
+// Update period (in published scene ticks) a pane waits between redraws.
+// Widens through bulk — see the file header for why. At 60fps scene ticks:
+// period 3 ≈ 20fps, period 6 ≈ 10fps.
+const BASE_PERIOD = 3;
+const PERIOD_GROWTH = 3;
+
 interface GlassBackdropProps {
   /** Card size from onLayout, px. */
   w: number;
@@ -82,15 +101,18 @@ interface GlassBackdropProps {
 
 export function GlassBackdrop({ w, h, x, contentY, tint, blur }: GlassBackdropProps) {
   const [, force] = useReducer((c: number) => c + 1, 0);
+  // Stable per-instance slot for staggering — lazy initializer so
+  // nextPaneSlot() (a mutating counter) runs exactly once per mount, not on
+  // every render (a plain useRef(nextPaneSlot()) argument would).
+  const [mySlot] = useState(() => nextPaneSlot());
 
   useEffect(() => {
-    let n = 0;
-    return subscribeScenePicture(() => {
-      // Cost caps: visible panes redraw on every 3rd scene frame (~20fps —
-      // indistinguishable behind blur); panes whose slice is entirely
-      // off-screen skip updates outright.
-      n = (n + 1) % 3;
-      if (n !== 0) return;
+    return subscribeScenePicture((tick) => {
+      // 1. Staggered turn-taking: only redraw on this pane's slot, so
+      // mounted panes never all rasterize+blur in the same frame.
+      const period = BASE_PERIOD + Math.round(getSceneProgress() * PERIOD_GROWTH);
+      if (tick % period !== mySlot % period) return;
+      // 2. Off-screen panes skip updates outright.
       const sceneH = getSceneHeight();
       if (sceneH > 0) {
         const liveY = getContentTop() + contentY - getScrollY();
@@ -98,7 +120,7 @@ export function GlassBackdrop({ w, h, x, contentY, tint, blur }: GlassBackdropPr
       }
       force();
     });
-  }, [contentY, h]);
+  }, [contentY, h, mySlot]);
 
   // World anchor: static base −(contentTop + contentY), plus the live native
   // scroll value. setValue keeps working on native-driven values, so measure

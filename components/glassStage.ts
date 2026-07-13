@@ -85,15 +85,19 @@ export function getScrollAnim(): unknown {
 }
 
 // ── Scene picture channel ────────────────────────────────────────────────────
+// Listeners receive a monotonic tick so they can stagger their own updates
+// (see nextPaneSlot below) instead of every pane reacting to every publish.
 
-type SceneListener = () => void;
+type SceneListener = (tick: number) => void;
 let scenePicture: unknown = null;
+let sceneTick = 0;
 const sceneListeners = new Set<SceneListener>();
 
 /** Called by the scene each frame with its freshly recorded organism picture. */
 export function publishScenePicture(pic: unknown): void {
   scenePicture = pic;
-  for (const l of sceneListeners) l();
+  sceneTick += 1;
+  for (const l of sceneListeners) l(sceneTick);
 }
 
 export function getScenePicture(): unknown {
@@ -106,4 +110,32 @@ export function subscribeScenePicture(l: SceneListener): () => void {
   return () => {
     sceneListeners.delete(l);
   };
+}
+
+// Fermentation progress 0..1, published by the scene each render. GlassCard
+// panes widen their update period as this grows — the organism cast (hence
+// the cost of re-rasterizing + blurring a pane's full-viewport picture
+// replay) gets larger through bulk, and that growth was the "gets worse
+// later in bulk" symptom. See GlassBackdrop's PERIOD math.
+let sceneProgress = 0;
+
+export function setSceneProgress(p: number): void {
+  sceneProgress = p;
+}
+
+export function getSceneProgress(): number {
+  return sceneProgress;
+}
+
+// Stable per-pane slot for round-robin update staggering. Every mounted pane
+// used to react to the SAME tick-modulo condition, so all ~7-8 panes during
+// bulk redrew (rasterize + blur a full-viewport layer) on the SAME published
+// frame — a periodic multi-pane GPU burst that read on-device as
+// choppiness. Distinct slots spread that cost evenly across frames instead;
+// no visual change, only WHEN each pane's turn falls.
+let paneSlotCounter = 0;
+
+export function nextPaneSlot(): number {
+  paneSlotCounter += 1;
+  return paneSlotCounter;
 }

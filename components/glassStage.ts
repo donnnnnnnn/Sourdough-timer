@@ -36,6 +36,23 @@ export function setContentTop(y: number): void {
 
 export function setScrollY(y: number): void {
   scrollY = y;
+  lastScrollEventAt = Date.now();
+}
+
+// Scroll events stream at ~60Hz while a drag or fling is in flight and stop
+// dead when it settles, so "an event arrived recently" is a reliable
+// scroll-in-progress signal with no begin/end bookkeeping. GlassBackdrops
+// halve their content-refresh rate while this is true: compositing ~9 moving
+// panes already costs the GPU during a scroll, and that is exactly when
+// blur re-rasterizations were shoving frames over budget ("scrolling is
+// jerky even pre-bulk", build #20). The pane's POSITION is native-driven and
+// unaffected — only how often the organisms behind the frost advance, which
+// is imperceptible while everything is in motion.
+const SCROLL_ACTIVE_WINDOW_MS = 150;
+let lastScrollEventAt = 0;
+
+export function isScrollActive(): boolean {
+  return Date.now() - lastScrollEventAt < SCROLL_ACTIVE_WINDOW_MS;
 }
 
 export function getContentTop(): number {

@@ -124,11 +124,34 @@ owner reported visible choppiness on a Pixel 9; the causes and their fixes
      would call the mutating counter every render) and only redraws on
      `tick % period === mySlot % period` — spreads the redraw cost evenly
      across frames instead of bursting it.
-  2. The period itself widens with `glassStage.getSceneProgress()` (3
-     scene-ticks ≈ 20fps early bulk → 6 ≈ 10fps late bulk), holding each
+  2. The period itself widens with `glassStage.getSceneProgress()` (4
+     scene-ticks ≈ 15fps early bulk → 7 ≈ 8.5fps late bulk), holding each
      pane's total GPU time roughly constant as its redraw cost grows.
   Off-screen panes (checked against the LIVE offset and `getSceneHeight()`,
   120px margin) still skip updates outright regardless of turn.
+- **Each pane's blur layer is clipped to its visible scene slice, and pane
+  refreshes halve while a scroll is in flight** (July 13 2026, build #20
+  on-device: "scrolling is jerky even in the pre bulk screen"). The pane
+  canvas is scene-sized, but only a card-height sliver shows through the
+  card's overflow clip — yet an un-clipped `<Group layer={blur}>` made every
+  redraw rasterize + Gaussian-blur the ENTIRE scene (~9 pre-bulk panes ×
+  15-20fps ≈ 200 full-screen blur passes/sec, continuously; a static screen
+  hid the dropped frames, scrolling exposed them). Two fixes, no visual
+  change:
+  1. The blur group is wrapped in `<Group clip={sliceRect}>` — the visible
+     slice + `BLUR_CLIP_MARGIN` (160px) of scroll drift, recomputed from
+     live values on each redraw. Skia limits the saveLayer to the clip, so
+     blur cost drops from scene-sized to card-band-sized. The opaque base
+     and tint fills stay UNCLIPPED on purpose: a fling that outruns the
+     margin degrades to plain glass (organisms briefly missing at a card
+     edge, behind frost, in motion), never to the sharp scene leaking
+     through a transparent canvas region.
+  2. `glassStage.isScrollActive()` (a scroll event arrived <150ms ago — no
+     begin/end bookkeeping, momentum included) doubles every pane's update
+     period while true. Pane POSITION is native-driven and unaffected; only
+     the frost content's refresh drops, invisible while the screen is
+     moving. This is NOT the rejected "pause the animation during scroll":
+     the main scene never throttles and world-anchoring is untouched.
 - **Glass panes are world-anchored via NATIVE counter-scroll** (July 2026,
   after two failed JS-driven designs, both confirmed on-device): live JS
   offsets lag native card motion by 1–2 frames → "very choppy when

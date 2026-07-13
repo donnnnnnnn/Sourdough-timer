@@ -18,21 +18,34 @@
  *     ("totally breaks the illusion of frosted glass over the ferment").
  *
  * Content updates (fresh scene pictures) still arrive over glassStage's
- * pub/sub channel, throttled two ways (on-device: "gets very choppy later
- * in bulk" with ~7-8 panes mounted):
+ * pub/sub channel, throttled/bounded four ways (each earned by an on-device
+ * jank report — "choppy later in bulk" build #19, "scrolling is jerky even
+ * pre-bulk" build #20):
  *
  *   1. STAGGERED, not synchronized. Every pane used to gate on the same
  *      "tick % 3" condition, so ALL mounted panes redrew — each
- *      re-rasterizing + re-blurring a full-viewport layer — on the SAME
- *      published frame: a periodic multi-pane GPU burst. Each pane now owns
- *      a stable slot (glassStage.nextPaneSlot()) and only redraws on its
- *      own turn, spreading that cost evenly across frames instead.
+ *      re-rasterizing + re-blurring a layer — on the SAME published frame:
+ *      a periodic multi-pane GPU burst. Each pane now owns a stable slot
+ *      (glassStage.nextPaneSlot()) and only redraws on its own turn,
+ *      spreading that cost evenly across frames instead.
  *   2. WIDENING through bulk. The organism cast a pane replays grows
  *      through bulk (more yeast, LAB chains, bubbles, fraying gluten), so
  *      each redraw itself gets costlier over time even with #1 fixed. The
- *      update period grows with glassStage.getSceneProgress() (3 frames
- *      early bulk → 6 late bulk, ~20fps → ~10fps) to hold total per-pane
- *      GPU time roughly constant — imperceptible behind blur.
+ *      update period grows with glassStage.getSceneProgress() to hold total
+ *      per-pane GPU time roughly constant — imperceptible behind blur.
+ *   3. SLOWER WHILE SCROLLING. Scroll frames are when the GPU is already
+ *      compositing ~9 moving panes; the period doubles while scroll events
+ *      are streaming (glassStage.isScrollActive()). Position is native-
+ *      driven and unaffected — only the frost content's frame rate drops,
+ *      invisible while everything is in motion.
+ *   4. BLUR CLIPPED TO THE VISIBLE SLICE. The canvas is scene-sized, but
+ *      only a card-height sliver ever shows through the card's overflow
+ *      clip. Un-clipped, every redraw rasterized + blurred the WHOLE scene
+ *      (~200 full-screen blur passes/sec pre-bulk — the reason build #20
+ *      janked while scrolling even with #1 and #2 in place). The blur layer
+ *      is now clipped to the visible slice + BLUR_CLIP_MARGIN; the opaque
+ *      base and tint fills stay full-canvas so a fling that outruns the
+ *      margin degrades to plain glass, never to sharp sprites leaking in.
  *
  * Panes fully off-screen skip updates outright regardless of turn. The
  * card-anchored sheen gradient lives in its own tiny static canvas so it
@@ -49,6 +62,7 @@ import {
   Picture,
   Rect,
   LinearGradient,
+  rect,
   vec,
   type SkPicture,
 } from '@shopify/react-native-skia';
@@ -60,6 +74,7 @@ import {
   getSceneWidth,
   getScrollAnim,
   getScrollY,
+  isScrollActive,
   nextPaneSlot,
   subscribeScenePicture,
 } from './glassStage';
@@ -81,9 +96,30 @@ const OFFSCREEN_MARGIN = 120;
 
 // Update period (in published scene ticks) a pane waits between redraws.
 // Widens through bulk — see the file header for why. At 60fps scene ticks:
-// period 3 ≈ 20fps, period 6 ≈ 10fps.
-const BASE_PERIOD = 3;
+// period 4 ≈ 15fps, period 7 ≈ 8.5fps. (Was 3/20fps; build #20 was still
+// GPU-bound enough that scrolling janked even pre-bulk. 15fps organism
+// drift behind frost is indistinguishable from 20.)
+const BASE_PERIOD = 4;
 const PERIOD_GROWTH = 3;
+
+// While a scroll is in flight the period doubles: compositing ~9 moving
+// panes is the GPU's busiest moment, and pane POSITION is native-driven so
+// only the frost content's frame rate drops — invisible while everything is
+// moving. (Direct response to "scrolling is jerky even pre-bulk", build #20.)
+const SCROLLING_PERIOD_SCALE = 2;
+
+// The blur layer is clipped to the slice of the scene the card can actually
+// reveal, plus this margin (px) of scroll drift on each side. Without the
+// clip, every redraw rasterized + Gaussian-blurred the ENTIRE scene-sized
+// canvas to show a card-height sliver — the single biggest GPU line item
+// (~200 full-screen blur passes/sec pre-bulk). The margin covers scroll
+// travel between a pane's redraws; if a violent fling outruns it, the card
+// edge briefly shows the base+tint without organisms — behind frost, in
+// motion, effectively invisible (and safe: the opaque base still hides the
+// sharp scene). The base and tint fills stay UNCLIPPED for exactly that
+// safety: overrun degrades to "plain glass", never to sharp sprites
+// leaking through.
+const BLUR_CLIP_MARGIN = 160;
 
 interface GlassBackdropProps {
   /** Card size from onLayout, px. */
@@ -109,8 +145,10 @@ export function GlassBackdrop({ w, h, x, contentY, tint, blur }: GlassBackdropPr
   useEffect(() => {
     return subscribeScenePicture((tick) => {
       // 1. Staggered turn-taking: only redraw on this pane's slot, so
-      // mounted panes never all rasterize+blur in the same frame.
-      const period = BASE_PERIOD + Math.round(getSceneProgress() * PERIOD_GROWTH);
+      // mounted panes never all rasterize+blur in the same frame. The period
+      // widens through bulk and doubles while a scroll is streaming events.
+      let period = BASE_PERIOD + Math.round(getSceneProgress() * PERIOD_GROWTH);
+      if (isScrollActive()) period *= SCROLLING_PERIOD_SCALE;
       if (tick % period !== mySlot % period) return;
       // 2. Off-screen panes skip updates outright.
       const sceneH = getSceneHeight();
@@ -124,10 +162,18 @@ export function GlassBackdrop({ w, h, x, contentY, tint, blur }: GlassBackdropPr
 
   // World anchor: static base −(contentTop + contentY), plus the live native
   // scroll value. setValue keeps working on native-driven values, so measure
-  // corrections land without re-creating the node.
+  // corrections land without re-creating the node. The effect runs every
+  // render (contentTop can change without a prop change) but only crosses the
+  // bridge when the value actually moved — panes re-render ~15×/sec each, and
+  // unconditional setValue was a native round-trip per redraw per pane.
   const baseRef = useRef(new Animated.Value(-(getContentTop() + contentY)));
+  const lastBaseRef = useRef(-(getContentTop() + contentY));
   useEffect(() => {
-    baseRef.current.setValue(-(getContentTop() + contentY));
+    const base = -(getContentTop() + contentY);
+    if (base !== lastBaseRef.current) {
+      lastBaseRef.current = base;
+      baseRef.current.setValue(base);
+    }
   });
   const scrollAnim = getScrollAnim() as Animated.Value | null;
   const translateY = useMemo(
@@ -142,6 +188,20 @@ export function GlassBackdrop({ w, h, x, contentY, tint, blur }: GlassBackdropPr
 
   const tintAlpha = Math.min(0.92, Math.max(0, tint));
   const sigma = blur * TUNER_BLUR_SCALE;
+
+  // The scene slice (in canvas coords) the card's viewport shows right now,
+  // padded by the drift margin. Recomputed from live values on every redraw,
+  // so it tracks the scroll at the pane's own refresh rate. Skia limits the
+  // blur's saveLayer to (current clip ∩ content bounds), so this shrinks the
+  // rasterize+blur from the whole scene to a card-sized band — and culls the
+  // picture's off-slice draw ops for free.
+  const sliceTop = getContentTop() + contentY - getScrollY();
+  const blurClip = rect(
+    0,
+    sliceTop - BLUR_CLIP_MARGIN,
+    sceneW,
+    h + 2 * BLUR_CLIP_MARGIN,
+  );
 
   return (
     <>
@@ -163,8 +223,12 @@ export function GlassBackdrop({ w, h, x, contentY, tint, blur }: GlassBackdropPr
               background is pure black, so this reads as "the scene, out of
               focus" not "a hole". */}
           <Fill color="black" />
-          <Group layer={<Paint><Blur blur={sigma} /></Paint>}>
-            <Picture picture={pic} />
+          {/* Clip OUTSIDE the layer group so the clip is guaranteed to be on
+              the canvas before saveLayer bounds are computed. */}
+          <Group clip={blurClip}>
+            <Group layer={<Paint><Blur blur={sigma} /></Paint>}>
+              <Picture picture={pic} />
+            </Group>
           </Group>
           {/* Warm espresso tint — mutes the additive glow into a pane. */}
           {tintAlpha > 0.004 && <Fill color={`rgba(22,16,13,${tintAlpha})`} />}

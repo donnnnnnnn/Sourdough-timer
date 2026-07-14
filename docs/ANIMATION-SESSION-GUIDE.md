@@ -100,10 +100,28 @@ owner reported visible choppiness on a Pixel 9; the causes and their fixes
   snapshot paint/path state into the recording. Previously every call
   allocated Paint + parsed-string Color (+ MaskFilter) — tens of thousands of
   short-lived objects per second, and the GC pauses read as stutter.
-- **Organisms are recorded once per frame** into `orgPicture`, then replayed
+  Two more allocation classes were flushed out July 13 2026 (build #21
+  on-device: "still has some jerkiness, even when not scrolling"):
+  `glowOrb` built a fresh `MakeRadialGradient` (+ `vec()`) per call — now it
+  caches UNIT gradients keyed by color pair + alphas quantized to 1/64 and
+  places them with a canvas transform (radial gradients are
+  scale-invariant); and `drift()`/`flow()` returned fresh `{dx,dy}` objects
+  per organism per frame — now module scratches (consume into locals before
+  the next call to the same helper).
+- **Recording is split by motion speed.** Everything except bubbles moves
+  ~0.2px/frame (5-8px drift amplitudes over 4-7s periods), so the slow cast
+  is recorded into a sub-picture every 2nd clock tick (every 3rd once
+  progress ≥ 0.5, when the cast is biggest) and each frame's published
+  picture replays it (native, cheap) then records bubbles (~2.3px/frame,
+  visibly steps below 60fps) on top. The slow picture rebuilds immediately
+  when st/layout/size/dim change — cadence alone would replay a stale cast
+  after a progress step. This roughly halves-to-thirds per-frame JS
+  recording cost, and the saving grows exactly where the jank did: late
+  bulk, where the slow cast is the part that grows.
+- **The published picture is recorded once per frame**, then replayed
   (`canvas.drawPicture`) for the full-canvas pass AND inside each glass
-  panel's blur layer. Never call `drawOrganisms` per panel — with 3 panels
-  that quadruples JS recording work.
+  pane's blur layer. Never re-draw organisms per pane — with ~9 panes that
+  multiplies JS recording work.
 - **`progress` is quantized to 0.5% steps** before feeding `computeDoughState`
   / `buildLayout`. The `fraction` prop ticks every second (the timer clock);
   unquantized it rebuilt the entire organism layout every second — a visible

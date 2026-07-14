@@ -59,15 +59,15 @@
  * no visible blur on-device (an SkImage from a second GPU surface, replayed
  * inside a recorded SkPicture, is a rare code path).
  *
- * What actually works: draw organisms once (full canvas, "in focus"), then
- * for each glass panel, clip to its rounded rect, open `canvas.saveLayer()`
- * with a paint carrying `ImageFilter.MakeBlur`, and redraw the organisms
- * AGAIN directly into that layer — see `drawGlassPanels`. A saveLayer image
- * filter only affects content drawn after it opens, not the existing
- * canvas, so this is NOT a backdrop read; it stays on Skia's ordinary
- * layer-filter path and composites correctly under the native UI.
+ * The saveLayer-image-filter variant (redrawing organisms into a blurred
+ * layer inside this recorded picture) ALSO showed no blur on-device — blur
+ * inside a recorded SkPicture is a dead end on this Skia build, full stop.
+ * What actually works: this scene only records/publishes the organisms;
+ * each GlassCard hosts its own small declarative Canvas (GlassBackdrop.tsx)
+ * that replays the published picture through a `<Group layer>` blur — the
+ * mainstream RN Skia path. Full history in docs/SKIA-HANDOFF.md.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { View } from 'react-native';
 import React from 'react';
 import {
@@ -136,12 +136,19 @@ const smooth = (a: number, b: number, t: number) => {
 };
 
 // deterministic per-index drift so motion is smooth + stable (no RNG per frame)
+// drift/flow return MODULE-LEVEL SCRATCH objects (one per helper), not fresh
+// ones: they are called once per organism per frame — hundreds of times per
+// recorded frame late in bulk — and per-call object literals were one of the
+// remaining GC-pressure sources (Hermes minor-GC pauses read as hitches even
+// on a static screen). Contract: read the result into locals BEFORE the next
+// call to the SAME helper — every current call site does (drift and flow use
+// separate scratches, so interleaving the two is fine).
+const DRIFT_OUT = { dx: 0, dy: 0 };
 function drift(t: number, seed: number, ampX: number, ampY: number, period: number) {
   const ph = seed * 1.7;
-  return {
-    dx: Math.sin((t * TAU) / period + ph) * ampX,
-    dy: Math.cos((t * TAU) / (period * 0.85) + ph * 1.3) * ampY,
-  };
+  DRIFT_OUT.dx = Math.sin((t * TAU) / period + ph) * ampX;
+  DRIFT_OUT.dy = Math.cos((t * TAU) / (period * 0.85) + ph * 1.3) * ampY;
+  return DRIFT_OUT;
 }
 function breathe(t: number, seed: number, amp: number, period: number) {
   return 1 + Math.sin((t * TAU) / period + seed * 2.1) * amp;
@@ -153,11 +160,11 @@ function twinkle(t: number, seed: number, amp: number, period: number) {
 // A very slow, smooth shared current so the whole population drifts cohesively
 // instead of every dot doing its own thing. Small amplitude — a collective sway,
 // not a wind. Pure function of position + time.
+const FLOW_OUT = { fx: 0, fy: 0 };
 function flow(x: number, y: number, t: number) {
-  return {
-    fx: Math.sin(y * 0.011 + t * 0.24) * 3.0 + Math.cos(x * 0.009 - t * 0.17) * 1.5,
-    fy: Math.cos(x * 0.012 - t * 0.2) * 2.4 + Math.sin(y * 0.008 + t * 0.13) * 1.2,
-  };
+  FLOW_OUT.fx = Math.sin(y * 0.011 + t * 0.24) * 3.0 + Math.cos(x * 0.009 - t * 0.17) * 1.5;
+  FLOW_OUT.fy = Math.cos(x * 0.012 - t * 0.2) * 2.4 + Math.sin(y * 0.008 + t * 0.13) * 1.2;
+  return FLOW_OUT;
 }
 
 // ── low-level additive primitives (RN Skia canvas API mirrors CanvasKit) ─────
@@ -210,6 +217,60 @@ function blurMask(sigma: number) {
 
 const SCRATCH_PATH = Skia.Path.Make();
 
+// Radial-gradient shaders were the last remaining per-call Skia allocation in
+// the hot path: glowOrb built a fresh MakeRadialGradient (plus its vec())
+// for EVERY glow — hundreds per frame late in bulk, tens of thousands of
+// JSI objects a second, whose GC pauses read as intermittent hitches even on
+// a static screen. Gradients are immutable and radial gradients are
+// scale-invariant, so cache UNIT gradients (center origin, radius 1) keyed
+// by the color pair + both stop alphas quantized to 1/64 (a 1.6% alpha step
+// — below the luminance discrimination threshold for these dim additive
+// glows), and place/size each draw with a canvas transform instead. Paint
+// color/alpha is deliberately left untouched, exactly as before.
+const GRAD_CENTER = vec(0, 0);
+const GRAD_STOPS = [0.0, 0.45, 1.0];
+type CachedShader = ReturnType<typeof Skia.Shader.MakeRadialGradient>;
+const GRAD_CACHE = new Map<number, Map<number, CachedShader>>();
+let gradCacheCount = 0;
+// Palette entries are 0..255 ints, so a color pair packs exactly into 2^48
+// (safe integer range) — numeric keys avoid per-call string building.
+function packRGB(c: RGB) {
+  return (c[0] << 16) | (c[1] << 8) | c[2];
+}
+function unitGlowShader(coreRgb: RGB, hueRgb: RGB, coreA: number, hueA: number) {
+  const pairKey = packRGB(coreRgb) * 0x1000000 + packRGB(hueRgb);
+  let byAlpha = GRAD_CACHE.get(pairKey);
+  if (!byAlpha) {
+    byAlpha = new Map();
+    GRAD_CACHE.set(pairKey, byAlpha);
+  }
+  const qCore = Math.round(clamp(coreA, 0, 1) * 64);
+  const qHue = Math.round(clamp(hueA, 0, 1) * 64);
+  const aKey = qCore * 65 + qHue;
+  let sh = byAlpha.get(aKey);
+  if (!sh) {
+    // Alphas animate through bounded pulse ranges with per-call-site fixed
+    // ratios, so realistic cache size is a few hundred; the cap is a
+    // safety valve, not an expected path.
+    if (gradCacheCount > 4096) {
+      GRAD_CACHE.clear();
+      gradCacheCount = 0;
+      byAlpha = new Map();
+      GRAD_CACHE.set(pairKey, byAlpha);
+    }
+    sh = Skia.Shader.MakeRadialGradient(
+      GRAD_CENTER,
+      1,
+      [col(coreRgb, qCore / 64), col(hueRgb, qHue / 64), col(hueRgb, 0)],
+      GRAD_STOPS,
+      TileMode.Clamp,
+    );
+    byAlpha.set(aKey, sh);
+    gradCacheCount += 1;
+  }
+  return sh;
+}
+
 function glowOrb(
   canvas: any,
   x: number,
@@ -222,15 +283,12 @@ function glowOrb(
 ) {
   if (r <= 0.2 || (coreA <= 0 && hueA <= 0)) return;
   const p = additivePaint();
-  const sh = Skia.Shader.MakeRadialGradient(
-    vec(x, y),
-    r,
-    [col(coreRgb, coreA), col(hueRgb, hueA), col(hueRgb, 0)],
-    [0.0, 0.45, 1.0],
-    TileMode.Clamp,
-  );
-  p.setShader(sh);
-  canvas.drawCircle(x, y, r, p);
+  p.setShader(unitGlowShader(coreRgb, hueRgb, coreA, hueA));
+  canvas.save();
+  canvas.translate(x, y);
+  canvas.scale(r, r);
+  canvas.drawCircle(0, 0, 1, p);
+  canvas.restore();
 }
 function halo(canvas: any, x: number, y: number, r: number, rgb: RGB, a: number, sigma: number) {
   if (a <= 0.002) return;
@@ -685,7 +743,17 @@ function glutenNodeY(n: GlutenNode, time: number, organize: number) {
 // ── the scene ────────────────────────────────────────────────────────────────
 // Just the organisms — drawn identically whether the target is the visible
 // canvas or the offscreen surface used to source the glass-panel blur.
-function drawOrganisms(
+// The cast is recorded in TWO layers split by how fast things move (see the
+// orgPicture memo in the component). Everything except bubbles drifts
+// sub-pixel per frame (drift/flow: 5-8px amplitudes over 4-7s periods ≈
+// 0.2px/frame), so the SLOW layer re-records at half/third rate with no
+// visible change; bubbles rise ~2.3px/frame and would visibly step below
+// 60fps, so the FAST layer records every frame. The slow cast is also the
+// part that GROWS through bulk — exactly the "jerky even when not
+// scrolling, especially later in bulk" JS-thread cost.
+const DIM_PAINT = Skia.Paint(); // module scratch — was allocated per record
+
+function drawSlowOrganisms(
   canvas: any,
   st: DoughState,
   layout: SceneLayout,
@@ -696,9 +764,8 @@ function drawOrganisms(
 ) {
   const dimmed = dim < 0.999;
   if (dimmed) {
-    const lp = Skia.Paint();
-    lp.setAlphaf(clamp(dim, 0, 1));
-    canvas.saveLayer(lp, null);
+    DIM_PAINT.setAlphaf(clamp(dim, 0, 1));
+    canvas.saveLayer(DIM_PAINT, null);
   }
   drawAcidHaze(canvas, layout, W, H);
   drawGluten(canvas, layout.gluten, time);
@@ -707,6 +774,26 @@ function drawOrganisms(
   drawLAB(canvas, layout, st, time);
   drawYeast(canvas, layout, st, time);
   drawAcetic(canvas, layout, time);
+  if (dimmed) canvas.restore();
+}
+
+function drawFastOrganisms(
+  canvas: any,
+  st: DoughState,
+  layout: SceneLayout,
+  W: number,
+  H: number,
+  time: number,
+  dim: number,
+) {
+  // Mirror drawBubbles' own early-out so an empty fast layer costs nothing
+  // (idle/pre-bulk: gasVolume ~0, no bubbles, no saveLayer).
+  if (st.gasVolume < 0.03 || layout.bubbles.length === 0) return;
+  const dimmed = dim < 0.999;
+  if (dimmed) {
+    DIM_PAINT.setAlphaf(clamp(dim, 0, 1));
+    canvas.saveLayer(DIM_PAINT, null);
+  }
   drawBubbles(canvas, layout, st, W, H, time);
   if (dimmed) canvas.restore();
 }
@@ -1233,16 +1320,47 @@ export function SkiaFermentationScene({
     return () => cancelAnimationFrame(raf);
   }, []);
 
-  // The organisms are recorded ONCE per frame into a picture — plain Skia, no
-  // worklet — and drawn full-focus across this canvas. Glass panels are NOT
-  // drawn here anymore: each GlassCard hosts its own small canvas that
-  // replays this same picture through a declarative blur (see
-  // GlassBackdrop.tsx). Publishing happens in an effect so subscriber
-  // re-renders never fire during this component's own render.
-  const orgPicture = useMemo(
-    () => createPicture((canvas) => drawOrganisms(canvas, st, layout, W, H, timeSec, dim)),
-    [st, layout, W, H, timeSec, dim],
-  );
+  // The organisms are recorded into a picture — plain Skia, no worklet — and
+  // drawn full-focus across this canvas. Glass panels are NOT drawn here
+  // anymore: each GlassCard hosts its own small canvas that replays this
+  // same picture through a declarative blur (see GlassBackdrop.tsx).
+  // Publishing happens in an effect so subscriber re-renders never fire
+  // during this component's own render.
+  //
+  // Recording is SPLIT BY MOTION SPEED (on-device, build #21: "still has
+  // some jerkiness, even when not scrolling, especially later in bulk").
+  // Re-recording the whole cast every frame is pure JS-thread cost that
+  // grows with the organism count — and everything except bubbles moves
+  // ~0.2px/frame. So the slow cast is recorded into its own sub-picture
+  // every 2nd clock tick (every 3rd late in bulk, when it is at its
+  // biggest and the per-frame budget is tightest), and each frame's
+  // published picture just REPLAYS it (native, cheap) and records the
+  // bubbles on top at full 60fps. Nested picture replay inside
+  // createPicture is a device-proven path (the old glass design replayed
+  // orgPicture per panel). The slow picture must rebuild immediately when
+  // st/layout/size/dim change — frame cadence alone would replay a stale
+  // cast for a tick or two after a progress step.
+  const slowPicRef = useRef<ReturnType<typeof createPicture> | null>(null);
+  const slowDepsRef = useRef<unknown[]>([]);
+  const frameRef = useRef(0);
+  const orgPicture = useMemo(() => {
+    const frame = frameRef.current++;
+    const slowEvery = progress >= 0.5 ? 3 : 2;
+    const d = slowDepsRef.current;
+    const depsChanged =
+      d[0] !== st || d[1] !== layout || d[2] !== W || d[3] !== H || d[4] !== dim;
+    if (!slowPicRef.current || depsChanged || frame % slowEvery === 0) {
+      slowPicRef.current = createPicture((canvas) =>
+        drawSlowOrganisms(canvas, st, layout, W, H, timeSec, dim),
+      );
+      slowDepsRef.current = [st, layout, W, H, dim];
+    }
+    const slowPic = slowPicRef.current;
+    return createPicture((canvas) => {
+      canvas.drawPicture(slowPic);
+      drawFastOrganisms(canvas, st, layout, W, H, timeSec, dim);
+    });
+  }, [st, layout, W, H, timeSec, dim, progress]);
   useEffect(() => {
     setSceneSize(W, H);
   }, [W, H]);

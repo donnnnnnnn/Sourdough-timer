@@ -80,5 +80,55 @@ phone confirm:
 
 The crumb classifier still needs: working Anthropic key for curation, ≥100
 images/class, training run, and wiring `crumb_classifier.tflite` into
-`model/visionAnalyzer.ts`. Ship the diagnose tab behind a "beta" label if the
-model isn't ready at launch.
+`model/visionAnalyzer.ts`. Ship the scan flow behind its "beta" source note if
+the model isn't ready at launch.
+
+## 5. Design modernization — device verification (July 2026 redesign)
+
+The 2026 redesign (docs/design-modernization-plan.md, executed on
+`claude/design-modernization-ux-lc5tfk`) was verified by type-check + web
+build + Playwright screenshots. These need a real phone before release:
+
+- [ ] **NativeTabs** (`app/(tabs)/_layout.tsx`): renders and navigates on
+      iOS (glass capsule on 26+) and Android (Material 3); labels/icons show;
+      `minimizeBehavior` doesn't fight the scroll views. Web intentionally
+      keeps the classic bottom bar.
+- [ ] **Dial & Ruler gestures** (`components/ui/Dial.tsx`, `Ruler.tsx`):
+      drag tracks the finger (PanResponder `locationX/Y` on both OSes),
+      detent haptics fire (`Clock_Tick` on Android, selection on iOS),
+      screen-reader increment/decrement actions work.
+- [ ] **Corridor touch-to-log** (`components/ui/Corridor.tsx`): drag sets a
+      mark on release; marks persist through app restart (store v2).
+- [ ] **Fraunces on Android**: the three loaded weights render (no tofu /
+      fallback serif); splash gates until fonts resolve.
+- [ ] **Photo persistence**: crumb photo copied into `Paths.document`
+      (new expo-file-system File API) survives relaunch; shelf thumbnails
+      load; storage doesn't balloon after many bakes.
+- [ ] **Share card**: `react-native-view-shot` capture + `expo-sharing`
+      produce a correct PNG of the bake card on both OSes (first native-module
+      use of view-shot — remember the notify-kit lesson: run it on-device
+      before trusting the build).
+- [ ] **Silent Skia fallback**: with Skia deliberately broken in a release
+      build, the pure-JS scene appears (no red panel — that's `__DEV__`-only
+      now).
+- [ ] Haptic pass feels right (not buzzy): press thumps, dial ticks,
+      bulk-end Success.
+
+**Consciously dropped in the redesign** (add back only if missed): the
+orphaned `/diagnose` screen (never reachable; its quiz + report card now live
+in the Shelf flow), the exterior-photo slot (was reference-only, never fed
+the classifier), and the old `−/+` steppers.
+
+## 6. Design phase 4 — deferred flourishes (from the plan, in order)
+
+- [ ] **iOS Live Activity / Dynamic Island for bulk** via expo-widgets
+      (stable in SDK 56; dev build required, which we already need). Android
+      twin already ships (`lib/bulkStatusPanel.android.ts`). Includes the
+      "Fold done" action from the lock screen.
+- [ ] Optional "Daylight" light theme (tokens in `components/theme.ts` make
+      this cheap; verify contrast before shipping).
+- [ ] Sound design (fold squelch, crust-crackle at bulk end) — respect
+      silent mode; needs real assets, don't ship placeholders.
+- [ ] App Store screenshot/preview kit built from the share-card system.
+- [ ] iOS Icon Composer layered `.icon` (needs a Mac; flat PNG ships fine
+      meanwhile — `tools/generate_app_icon.mjs` regenerates all assets).

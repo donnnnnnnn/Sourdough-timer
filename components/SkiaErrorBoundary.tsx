@@ -1,31 +1,22 @@
 /**
- * SkiaErrorBoundary — on-device diagnostics for the Skia crash investigation.
+ * SkiaErrorBoundary — keeps a Skia scene failure from ever reaching users.
  *
- * Why this exists: the app crashed on launch with only "Error: undefined is
- * not a function" and NO stack trace (see docs/SKIA-HANDOFF.md). This file
- * makes the next build tell us the REAL failing call, on the phone screen:
- *
- * 1. `SkiaErrorBoundary` catches any error thrown while rendering its
- *    children and renders the error message + JS stack + React component
- *    stack visibly on screen (and logs them via console.error).
- *
- * 2. `SafeSkiaFermentationScene` loads the Skia scene with an inline
- *    `require()` DURING RENDER instead of a top-level `import`. This is
- *    deliberate and load-bearing: `@shopify/react-native-skia` runs real code
- *    at module-evaluation time (JSI install in skia/NativeSetup.ts, a
- *    `createWorkletRuntime` call in external/reanimated/useVideoLoading.ts).
- *    With a static import, a throw there would happen while the route module
- *    is being evaluated — before ANY boundary exists — and we'd be back to
- *    the generic expo-router error screen. Requiring inside render moves that
- *    module evaluation inside the boundary, so even an import-time crash is
- *    caught and displayed with its stack.
- *
- * This wrapper is temporary scaffolding for the investigation. Once the root
- * cause is fixed and verified on-device, the diagnostic panel can be slimmed
- * down to a silent fallback (e.g. the pure-JS FermentationScene).
+ * Behavior:
+ *  - On web the Skia module (CanvasKit) isn't bundled, so we skip Skia
+ *    entirely and render the pure-JS `FermentationScene` fallback directly.
+ *  - On native, the Skia scene is lazy-`require`d DURING RENDER (deliberate
+ *    and load-bearing: `@shopify/react-native-skia` runs real code at
+ *    module-evaluation time, and a static import would throw before any
+ *    boundary exists — see docs/SKIA-HANDOFF.md).
+ *  - If the scene throws: production users silently get the pure-JS
+ *    `FermentationScene` (same mode/fraction API, same organisms, no Skia);
+ *    dev builds get the red diagnostic panel with the real error + stacks,
+ *    because that panel is how the original launch crash was found.
  */
 import { Component, type ErrorInfo, type ReactNode } from 'react';
-import { ScrollView, Text, View } from 'react-native';
+import { Platform, ScrollView, Text, View } from 'react-native';
+
+import { FermentationScene, type SceneMode } from './FermentationScene';
 
 // Type-only import: erased at compile time, so it does NOT trigger the
 // runtime module load we are deliberately deferring (verified `import type`).
@@ -33,18 +24,25 @@ import type { SkiaFermentationScene as SkiaSceneType } from './SkiaFermentationS
 
 type SkiaSceneProps = Parameters<typeof SkiaSceneType>[0];
 
+interface BoundaryProps {
+  children: ReactNode;
+  /** Props forwarded to the silent FermentationScene fallback. */
+  mode: SceneMode;
+  fraction: number;
+}
+
 interface BoundaryState {
   error: Error | null;
   componentStack: string | null;
 }
 
-/** Trim very long stacks so the panel stays scrollable/readable. */
+/** Trim very long stacks so the dev panel stays scrollable/readable. */
 function trim(s: string | null | undefined, max = 4000): string {
   if (!s) return '(none)';
   return s.length > max ? s.slice(0, max) + `\n… [truncated, ${s.length} chars total]` : s;
 }
 
-export class SkiaErrorBoundary extends Component<{ children: ReactNode }, BoundaryState> {
+export class SkiaErrorBoundary extends Component<BoundaryProps, BoundaryState> {
   state: BoundaryState = { error: null, componentStack: null };
 
   static getDerivedStateFromError(error: Error): Partial<BoundaryState> {
@@ -52,8 +50,8 @@ export class SkiaErrorBoundary extends Component<{ children: ReactNode }, Bounda
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    // Also log everything, so `adb logcat` (or a dev-client console) has the
-    // full untruncated details even if the on-screen panel gets cut off.
+    // Always log the full details so `adb logcat` / a dev-client console has
+    // them even when the on-screen fallback is the silent scene.
     console.error('[SkiaErrorBoundary] Skia scene crashed:', error);
     console.error('[SkiaErrorBoundary] JS stack:', error?.stack ?? '(no stack)');
     console.error('[SkiaErrorBoundary] component stack:', info?.componentStack ?? '(none)');
@@ -65,8 +63,14 @@ export class SkiaErrorBoundary extends Component<{ children: ReactNode }, Bounda
     if (error === null) {
       return this.props.children;
     }
-    // Diagnostic panel: fills the same absolute area the scene would have
-    // occupied. Text is selectable so the owner can long-press and copy it.
+
+    // Production: never show diagnostics — fall back to the pure-JS scene so
+    // the screen keeps its living backdrop and the user never knows.
+    if (!__DEV__) {
+      return <FermentationScene mode={this.props.mode} fraction={this.props.fraction} />;
+    }
+
+    // Dev: the diagnostic panel that found the original launch crash.
     return (
       <View
         style={{
@@ -83,7 +87,7 @@ export class SkiaErrorBoundary extends Component<{ children: ReactNode }, Bounda
         }}>
         <ScrollView contentContainerStyle={{ padding: 10 }}>
           <Text selectable style={{ color: '#ff9f9f', fontSize: 13, fontWeight: '700' }}>
-            SKIA SCENE ERROR (caught by SkiaErrorBoundary)
+            SKIA SCENE ERROR (caught by SkiaErrorBoundary — dev builds only)
           </Text>
           <Text selectable style={{ color: '#ffd7d7', fontSize: 12, marginTop: 6 }}>
             {error.name}: {error.message}
@@ -113,10 +117,15 @@ function LazySkiaScene(props: SkiaSceneProps) {
   return <SkiaFermentationScene {...props} />;
 }
 
-/** Drop-in replacement for <SkiaFermentationScene> with crash diagnostics. */
+/** Drop-in <SkiaFermentationScene> with a silent pure-JS fallback. */
 export function SafeSkiaFermentationScene(props: SkiaSceneProps) {
+  // Web never bundles CanvasKit — skip the throw/catch cycle entirely and
+  // render the DOM-based scene, which was built for exactly this.
+  if (Platform.OS === 'web') {
+    return <FermentationScene mode={props.mode} fraction={props.fraction ?? 0} />;
+  }
   return (
-    <SkiaErrorBoundary>
+    <SkiaErrorBoundary mode={props.mode} fraction={props.fraction ?? 0}>
       <LazySkiaScene {...props} />
     </SkiaErrorBoundary>
   );

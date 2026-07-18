@@ -50,6 +50,17 @@
  * Panes fully off-screen skip updates outright regardless of turn. The
  * card-anchored sheen gradient lives in its own tiny static canvas so it
  * doesn't ride the world transform.
+ *
+ * ── paneDirect experiment (build #25) ──────────────────────────────────────
+ * When perfFlags.paneDirect is true, the pane avoids React re-renders for
+ * picture updates. Instead, the scene picture and blur-clip rect are held in
+ * reanimated SharedValues. On the initial mount, the Canvas processes its
+ * children and registers persistent reanimated mappers for any SharedValue
+ * props it finds. On subsequent updates, the subscription sets
+ * pictureSV.value and clipSV.value — the mappers fire on the UI thread,
+ * update the affected Skia nodes, and trigger a Canvas redraw WITHOUT any
+ * React reconciliation, scene-graph re-visit, or ReanimatedRecorder rebuild.
+ * At ~9 panes × ~10 updates/s, this eliminates ~90 React renders/s.
  */
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { Animated, StyleSheet } from 'react-native';
@@ -66,6 +77,7 @@ import {
   vec,
   type SkPicture,
 } from '@shopify/react-native-skia';
+import { useSharedValue, type SharedValue } from 'react-native-reanimated';
 import {
   getContentTop,
   getScenePicture,
@@ -78,6 +90,7 @@ import {
   nextPaneSlot,
   subscribeScenePicture,
 } from './glassStage';
+import { getPerfFlags } from './perfFlags';
 
 /**
  * Tuner-px → Skia-sigma calibration. The frosted-glass tuner expresses blur
@@ -142,8 +155,25 @@ export function GlassBackdrop({ w, h, x, contentY, tint, blur }: GlassBackdropPr
   // every render (a plain useRef(nextPaneSlot()) argument would).
   const [mySlot] = useState(() => nextPaneSlot());
 
+  // ── paneDirect SharedValues (build #25 experiment) ──────────────────────
+  // Always allocated (hooks can't be conditional), but only DRIVEN when
+  // paneDirect is true. The Canvas mounts once reading these; subsequent
+  // updates flow through the reanimated mapper on the UI thread.
+  const pictureSV = useSharedValue<SkPicture | null>(null);
+  const clipSV = useSharedValue(rect(0, 0, 1, 1));
+  const pdMountedRef = useRef(false);
+  const lastPdRef = useRef(false);
+
   useEffect(() => {
     return subscribeScenePicture((tick) => {
+      const pd = getPerfFlags().paneDirect;
+
+      // Reset the mount guard on false→true transition so the first tick
+      // after enabling paneDirect triggers one React render to mount the
+      // Canvas with SharedValue props.
+      if (pd && !lastPdRef.current) pdMountedRef.current = false;
+      lastPdRef.current = pd;
+
       // 1. Staggered turn-taking: only redraw on this pane's slot, so
       // mounted panes never all rasterize+blur in the same frame. The period
       // widens through bulk and doubles while a scroll is streaming events.
@@ -156,7 +186,25 @@ export function GlassBackdrop({ w, h, x, contentY, tint, blur }: GlassBackdropPr
         const liveY = getContentTop() + contentY - getScrollY();
         if (liveY + h < -OFFSCREEN_MARGIN || liveY > sceneH + OFFSCREEN_MARGIN) return;
       }
-      force();
+
+      if (pd) {
+        // SharedValue path: push picture + clip, skip React render.
+        const pic = getScenePicture() as SkPicture | null;
+        if (pic) pictureSV.value = pic;
+        const sliceTop = getContentTop() + contentY - getScrollY();
+        clipSV.value = rect(
+          0,
+          sliceTop - BLUR_CLIP_MARGIN,
+          getSceneWidth(),
+          h + 2 * BLUR_CLIP_MARGIN,
+        );
+        if (!pdMountedRef.current) {
+          pdMountedRef.current = true;
+          force();
+        }
+      } else {
+        force();
+      }
     });
   }, [contentY, h, mySlot]);
 
@@ -181,20 +229,56 @@ export function GlassBackdrop({ w, h, x, contentY, tint, blur }: GlassBackdropPr
     [scrollAnim],
   );
 
-  const pic = getScenePicture() as SkPicture | null;
   const sceneW = getSceneWidth();
   const sceneH = getSceneHeight();
-  if (!pic || !translateY || w <= 0 || h <= 0 || sceneW <= 0 || sceneH <= 0) return null;
+  if (!translateY || w <= 0 || h <= 0 || sceneW <= 0 || sceneH <= 0) return null;
 
   const tintAlpha = Math.min(0.92, Math.max(0, tint));
   const sigma = blur * TUNER_BLUR_SCALE;
+  const paneDirect = getPerfFlags().paneDirect;
 
-  // The scene slice (in canvas coords) the card's viewport shows right now,
-  // padded by the drift margin. Recomputed from live values on every redraw,
-  // so it tracks the scroll at the pane's own refresh rate. Skia limits the
-  // blur's saveLayer to (current clip ∩ content bounds), so this shrinks the
-  // rasterize+blur from the whole scene to a card-sized band — and culls the
-  // picture's off-slice draw ops for free.
+  // ── paneDirect path: Canvas rendered once, SharedValues drive updates ───
+  if (paneDirect && pdMountedRef.current) {
+    return (
+      <>
+        <Animated.View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            left: -x,
+            top: 0,
+            width: sceneW,
+            height: sceneH,
+            transform: [{ translateY }],
+          }}>
+          <Canvas pointerEvents="none" style={{ width: sceneW, height: sceneH }}>
+            <Fill color="black" />
+            <Group clip={clipSV as unknown as SharedValue<ReturnType<typeof rect>>}>
+              <Group layer={<Paint><Blur blur={sigma} /></Paint>}>
+                <Picture picture={pictureSV as any} />
+              </Group>
+            </Group>
+            {tintAlpha > 0.004 && <Fill color={`rgba(22,16,13,${tintAlpha})`} />}
+          </Canvas>
+        </Animated.View>
+        <Canvas pointerEvents="none" style={StyleSheet.absoluteFill}>
+          <Rect x={0} y={0} width={w} height={h}>
+            <LinearGradient
+              start={vec(0, 0)}
+              end={vec(0, h)}
+              colors={['rgba(255,240,220,0.12)', 'rgba(255,240,220,0.0)']}
+              positions={[0, 0.5]}
+            />
+          </Rect>
+        </Canvas>
+      </>
+    );
+  }
+
+  // ── React path (default, and paneDirect before first mount) ─────────────
+  const pic = getScenePicture() as SkPicture | null;
+  if (!pic) return null;
+
   const sliceTop = getContentTop() + contentY - getScrollY();
   const blurClip = rect(
     0,

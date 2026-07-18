@@ -21,7 +21,8 @@ Owner device: **Pixel 9 (120Hz)**. Complaint history and what each build fixed:
 | #21 | `9568f1f` | Blur clipped to visible slice + scroll-time refresh halving + BASE_PERIOD 3→4 → "improved significantly", card edges confirmed good, but "still some jerkiness, even when not scrolling, especially later in bulk" |
 | #22 | `27998f4` | glowOrb unit-gradient shader cache; drift/flow scratch outputs; slow/fast layer split (slow cast @30fps, @20fps late bulk; bubbles @60fps). Verdict: **"better than before, but still could be smoother, especially later in animation."** |
 | #23 | (prev pass) | Direct renderer (React/scene-graph/runOnUI bypass — see guide; pixel-identical, default ON, `draw` chip falls back); perf HUD + owner A/B chips; gradient-disc glow substitution (`glow` chip, default mask); 75% backing-resolution option (`res` chip, default 100%); sub-visible-alpha culling (`cull` chip, default off); grain-constants precompute + gluten live-node pool (pixel-identical). **Owner verdict: "draw direct is smoother, glow mask looks better, res 100 vs 75 no noticeable difference, cull on doesn't change visually."** |
-| #24 | (this pass) | Merged design-modernization UI overhaul (Fraunces font, AppText, DoughButton, Chip, etc.). A/B evidence collected (HUD screenshots, sim:bulk 85%). Promoted `cull: true` as default. See evidence table below. |
+| #24 | (prev pass) | Merged design-modernization UI overhaul (Fraunces font, AppText, DoughButton, Chip, etc.). A/B evidence collected (HUD screenshots, sim:bulk 85%). Promoted `cull: true` as default. See evidence table below. |
+| #25 | (this pass) | Opaque scene surface experiment (`opaque` chip, default OFF). Pane-side SharedValue bypass (`pane` chip, default react). Both behind A/B toggles — owner tests. |
 
 ### Build #24 A/B evidence (Pixel 9, sim:bulk 85%, HUD screenshots)
 
@@ -116,12 +117,15 @@ the 60fps target. JS work is low (3–5ms avg), so the bottleneck is almost
 certainly GPU-bound — the render thread is spending too long compositing the
 full-resolution scene + 9–10 glass panes with MaskFilter blur.
 
-**Next steps (in priority order):**
-1. Try direction #4 (opaque scene surface) — one-line experiment that may
-   eliminate a full-screen alpha blend the compositor pays every frame.
-2. Try direction #2 (pane-side SharedValue bypass) — the 90 React
-   renders/s from glass panes generate significant render-thread work.
-3. If the owner can install adb: collect `gfxinfo` render-thread percentiles
+**Build #25 ships both direction #2 and #4 behind chips.** Owner tests:
+1. Tap `opaque` → on. Do the glass cards still render above the scene? Is
+   there any z-fighting or visual change? If it looks fine, check fps.
+2. Tap `pane` → sv. Does the frost content still update behind the cards?
+   If it freezes or goes black, that's a SharedValue compatibility issue —
+   toggle back to `react`.
+3. Try BOTH on at the same time if each works individually.
+4. Screenshot the HUD for each combo.
+5. If the owner can install adb: collect `gfxinfo` render-thread percentiles
    to confirm the GPU-bound diagnosis before heavier surgery.
 
 ## Ranked directions for the next pass
@@ -131,23 +135,15 @@ full-resolution scene + 9–10 glass panes with MaskFilter blur.
 `cull: true` promoted. `glow: 'mask'`, `resScale: 1`, `renderer: 'direct'`
 confirmed as correct defaults. Chips stay for future experiments.
 
-### 2. Pane-side React/recorder bypass (JS thread, medium risk)
+### 2. Pane-side React/recorder bypass — shipped behind `pane` chip (build #25)
 
-Each GlassBackdrop refresh is still a React render + scene-graph re-visit +
-`ReanimatedRecorder` rebuild + `runOnUI` dispatch (~9 panes × ~10/s ≈ 90/s
-aggregate — now MORE machinery per second than the scene itself pays).
-The pane's blur must stay declarative (constraint 3), so the fix is
-different from the scene's: pass the changing values as reanimated
-**SharedValues** (`picture`, and the clip rect) instead of plain props.
-With shared values, `Container.native.js` registers a persistent mapper
-ONCE and per-update only runs `applyUpdates + replay` on the UI thread — no
-React, no SG visit, no recorder rebuild. Our files stay worklet-free
-(setting `sv.value` from JS is plain code; the worklets live inside the
-library and ALREADY run per refresh today via `runOnUI`). Risks: SharedValue
-props are the reanimated↔Skia bridge the guide warns about — prototype on
-one pane first, keep the current path behind a flag exactly like
-`renderer`, and note that `useSharedValue` import in GlassBackdrop must not
-break web (GlassCard already skips panes on web).
+**Shipped.** GlassBackdrop now holds `pictureSV` and `clipSV` SharedValues.
+When `paneDirect` is true, the subscription updates these instead of calling
+`force()` — the Canvas mounts once and the reanimated mapper handles
+subsequent updates on the UI thread. One initial React render mounts the
+Canvas; after that, ~90 React renders/s are eliminated. Falls back to the
+React path by default (`paneDirect: false`). The `pane` HUD chip toggles
+between `sv` (SharedValue) and `react` (current path).
 
 ### 3. Explicit SkPicture disposal (only if HUD shows GC pressure)
 
@@ -159,15 +155,13 @@ Also dispose the previous slow sub-picture on rebuild (only the published
 wrapper references it, and only until the next publish). Don't do this
 speculatively.
 
-### 4. Opaque scene surface (GPU, one-line experiment, needs on-device proof)
+### 4. Opaque scene surface — shipped behind `opaque` chip (build #25)
 
-`SkiaPictureView` accepts `opaque`. The scene surface currently composites
-with alpha over a black RN view — a full-screen blend the compositor pays
-every frame for nothing (the scene background is opaque black anyway).
-`opaque` on Android switches the surface mode; given this device's history
-of surface-stacking surprises (BackdropBlur rendering above the app's UI),
-treat it as an experiment: behind a perfFlags chip, owner confirms the glass
-cards still render above the scene and nothing z-fights.
+**Shipped.** `SkiaPictureView` now receives `opaque={flags.opaque}`. When
+`opaque` is true, the compositor skips the full-screen alpha blend for the
+scene surface. Risk: z-order surprises with the glass cards (happened before
+with BackdropBlur). The `opaque` HUD chip toggles it live. Default OFF until
+the owner confirms the glass cards still render correctly above the scene.
 
 ### 5. Dependency upgrade (riskiest, isolate completely)
 

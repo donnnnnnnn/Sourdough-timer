@@ -1526,6 +1526,7 @@ export function SkiaFermentationScene({
   // doesn't visibly restart every drift/breathe phase.
   const direct = flags.renderer === 'direct';
   const resScale = flags.resScale;
+  const opaque = flags.opaque;
 
   const drawStateRef = useRef<SceneDrawState>({ st, layout, W, H, dim, progress });
   drawStateRef.current = { st, layout, W, H, dim, progress };
@@ -1675,7 +1676,7 @@ export function SkiaFermentationScene({
           Glass panels are NOT drawn here — each GlassCard renders its own
           blurred window onto this same picture (see GlassBackdrop.tsx). */}
       {direct ? (
-        <SkiaPictureView ref={pvRef} mode="default" style={canvasStyle} />
+        <SkiaPictureView ref={pvRef} mode="default" opaque={opaque} style={canvasStyle} />
       ) : (
         <Canvas style={canvasStyle}>
           {viewPicture && <Picture picture={viewPicture} />}

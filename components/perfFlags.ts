@@ -27,6 +27,16 @@
  *   cull         true = skip draws whose alpha lands below ~1.2% (additive,
  *                over black: at most ~3/255 on any pixel — sub-visible, but
  *                by the letter of the law not pixel-identical, so togglable).
+ *   opaque       true = sets the scene's SkiaPictureView surface to opaque,
+ *                eliminating a full-screen alpha blend the compositor pays
+ *                every frame. Risk: z-order surprises with glass cards
+ *                (happened before with BackdropBlur). NOT pixel-identical
+ *                only if it changes how the surface composites over black.
+ *   paneDirect   true = each GlassBackdrop pane updates its picture and clip
+ *                via reanimated SharedValues instead of triggering a React
+ *                render. Skips the per-update React reconciliation, scene-
+ *                graph re-visit, and ReanimatedRecorder rebuild (~90 React
+ *                renders/s aggregate across ~9 panes).
  *   demoProgress null = live timer drives the scene. A number (0..1) forces
  *                the scene to that bulk progress so late-bulk performance can
  *                be tested in seconds without running a real 5-hour bulk.
@@ -45,6 +55,8 @@ export interface PerfFlags {
   glow: 'mask' | 'grad';
   resScale: 1 | 0.75;
   cull: boolean;
+  opaque: boolean;
+  paneDirect: boolean;
   demoProgress: number | null;
   hud: boolean;
 }
@@ -61,6 +73,8 @@ const DEFAULTS: PerfFlags = {
   glow: 'mask',
   resScale: 1,
   cull: true,
+  opaque: false,
+  paneDirect: false,
   demoProgress: null,
   hud: false,
 };

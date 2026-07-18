@@ -85,16 +85,14 @@ SCHEMA = {
             "photos arranged in a grid/collage (e.g. a labeled comparison chart).",
         },
         "single_label": {
-            "type": ["string", "null"],
-            "enum": LABELS + [None],
+            "anyOf": [{"type": "string", "enum": LABELS}, {"type": "null"}],
             "description": "For a single crumb photo: the fermentation diagnosis "
             "on a 5-point scale. Use embedded/overlaid text and the provided page "
             "context first, then judge visually per the criteria in the prompt. "
             "Null if composite or not crumb.",
         },
         "single_confidence": {
-            "type": ["string", "null"],
-            "enum": ["high", "medium", "low", None],
+            "anyOf": [{"type": "string", "enum": ["high", "medium", "low"]}, {"type": "null"}],
             "description": "Confidence in single_label. Null if not applicable.",
         },
         "grid_rows": {
@@ -116,8 +114,7 @@ SCHEMA = {
                     "row": {"type": "integer", "description": "0-indexed row"},
                     "col": {"type": "integer", "description": "0-indexed column"},
                     "label": {
-                        "type": ["string", "null"],
-                        "enum": LABELS + [None],
+                        "anyOf": [{"type": "string", "enum": LABELS}, {"type": "null"}],
                         "description": "Author's diagnosis for this panel per its "
                         "embedded text. Null if the panel has no readable label "
                         "and can't be confidently judged.",

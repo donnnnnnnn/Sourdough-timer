@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, Image, ActivityIndicator, Alert } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import { Camera, RotateCcw } from 'lucide-react-native';
 import { router } from 'expo-router';
@@ -119,6 +120,8 @@ function BakeCard({ item }: { item: BakeLog }) {
 type Step = 'sessions' | 'quick' | 'photo' | 'analysing' | 'result' | 'tiebreaker';
 
 export default function LogScreen() {
+  const insets = useSafeAreaInsets();
+  const pageTop = { padding: 24, paddingTop: insets.top + 16, paddingBottom: 48 };
   const { pendingSessions, bakeLogs, saveLog, lastEndedBulk, undoEndBulk } = useBakeStore();
   const [step, setStep] = useState<Step>('sessions');
   const [activeSession, setActiveSession] = useState<PendingSession | null>(null);
@@ -217,7 +220,7 @@ export default function LogScreen() {
 
   if (step === 'sessions') {
     return (
-      <ScrollView style={{ flex: 1, backgroundColor: C.bg }} contentContainerStyle={{ padding: 24, paddingBottom: 48 }}>
+      <ScrollView style={{ flex: 1, backgroundColor: C.bg }} contentContainerStyle={pageTop}>
         <Text style={{ color: C.text, fontSize: 30, fontFamily: fonts.display, letterSpacing: 0.2, marginBottom: 4 }}>
           Bake Log
         </Text>
@@ -329,7 +332,7 @@ export default function LogScreen() {
   if (step === 'tiebreaker' && diagResult) {
     const tbQuestions = pickTiebreakerQuestions(diagResult.diagnosis);
     return (
-      <ScrollView style={{ flex: 1, backgroundColor: C.bg }} contentContainerStyle={{ padding: 24, paddingBottom: 48 }}>
+      <ScrollView style={{ flex: 1, backgroundColor: C.bg }} contentContainerStyle={pageTop}>
         <TouchableOpacity onPress={resetToSessions} activeOpacity={0.7} style={{ marginBottom: 24 }}>
           <Text style={{ color: C.accent, fontSize: 15, fontWeight: '600' }}>← Back</Text>
         </TouchableOpacity>
@@ -374,7 +377,7 @@ export default function LogScreen() {
   if (step === 'result' && diagResult) {
     const copy = DIAGNOSIS_COPY[diagResult.diagnosis as keyof typeof DIAGNOSIS_COPY];
     return (
-      <ScrollView style={{ flex: 1, backgroundColor: C.bg }} contentContainerStyle={{ padding: 24, paddingBottom: 48 }}>
+      <ScrollView style={{ flex: 1, backgroundColor: C.bg }} contentContainerStyle={pageTop}>
         <TouchableOpacity onPress={resetToSessions} activeOpacity={0.7} style={{ marginBottom: 16 }}>
           <Text style={{ color: C.accent, fontSize: 15, fontWeight: '600' }}>← Back</Text>
         </TouchableOpacity>
@@ -437,7 +440,7 @@ export default function LogScreen() {
 
   if (step === 'photo') {
     return (
-      <ScrollView style={{ flex: 1, backgroundColor: C.bg }} contentContainerStyle={{ padding: 24, paddingBottom: 48 }}>
+      <ScrollView style={{ flex: 1, backgroundColor: C.bg }} contentContainerStyle={pageTop}>
         <TouchableOpacity onPress={() => setStep('quick')} activeOpacity={0.7} style={{ marginBottom: 24 }}>
           <Text style={{ color: C.accent, fontSize: 15, fontWeight: '600' }}>← Back</Text>
         </TouchableOpacity>
@@ -484,7 +487,7 @@ export default function LogScreen() {
   }
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: C.bg }} contentContainerStyle={{ padding: 24, paddingBottom: 48 }}>
+    <ScrollView style={{ flex: 1, backgroundColor: C.bg }} contentContainerStyle={pageTop}>
       <TouchableOpacity onPress={resetToSessions} activeOpacity={0.7} style={{ marginBottom: 24 }}>
         <Text style={{ color: C.accent, fontSize: 15, fontWeight: '600' }}>← Back</Text>
       </TouchableOpacity>

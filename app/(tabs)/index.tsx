@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, Platform, Animated, Easing, StyleSheet, type NativeSyntheticEvent, type NativeScrollEvent } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Notifications from 'expo-notifications';
 import * as Haptics from 'expo-haptics';
 import { useBakeStore } from '@/store/useBakeStore';
@@ -731,6 +732,7 @@ function PhaseCaption({ copy, phaseLabel }: { copy: PhaseCopy; phaseLabel?: stri
 }
 
 export default function HomeScreen() {
+  const insets = useSafeAreaInsets();
   const {
     bulkStartTimestamp,
     autolyseStartTimestamp,
@@ -1084,7 +1086,7 @@ export default function HomeScreen() {
           onScroll={onScroll}
           onMomentumScrollEnd={remeasureGlass}
           onScrollEndDrag={remeasureGlass}>
-          <View ref={onContentRef} onLayout={remeasureGlass} style={{ padding: 24, paddingBottom: 48 }}>
+          <View ref={onContentRef} onLayout={remeasureGlass} style={{ padding: 24, paddingTop: insets.top + 16, paddingBottom: 48 }}>
 
       {recentLog && !isActive && (
         <View

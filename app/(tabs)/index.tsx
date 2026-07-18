@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, Platform, Animated, Easing, StyleSheet, type NativeSyntheticEvent, type NativeScrollEvent } from 'react-native';
+import { View, Text, TouchableOpacity, Platform, Animated, Easing, StyleSheet, type NativeSyntheticEvent, type NativeScrollEvent } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import * as Haptics from 'expo-haptics';
 import { useBakeStore } from '@/store/useBakeStore';
@@ -21,7 +21,7 @@ import {
 // on-device (see components/SkiaErrorBoundary.tsx and docs/SKIA-HANDOFF.md).
 import { SafeSkiaFermentationScene } from '@/components/SkiaErrorBoundary';
 import { GlassStageProvider, GlassCard } from '@/components/GlassCard';
-import { setScrollY, setContentTop } from '@/components/glassStage';
+import { setScrollY, setContentTop, setScrollAnim } from '@/components/glassStage';
 import { syncBulkPanel, clearBulkPanel } from '@/lib/bulkStatusPanel';
 
 const AUTOLYSE_OPTIONS = [20, 30, 45, 60];
@@ -427,14 +427,7 @@ function RiseTracker({
   const isManual = pct > 0;
   const inZone = display >= RISE_SWEET_LOW && display <= RISE_SWEET_HIGH;
   return (
-    <View
-      style={{
-        backgroundColor: C.card,
-        borderWidth: 1,
-        borderColor: C.cardBorder,
-        borderRadius: 20,
-        padding: 20,
-      }}>
+    <GlassCard radius={20} tint={0.08} blur={11} style={{ padding: 20 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
           <ArrowUp color={C.textMuted} size={13} />
@@ -508,7 +501,7 @@ function RiseTracker({
       {isManual && estimated !== undefined && estimated > 0 && (
         <RiseAdvisory actual={pct} estimated={estimated} />
       )}
-    </View>
+    </GlassCard>
   );
 }
 
@@ -703,15 +696,8 @@ function PhaseCaption({ copy, phaseLabel }: { copy: PhaseCopy; phaseLabel?: stri
   }, [copy, fade]);
   const c = shown.current;
   return (
-    <Animated.View
-      style={{
-        opacity: fade,
-        backgroundColor: C.card,
-        borderWidth: 1,
-        borderColor: C.cardBorder,
-        borderRadius: 20,
-        padding: 18,
-      }}>
+    <Animated.View style={{ opacity: fade }}>
+      <GlassCard radius={20} tint={0.0} blur={13} style={{ padding: 18 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 }}>
         <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: C.accent }} />
         <Text style={{ ...label, color: C.accent }}>
@@ -726,6 +712,7 @@ function PhaseCaption({ copy, phaseLabel }: { copy: PhaseCopy; phaseLabel?: stri
       <Text style={{ color: C.textMuted, fontSize: 14, lineHeight: 20, marginTop: 4, fontStyle: 'italic' }}>
         {c.sensory}
       </Text>
+      </GlassCard>
     </Animated.View>
   );
 }
@@ -772,18 +759,60 @@ export default function HomeScreen() {
   // registered, so no glass panel was ever drawn.
   const [contentNode, setContentNode] = useState<View | null>(null);
   const [measureTick, setMeasureTick] = useState(0);
-  const onContentRef = useCallback((node: View | null) => {
-    setContentNode(node);
-    if (node) {
-      node.measureInWindow((_x: number, y: number) => {
-        setContentTop(y);
+  const rootRef = useRef<View>(null);
+  const contentViewRef = useRef<View | null>(null);
+  const scrollYRef = useRef(0);
+  // contentTop must be the content container's offset relative to the ROOT
+  // view (which the Skia canvas fills), NOT relative to the window — the
+  // window includes the status bar and the tab header above this screen, and
+  // using the window Y drew every glass slab ~a header-height below its card
+  // (confirmed on-device via screenshot). Measure both and take the
+  // difference, adding back the current scroll offset since the content
+  // container's on-screen position moves as the user scrolls.
+  const measureContentTop = useCallback(() => {
+    const content = contentViewRef.current;
+    const root = rootRef.current;
+    if (!content || !root) return;
+    content.measureInWindow((_cx: number, cy: number) => {
+      root.measureInWindow((_rx: number, ry: number) => {
+        setContentTop(cy - ry + scrollYRef.current);
       });
-    }
+    });
   }, []);
-  const onScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
-    setScrollY(e.nativeEvent.contentOffset.y);
-  }, []);
-  const remeasureGlass = useCallback(() => setMeasureTick((t) => t + 1), []);
+  const onContentRef = useCallback(
+    (node: View | null) => {
+      contentViewRef.current = node;
+      setContentNode(node);
+      measureContentTop();
+    },
+    [measureContentTop],
+  );
+  // Glass world-anchoring: the scroll offset is exported BOTH as a plain
+  // number (for measurements and visibility checks) and as a NATIVE-driven
+  // Animated.Value that each GlassBackdrop binds its counter-translation to.
+  // The native value updates on the UI thread in the same frame as the
+  // scroll, so the blurred world stays pixel-locked under the moving glass —
+  // no JS-driven variant survived on-device (lag = stutter; freeze = sprites
+  // dragging along with the panels).
+  const scrollAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    setScrollAnim(scrollAnim);
+  }, [scrollAnim]);
+  const onScroll = useMemo(
+    () =>
+      Animated.event([{ nativeEvent: { contentOffset: { y: scrollAnim } } }], {
+        useNativeDriver: true,
+        listener: (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+          scrollYRef.current = e.nativeEvent.contentOffset.y;
+          setScrollY(e.nativeEvent.contentOffset.y);
+        },
+      }),
+    [scrollAnim],
+  );
+  const remeasureGlass = useCallback(() => {
+    measureContentTop();
+    setMeasureTick((t) => t + 1);
+  }, [measureContentTop]);
 
   // Coach: suggested bulk time from kitchen temp + the user's own history.
   const suggestion = useMemo(() => suggestBulk(doughTempF, bakeLogs), [doughTempF, bakeLogs]);
@@ -1070,14 +1099,14 @@ export default function HomeScreen() {
   const recentLog = bakeLogs.length > 0 ? bakeLogs[0] : null;
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#000' }}>
+    <View ref={rootRef} style={{ flex: 1, backgroundColor: '#000' }}>
       {/* Fullscreen living "microscope" backdrop, behind everything. */}
       <View style={StyleSheet.absoluteFill} pointerEvents="none">
         <SafeSkiaFermentationScene mode={sceneMode} fraction={sceneFraction} />
       </View>
 
       <GlassStageProvider contentNode={contentNode} measureTick={measureTick}>
-        <ScrollView
+        <Animated.ScrollView
           style={{ flex: 1 }}
           contentContainerStyle={{ padding: 0 }}
           scrollEventThrottle={16}
@@ -1087,12 +1116,13 @@ export default function HomeScreen() {
           <View ref={onContentRef} onLayout={remeasureGlass} style={{ padding: 24, paddingBottom: 48 }}>
 
       {recentLog && !isActive && (
-        <View
+        <GlassCard
+          radius={20}
+          tint={0.09}
+          blur={7}
           style={{
-            backgroundColor: C.accentSoft,
-            borderWidth: 1,
             borderColor: C.accentBorder,
-            borderRadius: 20,
+            borderTopColor: C.accentBorder,
             padding: 18,
             marginBottom: 24,
             flexDirection: 'row',
@@ -1108,7 +1138,7 @@ export default function HomeScreen() {
               {formatMinutes(recentLog.bulkDurationMinutes)} · {recentLog.foldCount} fold{recentLog.foldCount !== 1 ? 's' : ''}
             </Text>
           </View>
-        </View>
+        </GlassCard>
       )}
 
       {!isActive ? (
@@ -1149,13 +1179,12 @@ export default function HomeScreen() {
 
               {!autolyseDone &&
                 (showAutolysePicker ? (
-                  <View
+                  <GlassCard
+                    radius={16}
+                    tint={0.08}
+                    blur={11}
                     style={{
                       marginTop: 16,
-                      backgroundColor: C.card,
-                      borderWidth: 1,
-                      borderColor: C.cardBorder,
-                      borderRadius: 16,
                       padding: 14,
                     }}>
                     <Text style={{ ...label, marginBottom: 10 }}>Autolyse for</Text>
@@ -1179,32 +1208,32 @@ export default function HomeScreen() {
                         </View>
                       ))}
                     </View>
-                  </View>
+                  </GlassCard>
                 ) : (
-                  <TouchableOpacity
-                    onPress={() => {
-                      thump(Haptics.ImpactFeedbackStyle.Light);
-                      setShowAutolysePicker(true);
-                    }}
-                    activeOpacity={0.7}
-                    style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      gap: 6,
-                      marginTop: 16,
-                      alignSelf: 'flex-start',
-                      paddingVertical: 8,
-                      paddingHorizontal: 14,
-                      borderRadius: 12,
-                      borderWidth: 1,
-                      borderColor: C.cardBorder,
-                      backgroundColor: C.card,
-                    }}>
-                    <FlaskConical color={C.textMuted} size={14} />
-                    <Text style={{ color: C.textMuted, fontSize: 13, fontWeight: '600' }}>
-                      Autolyse first
-                    </Text>
-                  </TouchableOpacity>
+                  <GlassCard
+                    radius={12}
+                    tint={0.08}
+                    blur={11}
+                    style={{ marginTop: 16, alignSelf: 'flex-start' }}>
+                    <TouchableOpacity
+                      onPress={() => {
+                        thump(Haptics.ImpactFeedbackStyle.Light);
+                        setShowAutolysePicker(true);
+                      }}
+                      activeOpacity={0.7}
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: 6,
+                        paddingVertical: 8,
+                        paddingHorizontal: 14,
+                      }}>
+                      <FlaskConical color={C.textMuted} size={14} />
+                      <Text style={{ color: C.textMuted, fontSize: 13, fontWeight: '600' }}>
+                        Autolyse first
+                      </Text>
+                    </TouchableOpacity>
+                  </GlassCard>
                 ))}
             </View>
           )}
@@ -1212,7 +1241,7 @@ export default function HomeScreen() {
           {autolyseRunning && <PhaseCaption copy={AUTOLYSE_COPY} phaseLabel="Pre-ferment" />}
 
           {/* Coach: kitchen temp in, suggested bulk time out */}
-          <GlassCard radius={20} tint={0.36} blur={14} style={{ padding: 20 }}>
+          <GlassCard radius={20} tint={0.13} blur={16} style={{ padding: 20 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 14 }}>
               <Thermometer color={C.textMuted} size={13} />
               <Text style={{ ...label }}>Kitchen temp</Text>
@@ -1282,24 +1311,31 @@ export default function HomeScreen() {
                 const active = selectedInterval === mins;
                 return (
                   <View key={mins} style={{ flex: 1 }}>
-                    <Springy
-                      onPress={() => setSelectedInterval(mins)}
-                      pressScale={0.93}
-                      style={{
-                        paddingVertical: 22,
-                        borderRadius: 18,
-                        alignItems: 'center',
-                        backgroundColor: active ? C.accentSoft : C.card,
-                        borderWidth: 1.5,
-                        borderColor: active ? C.accent : C.cardBorder,
-                      }}>
-                      <Text style={{ fontSize: 30, fontWeight: '700', color: active ? C.accent : C.text }}>
-                        {mins}
-                      </Text>
-                      <Text style={{ fontSize: 12, color: active ? C.accent : C.textDim, marginTop: 2 }}>
-                        min
-                      </Text>
-                    </Springy>
+                    <GlassCard
+                      radius={18}
+                      tint={0.0}
+                      blur={6}
+                      style={
+                        active
+                          ? { borderWidth: 1.5, borderColor: C.accent, borderTopColor: C.accent }
+                          : undefined
+                      }>
+                      <Springy
+                        onPress={() => setSelectedInterval(mins)}
+                        pressScale={0.93}
+                        style={{
+                          paddingVertical: 22,
+                          alignItems: 'center',
+                          backgroundColor: active ? C.accentSoft : 'transparent',
+                        }}>
+                        <Text style={{ fontSize: 30, fontWeight: '700', color: active ? C.accent : C.text }}>
+                          {mins}
+                        </Text>
+                        <Text style={{ fontSize: 12, color: active ? C.accent : C.textDim, marginTop: 2 }}>
+                          min
+                        </Text>
+                      </Springy>
+                    </GlassCard>
                   </View>
                 );
               })}
@@ -1310,14 +1346,10 @@ export default function HomeScreen() {
             <Text style={{ ...label, marginBottom: 14 }}>
               Expected bulk time
             </Text>
-            <View style={{
+            <GlassCard radius={18} tint={0.16} blur={12} style={{
               flexDirection: 'row',
               alignItems: 'center',
               justifyContent: 'center',
-              backgroundColor: C.card,
-              borderWidth: 1,
-              borderColor: C.cardBorder,
-              borderRadius: 18,
               padding: 8,
             }}>
               <TouchableOpacity
@@ -1340,21 +1372,17 @@ export default function HomeScreen() {
                 style={{ paddingVertical: 12, paddingHorizontal: 28 }}>
                 <Text style={{ color: plannedTarget < TARGET_MAX ? C.text : C.textDim, fontSize: 28, fontWeight: '300' }}>+</Text>
               </TouchableOpacity>
-            </View>
+            </GlassCard>
           </View>
 
           <View>
             <Text style={{ ...label, marginBottom: 14 }}>
               Planned folds
             </Text>
-            <View style={{
+            <GlassCard radius={18} tint={0.16} blur={9} style={{
               flexDirection: 'row',
               alignItems: 'center',
               justifyContent: 'center',
-              backgroundColor: C.card,
-              borderWidth: 1,
-              borderColor: C.cardBorder,
-              borderRadius: 18,
               padding: 8,
             }}>
               <TouchableOpacity
@@ -1377,7 +1405,7 @@ export default function HomeScreen() {
                 style={{ paddingVertical: 12, paddingHorizontal: 28 }}>
                 <Text style={{ color: foldCount < MAX_PLANNED_FOLDS ? C.text : C.textDim, fontSize: 28, fontWeight: '300' }}>+</Text>
               </TouchableOpacity>
-            </View>
+            </GlassCard>
           </View>
 
           <View>
@@ -1401,23 +1429,22 @@ export default function HomeScreen() {
                   }}
                 />
               )}
-              <Springy
-                onPress={handleStart}
-                pressScale={0.97}
-                style={{
-                  backgroundColor: C.accent,
-                  borderRadius: 22,
-                  paddingVertical: 26,
-                  alignItems: 'center',
-                  shadowColor: C.accent,
-                  shadowOffset: { width: 0, height: 8 },
-                  shadowOpacity: 0.35,
-                  shadowRadius: 24,
-                  elevation: 8,
-                }}>
-                <Text style={{ color: C.onAccent, fontSize: 26, fontWeight: '800', letterSpacing: -0.3 }}>
-                  Start Bulk
-                </Text>
+              <Springy onPress={handleStart} pressScale={0.97}>
+                <GlassCard
+                  radius={22}
+                  tint={0.46}
+                  blur={14}
+                  style={{
+                    borderWidth: 1.5,
+                    borderColor: C.accent,
+                    borderTopColor: C.accent,
+                    paddingVertical: 26,
+                    alignItems: 'center',
+                  }}>
+                  <Text style={{ color: C.accent, fontSize: 26, fontWeight: '800', letterSpacing: -0.3 }}>
+                    Start Bulk
+                  </Text>
+                </GlassCard>
               </Springy>
             </View>
             <Text
@@ -1477,7 +1504,7 @@ export default function HomeScreen() {
           />
 
           {/* Whole-bulk progress toward the planned end time */}
-          <GlassCard radius={20} tint={0.36} blur={14} style={{ padding: 20 }}>
+          <GlassCard radius={20} tint={0.12} blur={11} style={{ padding: 20 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
               <Text style={{ ...label }}>Bulk progress</Text>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -1515,12 +1542,11 @@ export default function HomeScreen() {
           </GlassCard>
 
           {foldsComplete ? (
-            <View
+            <GlassCard
+              radius={20}
+              tint={0.13}
+              blur={12}
               style={{
-                backgroundColor: C.card,
-                borderWidth: 1,
-                borderColor: C.cardBorder,
-                borderRadius: 20,
                 paddingVertical: 14,
                 paddingHorizontal: 20,
                 flexDirection: 'row',
@@ -1531,16 +1557,9 @@ export default function HomeScreen() {
               <Text style={{ color: C.text, fontSize: 15, fontWeight: '600' }}>
                 All {defaultFoldCount} folds done — watch the dough for shape readiness
               </Text>
-            </View>
+            </GlassCard>
           ) : foldIsLate ? (
-            <View
-              style={{
-                backgroundColor: C.card,
-                borderWidth: 1,
-                borderColor: C.cardBorder,
-                borderRadius: 20,
-                padding: 20,
-              }}>
+            <GlassCard radius={20} tint={0.13} blur={12} style={{ padding: 20 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
                 <Clock color={C.orange} size={16} />
                 <Text style={{ ...label, color: C.orange }}>{foldLatenessAdvice(lateMinutes, doughTempF).title}</Text>
@@ -1548,14 +1567,13 @@ export default function HomeScreen() {
               <Text style={{ color: C.textMuted, fontSize: 14, lineHeight: 20 }}>
                 {foldLatenessAdvice(lateMinutes, doughTempF).body}
               </Text>
-            </View>
+            </GlassCard>
           ) : (
-            <View
+            <GlassCard
+              radius={20}
+              tint={0.13}
+              blur={12}
               style={{
-                backgroundColor: C.card,
-                borderWidth: 1,
-                borderColor: C.cardBorder,
-                borderRadius: 20,
                 padding: 20,
                 alignItems: 'center',
               }}>
@@ -1589,11 +1607,11 @@ export default function HomeScreen() {
               <Text style={{ color: C.textDim, fontSize: 13, marginTop: 10 }}>
                 every {foldIntervalMinutes} min
               </Text>
-            </View>
+            </GlassCard>
           )}
 
           {/* The dough's story so far */}
-          <GlassCard radius={20} tint={0.54} blur={16} style={{ padding: 20 }}>
+          <GlassCard radius={20} tint={0.26} blur={9} style={{ padding: 20 }}>
             <Text style={{ ...label, marginBottom: 16 }}>Dough story</Text>
             <DoughStory
               startTs={bulkStartTimestamp ?? now}
@@ -1614,15 +1632,18 @@ export default function HomeScreen() {
 
           <Springy
             onPress={handleFold}
-            pressScale={0.97}
-            style={{
-              backgroundColor: C.accentSoft,
-              borderWidth: 1.5,
-              borderColor: C.accentBorder,
-              borderRadius: 22,
-              paddingVertical: 26,
-              alignItems: 'center',
-            }}>
+            pressScale={0.97}>
+            <GlassCard
+              radius={22}
+              tint={0.0}
+              blur={7}
+              style={{
+                borderWidth: 1.5,
+                borderColor: C.accentBorder,
+                borderTopColor: C.accentBorder,
+                paddingVertical: 26,
+                alignItems: 'center',
+              }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
               <Hand color={C.accent} size={14} />
               <Text style={{ ...label, color: C.accent }}>
@@ -1644,27 +1665,29 @@ export default function HomeScreen() {
               <FoldDots completed={completedFolds} planned={defaultFoldCount} />
             </View>
             <Text style={{ color: C.textDim, fontSize: 13 }}>tap to record a fold</Text>
+            </GlassCard>
           </Springy>
 
-          <TouchableOpacity
-            onPress={handleEnd}
-            activeOpacity={0.8}
-            style={{
-              backgroundColor: C.redSoft,
-              borderWidth: 1,
-              borderColor: C.redBorder,
-              borderRadius: 22,
-              paddingVertical: 24,
-              alignItems: 'center',
-            }}>
-            <Text style={{ color: C.red, fontSize: 20, fontWeight: '700' }}>
-              End Bulk & Shape
-            </Text>
+          <TouchableOpacity onPress={handleEnd} activeOpacity={0.8}>
+            <GlassCard
+              radius={22}
+              tint={0.0}
+              blur={9}
+              style={{
+                borderColor: C.redBorder,
+                borderTopColor: C.redBorder,
+                paddingVertical: 24,
+                alignItems: 'center',
+              }}>
+              <Text style={{ color: C.red, fontSize: 20, fontWeight: '700' }}>
+                End Bulk & Shape
+              </Text>
+            </GlassCard>
           </TouchableOpacity>
         </Animated.View>
       )}
           </View>
-        </ScrollView>
+        </Animated.ScrollView>
       </GlassStageProvider>
 
     {celebrating && (

@@ -106,8 +106,6 @@ Chips (each flips a `perfFlags` value live, no rebuild):
 | `glow` | mask / grad | MaskFilter halos vs cached radial-gradient discs (NOT pixel-identical — owner judges look + smoothness). |
 | `res` | 100% / 75% | Scene canvas backing resolution (NOT pixel-identical — sharp specks are the tell; ~44% less GPU fill at 75%). |
 | `cull` | on / off | Skip draws below ~1.2% alpha (≤ ~3/255 per pixel — sub-visible, confirmed by owner). **Default ON since build #24** (evidence: +4 fps, −18ms worst, no visual difference). |
-| `opaque` | on / off | Sets the scene SkiaPictureView surface to opaque, eliminating a full-screen alpha blend. Default OFF — risk: z-order surprises with glass cards (build #25). |
-| `pane` | react / sv | Glass pane update path. `react` = React render per update (current). `sv` = SharedValue bypass — updates flow through reanimated mappers, no React render. Default `react` (build #25 experiment). |
 | `sim` | live / bulk 85% / bulk 97% | Forces the scene to a late-bulk cast immediately — test the worst case without a 5-hour bake. Also un-dims the idle field while active. |
 
 The `sim` chip only affects the SCENE (organism density/progress feeding

@@ -169,18 +169,6 @@ export function PerfHud() {
             onPress={() => setPerfFlags({ cull: !flags.cull })}
           />
           <Chip
-            label="opaque"
-            value={flags.opaque ? 'on' : 'off'}
-            accent={flags.opaque}
-            onPress={() => setPerfFlags({ opaque: !flags.opaque })}
-          />
-          <Chip
-            label="pane"
-            value={flags.paneDirect ? 'sv' : 'react'}
-            accent={flags.paneDirect}
-            onPress={() => setPerfFlags({ paneDirect: !flags.paneDirect })}
-          />
-          <Chip
             label="sim"
             value={flags.demoProgress === null ? 'live' : `bulk ${Math.round(flags.demoProgress * 100)}%`}
             accent={flags.demoProgress !== null}

@@ -22,7 +22,7 @@ Owner device: **Pixel 9 (120Hz)**. Complaint history and what each build fixed:
 | #22 | `27998f4` | glowOrb unit-gradient shader cache; drift/flow scratch outputs; slow/fast layer split (slow cast @30fps, @20fps late bulk; bubbles @60fps). Verdict: **"better than before, but still could be smoother, especially later in animation."** |
 | #23 | (prev pass) | Direct renderer (React/scene-graph/runOnUI bypass — see guide; pixel-identical, default ON, `draw` chip falls back); perf HUD + owner A/B chips; gradient-disc glow substitution (`glow` chip, default mask); 75% backing-resolution option (`res` chip, default 100%); sub-visible-alpha culling (`cull` chip, default off); grain-constants precompute + gluten live-node pool (pixel-identical). **Owner verdict: "draw direct is smoother, glow mask looks better, res 100 vs 75 no noticeable difference, cull on doesn't change visually."** |
 | #24 | (prev pass) | Merged design-modernization UI overhaul (Fraunces font, AppText, DoughButton, Chip, etc.). A/B evidence collected (HUD screenshots, sim:bulk 85%). Promoted `cull: true` as default. See evidence table below. |
-| #25 | (this pass) | Opaque scene surface experiment (`opaque` chip, default OFF). Pane-side SharedValue bypass (`pane` chip, default react). Both behind A/B toggles — owner tests. |
+| #25 | (this pass) | Opaque scene surface experiment (`opaque` chip) — **FAILED**: toggling opaque off corrupts the native surface (sprites disappear, can't recover without restart). Pane-side SharedValue bypass (`pane` chip) — **FAILED**: crashes on tap; Skia 2.6.2 declarative components don't support SharedValues for `picture`/`clip` props at runtime. Both reverted in build #25a. |
 
 ### Build #24 A/B evidence (Pixel 9, sim:bulk 85%, HUD screenshots)
 
@@ -117,16 +117,8 @@ the 60fps target. JS work is low (3–5ms avg), so the bottleneck is almost
 certainly GPU-bound — the render thread is spending too long compositing the
 full-resolution scene + 9–10 glass panes with MaskFilter blur.
 
-**Build #25 ships both direction #2 and #4 behind chips.** Owner tests:
-1. Tap `opaque` → on. Do the glass cards still render above the scene? Is
-   there any z-fighting or visual change? If it looks fine, check fps.
-2. Tap `pane` → sv. Does the frost content still update behind the cards?
-   If it freezes or goes black, that's a SharedValue compatibility issue —
-   toggle back to `react`.
-3. Try BOTH on at the same time if each works individually.
-4. Screenshot the HUD for each combo.
-5. If the owner can install adb: collect `gfxinfo` render-thread percentiles
-   to confirm the GPU-bound diagnosis before heavier surgery.
+**Build #25 tried directions #2 and #4 — both failed on-device.**
+See failure details under each direction below. Build #25a reverts both.
 
 ## Ranked directions for the next pass
 
@@ -135,15 +127,16 @@ full-resolution scene + 9–10 glass panes with MaskFilter blur.
 `cull: true` promoted. `glow: 'mask'`, `resScale: 1`, `renderer: 'direct'`
 confirmed as correct defaults. Chips stay for future experiments.
 
-### 2. Pane-side React/recorder bypass — shipped behind `pane` chip (build #25)
+### ~~2. Pane-side React/recorder bypass~~ ✗ FAILED (build #25)
 
-**Shipped.** GlassBackdrop now holds `pictureSV` and `clipSV` SharedValues.
-When `paneDirect` is true, the subscription updates these instead of calling
-`force()` — the Canvas mounts once and the reanimated mapper handles
-subsequent updates on the UI thread. One initial React render mounts the
-Canvas; after that, ~90 React renders/s are eliminated. Falls back to the
-React path by default (`paneDirect: false`). The `pane` HUD chip toggles
-between `sv` (SharedValue) and `react` (current path).
+**Crashed on-device.** Passing reanimated SharedValues as `picture` and
+`clip` props to Skia's declarative `<Picture>` and `<Group>` components
+compiled (with `as any` casts) but crashed at runtime — Skia 2.6.2's
+declarative layer doesn't support AnimatedProp for SkPicture or SkRect clip
+despite the type signature suggesting it (`AnimatedProp<T> = T | {value: T}`).
+**Reverted.** The pane React-render cost (~90 renders/s) remains; a future
+approach would need to use `SkiaPictureView` + direct JSI calls per pane
+(same pattern as the scene's direct renderer) rather than declarative Canvas.
 
 ### 3. Explicit SkPicture disposal (only if HUD shows GC pressure)
 
@@ -155,13 +148,13 @@ Also dispose the previous slow sub-picture on rebuild (only the published
 wrapper references it, and only until the next publish). Don't do this
 speculatively.
 
-### 4. Opaque scene surface — shipped behind `opaque` chip (build #25)
+### ~~4. Opaque scene surface~~ ✗ FAILED (build #25)
 
-**Shipped.** `SkiaPictureView` now receives `opaque={flags.opaque}`. When
-`opaque` is true, the compositor skips the full-screen alpha blend for the
-scene surface. Risk: z-order surprises with the glass cards (happened before
-with BackdropBlur). The `opaque` HUD chip toggles it live. Default OFF until
-the owner confirms the glass cards still render correctly above the scene.
+**Broke rendering on-device.** Setting `opaque={true}` then toggling back to
+`false` corrupted the native SkiaPictureView surface — organisms disappeared
+and could not be recovered without restarting the app. The `opaque` prop on
+this Skia version doesn't support live toggling; the surface alpha state gets
+permanently corrupted. **Reverted — the prop is no longer passed.**
 
 ### 5. Dependency upgrade (riskiest, isolate completely)
 
@@ -175,7 +168,10 @@ is fragile; isolate in a throwaway branch + separate build.
 Everything in the guide's constraint list, plus: 30fps clock gate (visible
 double-judder on 120Hz), synchronized pane refresh, JS-live/frozen pane
 offsets, per-pane organism redraw, blur in recorded pictures, backdrop
-filters, offscreen-surface snapshot blur.
+filters, offscreen-surface snapshot blur, **SkiaPictureView `opaque` prop**
+(surface state corruption on toggle — build #25), **declarative SharedValue
+`picture`/`clip` props** (runtime crash — Skia 2.6.2 doesn't support
+AnimatedProp for SkPicture/SkRect clip, build #25).
 
 ## adb evidence commands (owner copy-paste, optional but gold for GPU truth)
 

@@ -101,16 +101,15 @@ export function Corridor({ elapsedMinutes, targetMinutes, marks, onAddMark }: Co
 
   return (
     <View>
-      <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 }}>
-        <AppText role="label">Dough rise</AppText>
-        <AppText role="caption">shape at {ZONE_LOW}–{ZONE_HIGH}%</AppText>
-      </View>
-      <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
-        <AppText role="stat" color={inZone ? C.green : C.text} style={{ fontSize: 38, lineHeight: 42 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+        <View>
+          <AppText role="label">Dough rise</AppText>
+          <AppText role="caption" color={C.textDim} style={{ marginTop: 2 }}>
+            {preview !== null ? 'release to log' : isManual ? 'your last mark' : 'model estimate'}
+          </AppText>
+        </View>
+        <AppText role="stat" color={inZone ? C.green : C.text} style={{ fontSize: 32, lineHeight: 36 }}>
           {shown}%
-        </AppText>
-        <AppText role="caption" color={C.textDim}>
-          {preview !== null ? 'release to log' : isManual ? 'your last mark' : 'model estimate'}
         </AppText>
       </View>
 
@@ -158,7 +157,7 @@ export function Corridor({ elapsedMinutes, targetMinutes, marks, onAddMark }: Co
           : inZone
             ? 'in the zone — start watching for shape readiness'
             : shown < ZONE_LOW
-              ? 'touch the chart to log what you observe'
+              ? `shape at ${ZONE_LOW}–${ZONE_HIGH}% — touch the chart to log what you see`
               : 'past the zone — consider shaping now'}
       </AppText>
     </View>

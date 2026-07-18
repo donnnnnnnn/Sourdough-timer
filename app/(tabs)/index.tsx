@@ -405,10 +405,18 @@ export default function HomeScreen() {
   const autolyseDone = autolyseStartTimestamp !== null && now >= autolyseEndTs;
   const autolyseNotificationId = useRef<string | null>(null);
 
-  // Entrance for the active view: fades/slides in when bulk starts.
+  // Entrance for the active view: scroll home, then fade/slide in — without
+  // the scroll reset the active view inherits whatever offset the setup list
+  // was left at and opens mid-screen.
+  const scrollRef = useRef<ScrollView>(null);
   const enter = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     if (isActive) {
+      scrollRef.current?.scrollTo({ y: 0, animated: false });
+      // Programmatic scrolls don't always fire onScroll — keep the Skia glass
+      // stage in step or its panels render at the stale offset.
+      setScrollY(0);
+      remeasureGlass();
       enter.setValue(0);
       Animated.timing(enter, {
         toValue: 1,
@@ -672,6 +680,7 @@ export default function HomeScreen() {
 
       <GlassStageProvider contentNode={contentNode} measureTick={measureTick}>
         <ScrollView
+          ref={scrollRef}
           style={{ flex: 1 }}
           contentContainerStyle={{ padding: 0 }}
           scrollEventThrottle={16}
@@ -699,7 +708,7 @@ export default function HomeScreen() {
             )}
 
             {!isActive ? (
-              <View style={{ gap: 26 }}>
+              <View style={{ gap: 20 }}>
                 {autolyseRunning ? (
                   <View style={{ alignItems: 'center', paddingVertical: 14, minHeight: 200, justifyContent: 'center' }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
@@ -758,16 +767,22 @@ export default function HomeScreen() {
 
                 {/* The bake plan: one card, every knob */}
                 <GlassCard radius={24} tint={0.4} blur={14} style={{ padding: 20 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 }}>
-                    <Icon name="thermometer" size={14} color={C.textMuted} />
-                    <AppText role="label">Kitchen temp</AppText>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+                      <Icon name="thermometer" size={14} color={C.textMuted} />
+                      <AppText role="label">Kitchen temp</AppText>
+                    </View>
+                    <View style={{ flexDirection: 'row', gap: 6 }}>
+                      <Chip label="°F" selected={tempUnit === 'F'} onPress={() => setTempUnit('F')} accessibilityLabel="Show Fahrenheit" />
+                      <Chip label="°C" selected={tempUnit === 'C'} onPress={() => setTempUnit('C')} accessibilityLabel="Show Celsius" />
+                    </View>
                   </View>
-                  <Dial valueF={doughTempF} onChange={setDoughTemp} unit={tempUnit} onChangeUnit={setTempUnit} />
+                  <Dial valueF={doughTempF} onChange={setDoughTemp} unit={tempUnit} />
 
                   {/* Coach: temperature + your history in, suggested bulk out */}
                   <View
                     style={{
-                      marginTop: 16,
+                      marginTop: 12,
                       backgroundColor: C.accentSoft,
                       borderRadius: 14,
                       padding: 14,
@@ -793,7 +808,7 @@ export default function HomeScreen() {
                     </AppText>
                   </View>
 
-                  <View style={{ marginTop: 18 }}>
+                  <View style={{ marginTop: 14 }}>
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' }}>
                       <AppText role="label">Expected bulk</AppText>
                       <AppText role="emphasis" color={C.accent} style={{ fontVariant: ['tabular-nums'] }}>
@@ -810,12 +825,9 @@ export default function HomeScreen() {
                       format={formatMinutes}
                       accessibilityLabel="Expected bulk length"
                     />
-                    <AppText role="caption" center style={{ marginTop: 8 }}>
-                      we'll alert you when it's time to end bulk
-                    </AppText>
                   </View>
 
-                  <View style={{ marginTop: 16 }}>
+                  <View style={{ marginTop: 14 }}>
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' }}>
                       <AppText role="label">Planned folds</AppText>
                       <AppText role="emphasis" color={C.accent} style={{ fontVariant: ['tabular-nums'] }}>
@@ -833,8 +845,8 @@ export default function HomeScreen() {
                     />
                   </View>
 
-                  <View style={{ marginTop: 16 }}>
-                    <AppText role="label" style={{ marginBottom: 10 }}>
+                  <View style={{ marginTop: 14 }}>
+                    <AppText role="label" style={{ marginBottom: 8 }}>
                       Remind me every
                     </AppText>
                     <View style={{ flexDirection: 'row', gap: 8 }}>
@@ -844,7 +856,6 @@ export default function HomeScreen() {
                           label={`${mins}`}
                           sub="min"
                           grow
-                          size="lg"
                           selected={selectedInterval === mins}
                           onPress={() => setSelectedInterval(mins)}
                           accessibilityLabel={`Fold reminder every ${mins} minutes`}
@@ -854,10 +865,13 @@ export default function HomeScreen() {
                   </View>
 
                   {!autolyseRunning && !autolyseDone && (
-                    <View style={{ marginTop: 16 }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+                    <View style={{ marginTop: 14 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
                         <Icon name="flask" size={13} color={C.textMuted} />
                         <AppText role="label">Autolyse first (optional)</AppText>
+                        <AppText role="caption" style={{ flex: 1 }} numberOfLines={1}>
+                          — its own flour + water timer
+                        </AppText>
                       </View>
                       <View style={{ flexDirection: 'row', gap: 8 }}>
                         {AUTOLYSE_OPTIONS.map((m) => (
@@ -870,9 +884,6 @@ export default function HomeScreen() {
                           />
                         ))}
                       </View>
-                      <AppText role="caption" style={{ marginTop: 8 }}>
-                        a flour + water rest before the levain — starts its own timer
-                      </AppText>
                     </View>
                   )}
                 </GlassCard>
@@ -911,19 +922,21 @@ export default function HomeScreen() {
                     center
                     color={autolyseDone ? C.accent : C.textDim}
                     style={{ marginTop: 10, fontWeight: autolyseDone ? '700' : '400' }}>
-                    {autolyseDone ? 'levain in? don’t forget the salt' : 'starter mixed in?'}
+                    {autolyseDone
+                      ? 'levain in? don’t forget the salt'
+                      : 'starter mixed in? we’ll ring you for every fold and the finish'}
                   </AppText>
                 </View>
               </View>
             ) : (
               <Animated.View
                 style={{
-                  gap: 18,
+                  gap: 14,
                   opacity: enter,
                   transform: [{ translateY: enter.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }) }],
                 }}>
-                <View style={{ alignItems: 'center', paddingTop: 8, paddingBottom: 6, minHeight: 200, justifyContent: 'center' }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                <View style={{ alignItems: 'center', minHeight: 148, justifyContent: 'center' }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                     <PulseDot color={accent} />
                     <AppText role="label" color={accent}>
                       {justStarted ? 'Levain in' : 'Bulk fermenting'}
@@ -932,55 +945,85 @@ export default function HomeScreen() {
                   <AppText role="hero" color={timerColor} style={{ letterSpacing: -4 }}>
                     {elapsed.hours}:{elapsed.minutes}
                   </AppText>
-                  <AppText role="stat" color={C.textDim} style={{ fontSize: 26, lineHeight: 30, marginTop: -2, fontWeight: '300' }}>
+                  <AppText role="stat" color={C.textDim} style={{ fontSize: 24, lineHeight: 28, marginTop: -4, fontWeight: '300' }}>
                     :{elapsed.seconds}
                   </AppText>
                 </View>
 
-                {/* fold status: complete / late / countdown */}
-                {foldsComplete ? (
-                  <GlassCard radius={20} tint={0.36} blur={14} style={{ paddingVertical: 14, paddingHorizontal: 20 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                      <Icon name="check" size={18} color={C.accent} />
-                      <AppText role="emphasis" style={{ flex: 1, fontSize: 15 }}>
-                        All {defaultFoldCount} folds done — watch the dough for shape readiness
-                      </AppText>
-                    </View>
-                  </GlassCard>
-                ) : foldIsLate ? (
-                  <GlassCard radius={20} tint={0.36} blur={14} style={{ padding: 20 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-                      <Icon name="clock" size={16} color={C.ember} />
+                {/* The dough pad: countdown + count + record, one surface, thumb-first */}
+                <DoughButton
+                  label="Record a fold"
+                  onPress={handleFold}
+                  variant="soft"
+                  accessibilityLabel="Record a fold"
+                  accessibilityHint={
+                    foldsComplete
+                      ? `All ${defaultFoldCount} folds recorded`
+                      : `${completedFolds} of ${defaultFoldCount} folds recorded, next due in ${nextFold.minutes} minutes ${nextFold.seconds} seconds`
+                  }
+                  style={{ overflow: 'hidden' }}>
+                  <PadBurst trigger={completedFolds} />
+                  <View style={{ alignItems: 'center', width: '100%' }}>
+                    {foldsComplete ? (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Icon name="check" size={14} color={C.accent} />
+                        <AppText role="label" color={C.accent}>
+                          All folds in
+                        </AppText>
+                      </View>
+                    ) : foldIsLate ? (
                       <AppText role="label" color={C.ember}>
-                        {foldLatenessAdvice(lateMinutes, doughTempF, tempUnit).title}
+                        Fold {completedFolds + 1} due · {lateMinutes}m ago
                       </AppText>
+                    ) : (
+                      <AppText role="label" color={C.accent} style={{ fontVariant: ['tabular-nums'] }}>
+                        Next fold in {nextFold.minutes}:{nextFold.seconds}
+                      </AppText>
+                    )}
+                    <Animated.Text
+                      style={{
+                        color: C.accent,
+                        fontSize: 58,
+                        fontWeight: '200',
+                        lineHeight: 64,
+                        marginTop: 2,
+                        fontVariant: ['tabular-nums'],
+                        transform: [{ scale: foldPop }],
+                      }}>
+                      {completedFolds}
+                    </Animated.Text>
+                    <View style={{ marginTop: 6 }}>
+                      <FoldDots completed={completedFolds} planned={defaultFoldCount} />
                     </View>
-                    <AppText role="body" color={C.textMuted}>
-                      {foldLatenessAdvice(lateMinutes, doughTempF, tempUnit).body}
-                    </AppText>
-                  </GlassCard>
-                ) : (
-                  <GlassCard radius={20} tint={0.36} blur={14} style={{ padding: 20, alignItems: 'center' }}>
-                    <AppText role="label" style={{ marginBottom: 6 }}>
-                      Next fold in
-                    </AppText>
-                    <AppText role="stat" style={{ fontSize: 38, fontWeight: '300' }}>
-                      {nextFold.minutes}:{nextFold.seconds}
-                    </AppText>
-                    <View style={{ width: '100%', height: 6, borderRadius: 3, backgroundColor: C.chip, marginTop: 14, overflow: 'hidden' }}>
+                    {!foldsComplete && (
                       <View
                         style={{
-                          width: `${Math.min(100, intervalProgress * 100)}%`,
-                          height: '100%',
-                          borderRadius: 3,
-                          backgroundColor: accent,
-                        }}
-                      />
-                    </View>
-                    <AppText role="caption" style={{ marginTop: 10 }}>
-                      every {foldIntervalMinutes} min
+                          width: '68%',
+                          height: 4,
+                          borderRadius: 2,
+                          backgroundColor: 'rgba(232,163,61,0.18)',
+                          marginTop: 10,
+                          overflow: 'hidden',
+                        }}>
+                        <View
+                          style={{
+                            width: `${Math.min(100, intervalProgress * 100)}%`,
+                            height: '100%',
+                            borderRadius: 2,
+                            backgroundColor: foldIsLate ? C.ember : accent,
+                          }}
+                        />
+                      </View>
+                    )}
+                    <AppText role="caption" style={{ marginTop: 8 }}>
+                      {foldsComplete ? 'watch the dough for shape readiness' : 'tap to record a fold'}
                     </AppText>
-                  </GlassCard>
+                  </View>
+                </DoughButton>
+                {foldIsLate && (
+                  <AppText role="caption" center color={C.textMuted} style={{ marginTop: -6 }}>
+                    running late is okay — the dough keeps working
+                  </AppText>
                 )}
 
                 {/* The journey: phase, progress, milestones, landing time */}
@@ -1014,40 +1057,6 @@ export default function HomeScreen() {
                   )}
                 </GlassCard>
 
-                {/* The dough pad: the app's most-pressed surface */}
-                <DoughButton
-                  label="Record a fold"
-                  onPress={handleFold}
-                  variant="soft"
-                  accessibilityLabel="Record a fold"
-                  accessibilityHint={`${completedFolds} of ${defaultFoldCount} folds recorded`}
-                  style={{ overflow: 'hidden' }}>
-                  <PadBurst trigger={completedFolds} />
-                  <View style={{ alignItems: 'center' }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                      <Icon name="fold" size={15} color={C.accent} />
-                      <AppText role="label" color={C.accent}>
-                        Folds completed
-                      </AppText>
-                    </View>
-                    <Animated.Text
-                      style={{
-                        color: C.accent,
-                        fontSize: 64,
-                        fontWeight: '200',
-                        lineHeight: 70,
-                        fontVariant: ['tabular-nums'],
-                        transform: [{ scale: foldPop }],
-                      }}>
-                      {completedFolds}
-                    </Animated.Text>
-                    <View style={{ marginTop: 10, marginBottom: 6 }}>
-                      <FoldDots completed={completedFolds} planned={defaultFoldCount} />
-                    </View>
-                    <AppText role="caption">tap to record a fold</AppText>
-                  </View>
-                </DoughButton>
-
                 {/* Ending bulk is the happy milestone, not a destructive act */}
                 <DoughButton
                   label="Finish & Shape"
@@ -1071,8 +1080,11 @@ export default function HomeScreen() {
       <Sheet
         visible={lateFoldConfirm !== null}
         onClose={() => setLateFoldConfirm(null)}
-        title={`${lateFoldConfirm?.lateMinutes ?? 0} min late on this fold`}>
-        <AppText role="body" color={C.textMuted} style={{ marginBottom: 18 }}>
+        title={foldLatenessAdvice(lateFoldConfirm?.lateMinutes ?? 0, doughTempF, tempUnit).title}>
+        <AppText role="body" color={C.textMuted} style={{ marginBottom: 12 }}>
+          {foldLatenessAdvice(lateFoldConfirm?.lateMinutes ?? 0, doughTempF, tempUnit).body}
+        </AppText>
+        <AppText role="body" color={C.text} style={{ marginBottom: 18 }}>
           Should the next fold stay on the original {foldIntervalMinutes}-min schedule, or start counting from
           right now?
         </AppText>

@@ -8,14 +8,13 @@ import { PanResponder, View } from 'react-native';
 import Svg, { Circle, Path } from 'react-native-svg';
 import { C, tick } from '@/components/theme';
 import { AppText } from './AppText';
-import { Chip } from './Chip';
 
-const W = 260;
-const H = 152;
+const W = 232;
+const H = 136;
 const CX = W / 2;
-const CY = 134;
-const R = 104;
-const STROKE = 12;
+const CY = 120;
+const R = 92;
+const STROKE = 11;
 
 /** Angle in degrees (180 = min/left, 0 = max/right) → point on the arc. */
 function pt(angleDeg: number) {
@@ -37,10 +36,9 @@ interface DialProps {
   max?: number;
   onChange: (valueF: number) => void;
   unit: 'F' | 'C';
-  onChangeUnit: (unit: 'F' | 'C') => void;
 }
 
-export function Dial({ valueF, min = 58, max = 90, onChange, unit, onChangeUnit }: DialProps) {
+export function Dial({ valueF, min = 58, max = 90, onChange, unit }: DialProps) {
   const last = useRef(valueF);
   last.current = valueF;
 
@@ -102,18 +100,11 @@ export function Dial({ valueF, min = 58, max = 90, onChange, unit, onChangeUnit 
           <Circle cx={thumb.x} cy={thumb.y} r={13} fill={C.cream} />
           <Circle cx={thumb.x} cy={thumb.y} r={5} fill={C.accent} />
         </Svg>
-        <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, top: 58, alignItems: 'center' }}>
-          <AppText role="stat" color={C.text} style={{ fontSize: 46, lineHeight: 52 }}>
+        <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, top: 56, alignItems: 'center' }}>
+          <AppText role="stat" color={C.text} style={{ fontSize: 40, lineHeight: 44 }}>
             {display}
           </AppText>
-          <AppText role="caption" color={C.textDim}>
-            drag the arc
-          </AppText>
         </View>
-      </View>
-      <View style={{ flexDirection: 'row', gap: 8, marginTop: 6 }}>
-        <Chip label="°F" selected={unit === 'F'} onPress={() => onChangeUnit('F')} accessibilityLabel="Show Fahrenheit" />
-        <Chip label="°C" selected={unit === 'C'} onPress={() => onChangeUnit('C')} accessibilityLabel="Show Celsius" />
       </View>
     </View>
   );

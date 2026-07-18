@@ -7,9 +7,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, View } from 'react-native';
 import { AUTOLYSE_COPY, PHASE_SCRIPT, bulkPhaseIndex, type PhaseCopy } from '@/components/FermentationScene';
-import { C, label, accentForFraction } from '@/components/theme';
+import { C, accentForFraction } from '@/components/theme';
 import { AppText } from './AppText';
+import { Icon } from './Icon';
 import { Ruler } from './Ruler';
+import { Squish } from './Squish';
 
 function formatClock(timestamp: number) {
   return new Date(timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
@@ -53,8 +55,12 @@ function BreathingDot({ color }: { color: string }) {
   );
 }
 
-/** Crossfading science + sensory copy for the current phase. */
-function PhaseWords({ copy }: { copy: PhaseCopy }) {
+/**
+ * Crossfading phase copy. Compact by default — the sensory "in the bowl"
+ * line is the glanceable one — with the full science a tap away, so the
+ * teaching stays without spending half a screen on every phase.
+ */
+function PhaseWords({ copy, expanded, onToggle }: { copy: PhaseCopy; expanded: boolean; onToggle: () => void }) {
   const fade = useRef(new Animated.Value(1)).current;
   const shown = useRef(copy);
   const [, force] = useState(0);
@@ -69,14 +75,32 @@ function PhaseWords({ copy }: { copy: PhaseCopy }) {
   const c = shown.current;
   return (
     <Animated.View style={{ opacity: fade }}>
-      <AppText role="body" color={C.text} style={{ fontSize: 14.5 }}>
-        {c.science}
-      </AppText>
-      <View style={{ height: 1, backgroundColor: C.cardBorder, marginVertical: 12 }} />
-      <AppText role="label">In the bowl</AppText>
-      <AppText role="body" color={C.textMuted} style={{ fontStyle: 'italic', marginTop: 4 }}>
+      <AppText
+        role="body"
+        color={C.textMuted}
+        style={{ fontStyle: 'italic' }}
+        numberOfLines={expanded ? undefined : 2}>
         {c.sensory}
       </AppText>
+      {expanded && (
+        <>
+          <View style={{ height: 1, backgroundColor: C.cardBorder, marginVertical: 10 }} />
+          <AppText role="label">The science</AppText>
+          <AppText role="body" color={C.text} style={{ fontSize: 14.5, marginTop: 4 }}>
+            {c.science}
+          </AppText>
+        </>
+      )}
+      <Squish
+        onPress={onToggle}
+        haptic="light"
+        hitSlop={6}
+        accessibilityLabel={expanded ? 'Hide the science' : 'Read the science behind this phase'}
+        style={{ alignSelf: 'flex-start', paddingVertical: 6 }}>
+        <AppText role="caption" color={C.straw} style={{ fontWeight: '700' }}>
+          {expanded ? 'hide the science' : 'the science ›'}
+        </AppText>
+      </Squish>
     </Animated.View>
   );
 }
@@ -123,6 +147,8 @@ export function Journey({
   const targetEndTs = startTs + targetMinutes * 60000;
   const elapsedMinutes = (now - startTs) / 60000;
   const overdue = elapsedMinutes > targetMinutes;
+  const [scienceOpen, setScienceOpen] = useState(false);
+  const [editTarget, setEditTarget] = useState(false);
 
   // Milestone rows: mixed-in start, each fold (actual once recorded, due
   // until then), shaping at the planned end.
@@ -161,20 +187,39 @@ export function Journey({
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 1 }}>
           <BreathingDot color={accent} />
-          <AppText role="label" color={accent} numberOfLines={1}>
-            {autolyse ? `Pre-ferment · ${copy.title}` : `Phase ${phaseIdx + 1}/5 · ${copy.title}`}
+          <AppText role="label" color={accent} numberOfLines={1} style={{ flexShrink: 1 }}>
+            {autolyse ? `Pre-ferment · ${copy.title}` : `${phaseIdx + 1}/5 · ${copy.title}`}
           </AppText>
         </View>
         {!autolyse && (
-          <AppText role="caption" color={C.textMuted}>
-            lands ~{formatClock(targetEndTs)}
-          </AppText>
+          <Squish
+            onPress={() => setEditTarget((o) => !o)}
+            haptic="light"
+            hitSlop={6}
+            accessibilityLabel={`Bulk lands about ${formatClock(targetEndTs)}. Tap to adjust the planned length.`}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 5,
+              backgroundColor: editTarget ? C.accentSoft : C.parchment2,
+              borderRadius: 999,
+              paddingVertical: 6,
+              paddingHorizontal: 11,
+            }}>
+            <Icon name="clock" size={12} color={editTarget ? C.accent : C.textMuted} />
+            <AppText
+              role="caption"
+              color={editTarget ? C.accent : C.textMuted}
+              style={{ fontWeight: '600', fontVariant: ['tabular-nums'] }}>
+              lands ~{formatClock(targetEndTs)}
+            </AppText>
+          </Squish>
         )}
       </View>
 
       {/* whole-bulk progress with fold notches */}
       {!autolyse && (
-        <View style={{ marginBottom: 14 }}>
+        <View style={{ marginBottom: 10 }}>
           <View style={{ width: '100%', height: 12, borderRadius: 6, backgroundColor: C.chip, overflow: 'hidden' }}>
             <View
               style={{
@@ -211,56 +256,9 @@ export function Journey({
         </View>
       )}
 
-      <PhaseWords copy={copy} />
-
-      {/* milestone timeline */}
-      {!autolyse && (
-        <View style={{ marginTop: 16 }}>
-          {rows.map((row, i) => (
-            <View key={i} style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
-              <View style={{ alignItems: 'center', width: 20 }}>
-                <View
-                  style={{
-                    width: 10,
-                    height: 10,
-                    borderRadius: 5,
-                    marginTop: 4,
-                    backgroundColor: row.state === 'done' ? accent : 'transparent',
-                    borderWidth: 1.5,
-                    borderColor: dotColor(row.state),
-                  }}
-                />
-                {i < rows.length - 1 && (
-                  <View style={{ width: 1.5, flex: 1, minHeight: 14, backgroundColor: C.cardBorder, marginVertical: 3 }} />
-                )}
-              </View>
-              <View
-                style={{
-                  flex: 1,
-                  flexDirection: 'row',
-                  justifyContent: 'space-between',
-                  paddingBottom: i < rows.length - 1 ? 12 : 0,
-                  marginLeft: 10,
-                }}>
-                <AppText
-                  role="body"
-                  color={row.state === 'future' ? C.textMuted : C.text}
-                  style={{ fontSize: 15, fontWeight: row.state === 'due' ? '700' : '500' }}>
-                  {row.label}
-                  {row.state === 'due' ? ' — due' : ''}
-                </AppText>
-                <AppText role="body" color={row.state === 'due' ? C.ember : C.textDim} style={{ fontVariant: ['tabular-nums'] }}>
-                  {row.time}
-                </AppText>
-              </View>
-            </View>
-          ))}
-        </View>
-      )}
-
-      {/* planned-bulk ruler: dragging it re-flows the ETA above */}
-      {!autolyse && (
-        <View style={{ marginTop: 14 }}>
+      {/* planned-bulk ruler: revealed by the "lands ~" chip; re-flows the ETA */}
+      {!autolyse && editTarget && (
+        <View style={{ marginBottom: 12 }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' }}>
             <AppText role="label">Planned bulk</AppText>
             <AppText role="emphasis" color={C.text} style={{ fontVariant: ['tabular-nums'] }}>
@@ -277,6 +275,53 @@ export function Journey({
             format={(v) => formatMinutes(v)}
             accessibilityLabel="Planned bulk length"
           />
+        </View>
+      )}
+
+      <PhaseWords copy={copy} expanded={scienceOpen} onToggle={() => setScienceOpen((o) => !o)} />
+
+      {/* milestone timeline */}
+      {!autolyse && (
+        <View style={{ marginTop: 10 }}>
+          {rows.map((row, i) => (
+            <View key={i} style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+              <View style={{ alignItems: 'center', width: 20 }}>
+                <View
+                  style={{
+                    width: 10,
+                    height: 10,
+                    borderRadius: 5,
+                    marginTop: 4,
+                    backgroundColor: row.state === 'done' ? accent : 'transparent',
+                    borderWidth: 1.5,
+                    borderColor: dotColor(row.state),
+                  }}
+                />
+                {i < rows.length - 1 && (
+                  <View style={{ width: 1.5, flex: 1, minHeight: 8, backgroundColor: C.cardBorder, marginVertical: 2 }} />
+                )}
+              </View>
+              <View
+                style={{
+                  flex: 1,
+                  flexDirection: 'row',
+                  justifyContent: 'space-between',
+                  paddingBottom: i < rows.length - 1 ? 8 : 0,
+                  marginLeft: 10,
+                }}>
+                <AppText
+                  role="body"
+                  color={row.state === 'future' ? C.textMuted : C.text}
+                  style={{ fontSize: 14.5, fontWeight: row.state === 'due' ? '700' : '500' }}>
+                  {row.label}
+                  {row.state === 'due' ? ' — due' : ''}
+                </AppText>
+                <AppText role="body" color={row.state === 'due' ? C.ember : C.textDim} style={{ fontVariant: ['tabular-nums'] }}>
+                  {row.time}
+                </AppText>
+              </View>
+            </View>
+          ))}
         </View>
       )}
     </View>

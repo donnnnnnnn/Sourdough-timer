@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { View, Text, TouchableOpacity, Platform, Animated, Easing, StyleSheet, type NativeSyntheticEvent, type NativeScrollEvent } from 'react-native';
+import { View, Text, TouchableOpacity, Pressable, Platform, Animated, Easing, StyleSheet, type NativeSyntheticEvent, type NativeScrollEvent } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import * as Haptics from 'expo-haptics';
 import { useBakeStore } from '@/store/useBakeStore';
@@ -23,6 +23,10 @@ import { SafeSkiaFermentationScene } from '@/components/SkiaErrorBoundary';
 import { GlassStageProvider, GlassCard } from '@/components/GlassCard';
 import { setScrollY, setContentTop, setScrollAnim } from '@/components/glassStage';
 import { syncBulkPanel, clearBulkPanel } from '@/lib/bulkStatusPanel';
+// Dev-only animation perf HUD (plain RN views, no Skia): toggled by
+// long-pressing the faint "· perf ·" label at the bottom of the screen.
+import { PerfHud } from '@/components/PerfHud';
+import { getPerfFlags, setPerfFlags } from '@/components/perfFlags';
 
 const AUTOLYSE_OPTIONS = [20, 30, 45, 60];
 
@@ -1686,9 +1690,23 @@ export default function HomeScreen() {
           </TouchableOpacity>
         </Animated.View>
       )}
+            {/* Hidden entry to the animation perf HUD: long-press this faint
+                label. Deliberately at the very bottom so it can never collide
+                with real controls; a stray tap does nothing. */}
+            <Pressable
+              onLongPress={() => setPerfFlags({ hud: !getPerfFlags().hud })}
+              delayLongPress={600}
+              hitSlop={12}
+              style={{ alignSelf: 'center', paddingVertical: 10, paddingHorizontal: 24, marginTop: 6 }}>
+              <Text style={{ color: 'rgba(255,255,255,0.14)', fontSize: 11, letterSpacing: 2 }}>
+                · perf ·
+              </Text>
+            </Pressable>
           </View>
         </Animated.ScrollView>
       </GlassStageProvider>
+
+    <PerfHud />
 
     {celebrating && (
       <CelebrationOverlay durationLabel={`${formatMinutes(Math.round(elapsedMs / 60000))} of bulk`} />

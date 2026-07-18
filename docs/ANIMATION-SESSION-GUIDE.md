@@ -31,14 +31,85 @@ no longer misplace the pane).
 
 | File | What it does |
 |------|-------------|
-| `components/SkiaFermentationScene.tsx` | Organisms/glow scene. Records one SkPicture per frame, draws it, and publishes it via `glassStage.publishScenePicture`. |
-| `components/GlassBackdrop.tsx` | The frosted pane inside a card: opaque black base → blurred replay of the scene picture (declarative `Group layer` blur) → tint → sheen. Updates on every 2nd published frame (~30fps). |
+| `components/SkiaFermentationScene.tsx` | Organisms/glow scene. Records one SkPicture per frame and publishes it via `glassStage.publishScenePicture`. Two renderer paths: `direct` (default — hands the picture to the native Skia view imperatively, zero React per frame) and `react` (build #22 declarative fallback). See "The direct renderer" below. |
+| `components/GlassBackdrop.tsx` | The frosted pane inside a card: opaque black base → blurred replay of the scene picture (declarative `Group layer` blur) → tint → sheen. Staggered/widening refresh (~8-15fps per pane). |
 | `components/GlassCard.tsx` | RN `<View>` wrapper; lazy-`require()`s GlassBackdrop (never a static Skia import — module-eval crash history) behind a silent error boundary, measures its scroll-content position for the slice offset. |
 | `components/glassStage.ts` | Module-level bridge (not React state): `contentTop`/`scrollY` setters+getters and the scene-picture pub/sub channel. No re-render storm on scroll. |
+| `components/perfFlags.ts` | Module-level store for the perf A/B toggles (renderer / glow / resScale / cull / sim) + the frame-pacing stats the scene loop writes. |
+| `components/PerfHud.tsx` | Hidden dev overlay: fps/worst-tick/late/hitch/js-work/GC readout + live A/B chips. Toggled by long-pressing the faint "· perf ·" label at the very bottom of the timer screen. |
 | `components/SkiaErrorBoundary.tsx` | Error boundary + lazy `require()` so a scene crash never kills the app. |
 | `components/theme.ts` | Shared palette: `C.glassBorder`, `C.glassSheen`, etc. |
 | `tools/frosted-glass-tuner.html` | Standalone design tool — open in browser, sliders for per-panel opacity + blur, phone mockup with a canvas scene. |
 | `docs/SKIA-HANDOFF.md` | Full investigation history: worklet crash, every failed glass-blur approach. |
+| `docs/ANIMATION-OPTIMIZATION-HANDOFF.md` | Optimization-pass state: what each build changed, owner verdicts, ranked next directions. |
+
+---
+
+## The direct renderer & perf HUD (July 18 2026, build #23)
+
+### Why the declarative path was expensive (measured from library source)
+
+On Skia 2.6.2 with reanimated installed, EVERY commit to a declarative
+`<Canvas>` runs `sksg/Container.native.js → NativeReanimatedContainer.redraw()`:
+it re-builds a `ReanimatedRecorder`, re-visits the whole scene-graph, and
+dispatches a `runOnUI` worklet that replays the recorder into a second
+picture before `setJsiProperty(nativeId, 'picture', …)` hands it to the
+view. The scene was paying that machinery — plus a full React render +
+commit + effect pass — 60×/s just to swap one picture prop on a tree whose
+shape never changes.
+
+### What the direct path does instead
+
+`SkiaFermentationScene` now mounts a bare `<SkiaPictureView>` (exported by
+RN Skia; it's the same native component `<Canvas>` uses) and its rAF loop
+does, per frame:
+
+```
+record SkPicture (slow/fast split, unchanged)
+SkiaViewApi.setJsiProperty(view.nativeId, 'picture', pic)   // JSI call
+SkiaViewApi.requestRedraw(view.nativeId)                    // JSI call
+glassStage.publishScenePicture(pic)
+```
+
+— the exact two calls `SkiaPictureView` itself makes internally, zero React,
+zero scene-graph, zero runOnUI. The React/declarative pipeline is kept whole
+behind `perfFlags.renderer = 'react'` (HUD chip "draw"), and the scene
+auto-falls-back to it if the direct loop ever throws (the throw happens
+outside React, where SkiaErrorBoundary can't see it, so the loop try/catches
+everything and calls `noteDirectFallback`). Glass panes are untouched: their
+blur NEEDS the declarative `Group layer` path (blur inside a recorded
+picture doesn't render on this device — constraint 3).
+
+### The perf HUD (owner-facing evidence tool)
+
+Long-press the faint **"· perf ·"** label at the very bottom of the timer
+screen (600ms) to toggle a small overlay showing, once per second:
+
+- `fps` — accepted 60fps-gate ticks per second (JS thread health)
+- `worst` — worst tick-to-tick gap in the last second
+- `late/s`, `hitch/s` — ticks >20ms / >34ms (a hitch = visibly dropped frame)
+- `js work` — ms spent recording+publishing per frame (avg / max)
+- `gc +N/s` — Hermes GC collections per second, when the runtime exposes them
+- session totals for late/hitch
+
+How to read it: **numbers clean but the eye sees jank → GPU-bound** (flip
+the `glow`/`res` chips); **worst-tick spikes with low js work → GC or other
+JS-thread work** (check the gc counter); **js work itself high → recording
+cost** (the slow/fast split needs another turn of the screw). A screenshot
+of the HUD is a complete profiling report.
+
+Chips (each flips a `perfFlags` value live, no rebuild):
+
+| Chip | Values | What it tests |
+|------|--------|---------------|
+| `draw` | direct / react | React-bypass renderer vs build #22 pipeline. Pixel-identical output; direct should feel smoother or equal. |
+| `glow` | mask / grad | MaskFilter halos vs cached radial-gradient discs (NOT pixel-identical — owner judges look + smoothness). |
+| `res` | 100% / 75% | Scene canvas backing resolution (NOT pixel-identical — sharp specks are the tell; ~44% less GPU fill at 75%). |
+| `cull` | on / off | Skip draws below ~1.2% alpha (≤ ~3/255 per pixel — sub-visible in theory, togglable to prove it). |
+| `sim` | live / bulk 85% / bulk 97% | Forces the scene to a late-bulk cast immediately — test the worst case without a 5-hour bake. Also un-dims the idle field while active. |
+
+The `sim` chip only affects the SCENE (organism density/progress feeding
+pane refresh periods); the real timer, captions and cards stay live.
 
 ---
 
@@ -54,11 +125,23 @@ Adding `'worklet'` crashed the app for a full day. Full story in
 
 ### 2. JS-thread animation only
 
-The scene uses `requestAnimationFrame` → `createPicture` in `useMemo`. Do NOT
-switch to Skia's `useClock` + reanimated `useDerivedValue` (UI-thread worklet)
-— that crashed on this Skia 2.6.2 + reanimated 4.3 / worklets 0.8 combo.
-A UI-thread variant is parked on branch `claude/skia-ui-thread` if someone
-wants to revisit it later with a newer Skia.
+The scene clock is `requestAnimationFrame` on the JS thread; recording is
+`createPicture` (in the direct loop by default, in a `useMemo` on the react
+fallback path). Do NOT switch to Skia's `useClock` + reanimated
+`useDerivedValue` (UI-thread worklet) — that crashed on this Skia 2.6.2 +
+reanimated 4.3 / worklets 0.8 combo. A UI-thread variant is parked on branch
+`claude/skia-ui-thread` if someone wants to revisit it later with a newer
+Skia. (Calling `SkiaViewApi.setJsiProperty` from the JS thread is NOT a
+violation of this rule — it's the first-class path `SkiaPictureView` itself
+uses from its constructor, no worklets involved.)
+
+### 2½. Every non-pixel-identical change goes behind a perfFlags toggle
+
+Owner's standing rule. If a proposed optimization changes ANY pixel (glow
+substitution, resolution scaling, culling thresholds, dropped passes), wire
+it to `components/perfFlags.ts`, surface a chip in `PerfHud`, and default it
+to the pixel-identical setting unless the owner has already accepted the
+trade. Never ship a look change as a fait accompli inside a perf build.
 
 ### 3. No blur inside a recorded SkPicture — and no backdrop filters
 

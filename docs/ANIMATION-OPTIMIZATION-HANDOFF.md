@@ -1,12 +1,12 @@
 # Animation Optimization Handoff — next pass
 
-Written July 2026, immediately after build #22 shipped. Audience: a fresh
-session taking **one more optimization pass at animation smoothness**.
+Updated July 18 2026, when build #23 shipped. Audience: a fresh session
+taking **the next optimization pass at animation smoothness**.
 
 Read `docs/ANIMATION-SESSION-GUIDE.md` FIRST (architecture + hard
-constraints), and `docs/SKIA-HANDOFF.md` for the full failure history. This
-file only adds: where the optimization work stands, and ranked directions
-for the next pass.
+constraints — including the new "direct renderer & perf HUD" section), and
+`docs/SKIA-HANDOFF.md` for the full failure history. This file only adds:
+where the optimization work stands, and ranked directions for the next pass.
 
 ---
 
@@ -19,13 +19,16 @@ Owner device: **Pixel 9 (120Hz)**. Complaint history and what each build fixed:
 | #19 | `5a43e27` | Native counter-scroll world-anchoring — scroll alignment SOLVED, but "choppy later in bulk" |
 | #20 | `928f4fa` | Staggered pane slots + progress-widening period → "improved" but "scrolling is jerky even pre-bulk" |
 | #21 | `9568f1f` | Blur clipped to visible slice + scroll-time refresh halving + BASE_PERIOD 3→4 → "improved significantly", card edges confirmed good, but "still some jerkiness, even when not scrolling, especially later in bulk" |
-| #22 | `27998f4` | glowOrb unit-gradient shader cache; drift/flow scratch outputs; slow/fast layer split (slow cast @30fps, @20fps late bulk; bubbles @60fps). **Owner verdict pending at handoff time.** |
+| #22 | `27998f4` | glowOrb unit-gradient shader cache; drift/flow scratch outputs; slow/fast layer split (slow cast @30fps, @20fps late bulk; bubbles @60fps). Verdict: **"better than before, but still could be smoother, especially later in animation."** |
+| #23 | (this pass) | Direct renderer (React/scene-graph/runOnUI bypass — see guide; pixel-identical, default ON, `draw` chip falls back); perf HUD + owner A/B chips; gradient-disc glow substitution (`glow` chip, default mask); 75% backing-resolution option (`res` chip, default 100%); sub-visible-alpha culling (`cull` chip, default off); grain-constants precompute + gluten live-node pool (pixel-identical). **Owner verdict pending.** |
 
-So: scroll jank is (probably) beaten; the last reported issue was
-steady-state hitching that worsens late in bulk, and #22 attacked its two
-likeliest causes (Hermes GC pauses from per-call JSI allocations, and the
-60fps JS re-record cost of a growing cast). **First step of the next pass:
-get the owner's verdict on #22 before optimizing anything.**
+The #23 discovery worth knowing: on this Skia (2.6.2) + reanimated combo,
+EVERY declarative `<Canvas>` commit rebuilds a `ReanimatedRecorder`,
+re-visits the scene graph, and dispatches a `runOnUI` worklet that re-plays
+the recorder into a second picture (`sksg/Container.native.js`). The scene
+was paying that + a React render/commit/effect pass 60×/s. The direct
+renderer replaces all of it with two JSI calls. The glass panes still pay it
+per refresh (~10/s each, staggered) — see direction 2 below.
 
 ### Build & delivery loop
 
@@ -66,93 +69,96 @@ get the owner's verdict on #22 before optimizing anything.**
 
 ---
 
+## What build #23 already did (from the previous ranked list)
+
+- ~~0. Evidence before surgery~~ → **perf HUD shipped** (guide § "The direct
+  renderer & perf HUD"). The owner can now screenshot fps/worst/late/hitch/
+  js-work/GC and A/B every experiment live. adb commands below stay useful
+  for render-thread (GPU) truth.
+- ~~1. Bypass React for the per-frame redraw~~ → **done for the SCENE**
+  (`renderer: 'direct'`, default). Panes NOT done — see direction 2.
+- ~~2. MaskFilter glows~~ → **shipped behind the `glow` chip** (default
+  mask). Rings/strands keep MaskFilter (no cheap closed form for a blurred
+  annulus).
+- ~~3. Reduced backing resolution~~ → **shipped behind the `res` chip**
+  (default 100%).
+- ~~4. Invisible-detail culling~~ → **shipped behind the `cull` chip**
+  (default off; ~1.2% alpha floor ≈ ≤3/255 per draw).
+- ~~5. Stragglers~~ → grain constants precomputed (killed a per-cell
+  per-frame RNG closure), gluten live-node pool. The per-frame path now
+  allocates only the 1-2 `createPicture` closures + the picture objects
+  themselves.
+
+## Next-pass workflow (owner in the loop)
+
+1. Get the owner's verdict on #23 defaults (= #22 pixels, new plumbing).
+2. Have them try the chips ONE AT A TIME (glow → res → cull), noting for
+   each: smoother? look acceptable? HUD numbers before/after (screenshots).
+3. Read the evidence:
+   - HUD clean (fps ~60, no hitches) but eye sees jank → GPU-bound → the
+     `glow`/`res` chips are exactly the levers; if they fix it, promote the
+     accepted setting to the default in `perfFlags.ts` DEFAULTS.
+   - `worst` spikes, `js work` low, `gc` ticking → allocation/GC → direction
+     3 (picture disposal).
+   - `js work` high late bulk → recording cost → widen the slow-layer
+     cadence further (slowEvery 3→4 at progress ≥0.75), or split the slow
+     cast into two staggered sub-pictures.
+   - Jank ONLY while scrolling → pane-side → direction 2.
+4. Whatever the owner accepts becomes the new default; drop the losing
+   branch of each A/B in a cleanup commit (keep the HUD).
+
 ## Ranked directions for the next pass
 
-### 0. Evidence before surgery
+### 1. Promote winning A/B settings to defaults (trivial, do first)
 
-Every fix so far was reasoned from first principles because we can't profile
-from the cloud. If jank persists after #22, STOP GUESSING and get data via
-the owner (they're non-technical — give exact copy-paste commands):
+One-line changes in `components/perfFlags.ts` DEFAULTS once the owner has
+picked. Delete no code yet — the chips stay until two consecutive builds
+without regressions.
 
-- `adb shell dumpsys gfxinfo <package> framestats` after ~30s on the timer
-  screen → frame-time percentiles, and whether misses are on the UI/Render
-  thread (GPU-bound) or come in bursts (GC-shaped).
-- `adb logcat -s HermesGC` (or grep logcat for `GC`) while watching the
-  screen → correlate visible hitches with collection events. If #22's
-  allocation work landed, major GCs should be rare.
-- Cheapest option, no adb: a dev-only frame-pacing HUD — measure rAF deltas
-  in the scene's existing loop, render worst-frame/1s and dropped-frame
-  count as a tiny text overlay behind a `__DEV__`-ish flag. JS-side deltas
-  distinguish "JS thread late" from "JS fine but display janks" (= GPU).
+### 2. Pane-side React/recorder bypass (JS thread, medium risk)
 
-### 1. Bypass React for the per-frame redraw (JS thread, medium risk, big win)
+Each GlassBackdrop refresh is still a React render + scene-graph re-visit +
+`ReanimatedRecorder` rebuild + `runOnUI` dispatch (~9 panes × ~10/s ≈ 90/s
+aggregate — now MORE machinery per second than the scene itself pays).
+The pane's blur must stay declarative (constraint 3), so the fix is
+different from the scene's: pass the changing values as reanimated
+**SharedValues** (`picture`, and the clip rect) instead of plain props.
+With shared values, `Container.native.js` registers a persistent mapper
+ONCE and per-update only runs `applyUpdates + replay` on the UI thread — no
+React, no SG visit, no recorder rebuild. Our files stay worklet-free
+(setting `sv.value` from JS is plain code; the worklets live inside the
+library and ALREADY run per refresh today via `runOnUI`). Risks: SharedValue
+props are the reanimated↔Skia bridge the guide warns about — prototype on
+one pane first, keep the current path behind a flag exactly like
+`renderer`, and note that `useSharedValue` import in GlassBackdrop must not
+break web (GlassCard already skips panes on web).
 
-The scene calls `setTimeSec()` 60×/s → full React render + `useMemo` +
-commit just to hand Skia a new picture. Each GlassBackdrop `force()`s a
-React re-render for every content refresh (~9 panes × 8-15fps). None of
-this reconciliation buys anything — the tree shape never changes.
+### 3. Explicit SkPicture disposal (only if HUD shows GC pressure)
 
-RN Skia canvases can be redrawn imperatively: keep a `Picture` node whose
-picture is swapped via a ref/`useCanvasRef().redraw()`-style path (check the
-2.6.2 API: `SkiaDomView.redraw()`, or a `notifyChange`d value feeding
-`<Picture>`), so a new frame = record picture + one native call, zero React.
-Do the scene first (60 renders/s saved), panes second (~9 × 12/s commits).
-Keep the React path as fallback behind a flag in case 2.6.2's imperative
-path misbehaves on-device.
+Pictures churn at ~1-2/frame and are GC-reclaimed. If the HUD's gc counter
+correlates with hitches: `.dispose()` the PREVIOUS published picture once no
+pane can still replay it — needs a small ref-count/generation in glassStage
+(panes hold the current picture; naive disposal = use-after-free crash).
+Also dispose the previous slow sub-picture on rebuild (only the published
+wrapper references it, and only until the next publish). Don't do this
+speculatively.
 
-### 2. Main-scene GPU cost: MaskFilter glows (GPU, needs owner A/B, big win late bulk)
+### 4. Opaque scene surface (GPU, one-line experiment, needs on-device proof)
 
-`halo()`/`ring()`/`drawStrand()` attach a Gaussian `MaskFilter` to hundreds
-of draws per frame. The filter objects are cached (JS-side), but the GPU
-still evaluates a blur per draw. The gradient-cache pattern from #22 extends
-naturally: a blurred disc ≈ a radial gradient with a flat core and soft
-falloff (cacheable exactly like `unitGlowShader`); a blurred ring/stroke is
-harder — consider keeping MaskFilter for rings but replacing disc halos
-(the bulk of the calls). ⚠️ This is the first proposal that ISN'T
-pixel-identical — build it behind a toggle and have the owner A/B two APKs
-(or a debug switch) before committing to it.
+`SkiaPictureView` accepts `opaque`. The scene surface currently composites
+with alpha over a black RN view — a full-screen blend the compositor pays
+every frame for nothing (the scene background is opaque black anyway).
+`opaque` on Android switches the surface mode; given this device's history
+of surface-stacking surprises (BackdropBlur rendering above the app's UI),
+treat it as an experiment: behind a perfFlags chip, owner confirms the glass
+cards still render above the scene and nothing z-fights.
 
-### 3. Scene canvas at reduced backing resolution (GPU, medium risk)
+### 5. Dependency upgrade (riskiest, isolate completely)
 
-The main canvas renders at full physical resolution (~1080×2340) at 60fps;
-content is soft additive glow — the definition of downscale-tolerant. Render
-the scene canvas at ~0.75× (or 0.5×) logical size and scale it back up with
-a View transform. Fill-rate drops ~44% (75%). Panes are unaffected (the
-published picture is resolution-independent; pane canvases stay as they
-are). Sharp elements (bubble rim highlights, yeast specular dots) are the
-tell — owner judges. Cheap to prototype, easy to revert.
-
-### 4. Invisible-detail culling (JS+GPU, near-zero risk)
-
-Tighten skip thresholds on things that literally cannot be seen: grains/
-scars/specks whose radius lands < ~0.7px on screen, draws whose final alpha
-< ~0.015 (current floors are 0.002-0.03 and inconsistent). Late bulk the
-cast is biggest and dimmest-per-element, so this culls most exactly when
-needed. Not a visual sacrifice if the threshold is genuinely sub-visible —
-be honest about the cutoff, verify against screenshots.
-
-### 5. Sweep the stragglers (JS, zero risk, small)
-
-- `drawGluten` builds a fresh `live` array of node objects per frame — pool it.
-- `drawLAB`'s septum branch and others still call `additivePaint()` +
-  `col()` per bead — fine (pooled), but check nothing else allocates in a
-  loop: audit with a grep for `Skia\.`, `new `, `\[\]`, `\{` returns inside
-  the draw functions.
-- The pane-side `useEffect` cascade on refresh: profile whether
-  `getScenePicture()` pulls during render vs a subscription would matter.
-
-### 6. Riskier / only with fresh evidence
-
-- **Dependency upgrade**: newer `@shopify/react-native-skia` (+ possibly
-  reanimated/worklets) may fix the UI-thread path outright — the parked
-  `claude/skia-ui-thread` branch would then eliminate JS-thread contention
-  entirely. History says this combo is fragile; isolate in a throwaway
-  branch + separate build.
-- **Explicit SkPicture disposal**: pictures churn at ~1.5/frame and are
-  GC-reclaimed. If GC logs still show pressure, `.dispose()` the previous
-  published picture — but ONLY after all panes have stopped replaying it
-  (panes hold the current one; naive disposal = use-after-free crash).
-  Requires a small ref-count in glassStage. Don't do this speculatively.
+Newer `@shopify/react-native-skia` (+ possibly reanimated/worklets) may fix
+the UI-thread path outright — the parked `claude/skia-ui-thread` branch
+would then eliminate JS-thread contention entirely. History says this combo
+is fragile; isolate in a throwaway branch + separate build.
 
 ### Already tried — do NOT re-attempt
 
@@ -160,3 +166,26 @@ Everything in the guide's constraint list, plus: 30fps clock gate (visible
 double-judder on 120Hz), synchronized pane refresh, JS-live/frozen pane
 offsets, per-pane organism redraw, blur in recorded pictures, backdrop
 filters, offscreen-surface snapshot blur.
+
+## adb evidence commands (owner copy-paste, optional but gold for GPU truth)
+
+The HUD sees the JS thread; `gfxinfo` sees the render thread. With the phone
+plugged in and USB debugging on (Settings → Developer options):
+
+```
+adb shell dumpsys gfxinfo com.anonymous.sourdoughtimer reset
+```
+…then look at the timer screen for ~30 seconds (ideally with `sim` set to
+`bulk 97%`), then:
+```
+adb shell dumpsys gfxinfo com.anonymous.sourdoughtimer
+```
+Paste back the block from "Stats since" through the "HISTOGRAM" line —
+the useful numbers are `Janky frames`, and the `90th`/`95th`/`99th`
+percentile frame times. >16ms percentiles with a clean HUD = GPU-bound.
+```
+adb logcat -v time | grep -iE "hermes.*gc|gc.*pause"
+```
+…while watching the screen correlates visible hitches with GC events
+(Ctrl-C to stop). If nothing prints in 60s, GC logging isn't exposed on
+this build — rely on the HUD's gc counter instead.

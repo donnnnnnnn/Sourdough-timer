@@ -67,13 +67,14 @@
  * that replays the published picture through a `<Group layer>` blur — the
  * mainstream RN Skia path. Full history in docs/SKIA-HANDOFF.md.
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { View } from 'react-native';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { View, type ViewStyle } from 'react-native';
 import React from 'react';
 import {
   Canvas,
   Picture,
   Skia,
+  SkiaPictureView,
   createPicture,
   vec,
   BlendMode,
@@ -81,6 +82,7 @@ import {
   StrokeCap,
   BlurStyle,
   TileMode,
+  type SkPicture,
 } from '@shopify/react-native-skia';
 import {
   computeDoughState,
@@ -90,6 +92,13 @@ import {
   type DoughState,
 } from '../model/doughState';
 import { publishScenePicture, setSceneSize, setSceneProgress } from './glassStage';
+import {
+  getPerfFlags,
+  getPerfFlagsVersion,
+  noteDirectFallback,
+  noteFrame,
+  subscribePerfFlags,
+} from './perfFlags';
 
 // ── Palette (0..255 rgb) — matches fermentation-art-spec.md & scene.js ───────
 const P = {
@@ -217,6 +226,67 @@ function blurMask(sigma: number) {
 
 const SCRATCH_PATH = Skia.Path.Make();
 
+// ── Perf-experiment mirrors (see components/perfFlags.ts) ────────────────────
+// The flags are read ONCE per recorded frame (syncPerfMirrors, called from
+// recordScenePicture) into plain module lets, so the per-draw hot path never
+// touches the store. Defaults reproduce build #22 exactly.
+let GLOW_GRAD = false; // halo(): gradient-disc substitution instead of MaskFilter
+let A_FLOOR = 0.002; // dot/halo/ring skip threshold (cull flag raises it)
+let ORB_FLOOR = 0; // glowOrb both-channels skip threshold
+function syncPerfMirrors() {
+  const f = getPerfFlags();
+  GLOW_GRAD = f.glow === 'grad';
+  A_FLOOR = f.cull ? 0.012 : 0.002;
+  ORB_FLOOR = f.cull ? 0.008 : 0;
+}
+
+// Gradient-disc halo (the `glow: 'grad'` experiment). A MaskFilter-blurred
+// disc costs the GPU a Gaussian evaluation on every draw; hundreds of halos
+// per frame late in bulk make that the biggest single GPU line item in the
+// scene. A blurred disc's radial profile is erf-shaped and depends only on
+// σ/r, so we approximate it with a 5-stop radial gradient (flat core →
+// 0.93a at r−1.5σ → 0.5a at r → 0.16a at r+σ → 0 at r+2.5σ, the erf values
+// at those points) and cache UNIT shaders keyed by color + σ/r bucket +
+// quantized alpha — same pattern as unitGlowShader. NOT pixel-identical
+// (linear interpolation between erf samples), hence the owner-facing A/B
+// toggle. Rings/strands keep MaskFilter: a blurred annulus has no such
+// cheap closed form.
+const HALO_GRAD_CACHE = new Map<number, CachedShader>();
+let haloGradCount = 0;
+const K_BUCKETS = 24; // σ/(r+σ) quantization — call sites hold σ/r constant,
+// so a bucket flip only ever happens on slowly-pulsing halos (sub-visible).
+function haloGradShader(rgb: RGB, a: number, qK: number) {
+  const qA = Math.round(clamp(a, 0, 1) * 64);
+  const key = (packRGB(rgb) * (K_BUCKETS + 1) + qK) * 65 + qA;
+  let sh = HALO_GRAD_CACHE.get(key);
+  if (!sh) {
+    if (haloGradCount > 4096) {
+      HALO_GRAD_CACHE.clear();
+      haloGradCount = 0;
+    }
+    const k = qK / K_BUCKETS; // σ/(r+σ)
+    const rRel = (1 - k) / (1 + 1.5 * k); // r / (r + 2.5σ)
+    const sRel = k / (1 + 1.5 * k); // σ / (r + 2.5σ)
+    const aa = qA / 64;
+    sh = Skia.Shader.MakeRadialGradient(
+      GRAD_CENTER,
+      1,
+      [
+        col(rgb, aa),
+        col(rgb, aa * 0.93),
+        col(rgb, aa * 0.5),
+        col(rgb, aa * 0.16),
+        col(rgb, 0),
+      ],
+      [0, Math.max(0, rRel - 1.5 * sRel), rRel, Math.min(1, rRel + sRel), 1],
+      TileMode.Clamp,
+    );
+    HALO_GRAD_CACHE.set(key, sh);
+    haloGradCount += 1;
+  }
+  return sh;
+}
+
 // Radial-gradient shaders were the last remaining per-call Skia allocation in
 // the hot path: glowOrb built a fresh MakeRadialGradient (plus its vec())
 // for EVERY glow — hundreds per frame late in bulk, tens of thousands of
@@ -281,7 +351,7 @@ function glowOrb(
   coreA: number,
   hueA: number,
 ) {
-  if (r <= 0.2 || (coreA <= 0 && hueA <= 0)) return;
+  if (r <= 0.2 || (coreA <= ORB_FLOOR && hueA <= ORB_FLOOR)) return;
   const p = additivePaint();
   p.setShader(unitGlowShader(coreRgb, hueRgb, coreA, hueA));
   canvas.save();
@@ -291,14 +361,27 @@ function glowOrb(
   canvas.restore();
 }
 function halo(canvas: any, x: number, y: number, r: number, rgb: RGB, a: number, sigma: number) {
-  if (a <= 0.002) return;
+  if (a <= A_FLOOR) return;
   const p = additivePaint();
+  if (GLOW_GRAD && sigma > 0) {
+    // Gradient-disc substitution: same footprint (r + 2.5σ covers 98.7% of
+    // the Gaussian), erf-sampled stops, no per-draw blur on the GPU.
+    const R = r + 2.5 * sigma;
+    const qK = Math.round((sigma / (r + sigma)) * K_BUCKETS);
+    p.setShader(haloGradShader(rgb, a, qK));
+    canvas.save();
+    canvas.translate(x, y);
+    canvas.scale(R, R);
+    canvas.drawCircle(0, 0, 1, p);
+    canvas.restore();
+    return;
+  }
   p.setColor(col(rgb, a));
   p.setMaskFilter(blurMask(sigma));
   canvas.drawCircle(x, y, r, p);
 }
 function dot(canvas: any, x: number, y: number, r: number, rgb: RGB, a: number) {
-  if (a <= 0.002 || r <= 0.2) return;
+  if (a <= A_FLOOR || r <= 0.2) return;
   const p = additivePaint();
   p.setColor(col(rgb, a));
   canvas.drawCircle(x, y, r, p);
@@ -313,7 +396,7 @@ function ring(
   a: number,
   sigma: number,
 ) {
-  if (a <= 0.002) return;
+  if (a <= A_FLOOR) return;
   const p = additivePaint();
   p.setStyle(PaintStyle.Stroke);
   p.setStrokeWidth(w);
@@ -343,6 +426,11 @@ interface YeastCell {
   rotSpeed: number;
   scars: { a: number; d: number }[];
   siblings: { a: number; d: number; r: number }[];
+  /** Cytoplasm grain constants (angle, dist as fraction of r, radius, alpha
+   * roll) — precomputed so the draw loop doesn't allocate a seeded RNG
+   * closure per cell per frame. Values are byte-identical to what the old
+   * per-frame mulberry32(idx*17+131) stream produced. */
+  grains: { ga: number; gdFrac: number; gr: number; gaMul: number }[];
 }
 interface LabChain {
   x: number;
@@ -498,6 +586,20 @@ function buildYeast(st: DoughState, W: number, H: number): YeastCell[] {
       for (let s = 0; s < sn; s++)
         siblings.push({ a: rng() * TAU, d: lerp(1.15, 1.5, rng()), r: lerp(0.4, 0.62, rng()) });
     }
+    // Grain constants, consumed from the SAME seeded stream and in the SAME
+    // order as the old per-frame code (ga, gd, size, alpha per grain), so the
+    // rendered grains are pixel-identical. 8 = the max the live count
+    // formula (5 + floor(bright·twinkle·3)) can ever request.
+    const grng = mulberry32(i * 17 + 131);
+    const grains: { ga: number; gdFrac: number; gr: number; gaMul: number }[] = [];
+    for (let gi = 0; gi < 8; gi++) {
+      grains.push({
+        ga: grng() * TAU,
+        gdFrac: grng() * 0.68,
+        gr: lerp(0.5, 1.3, grng()),
+        gaMul: grng(),
+      });
+    }
     cells.push({
       x,
       y,
@@ -514,6 +616,7 @@ function buildYeast(st: DoughState, W: number, H: number): YeastCell[] {
       rotSpeed: (rng() * 2 - 1) * 0.12,
       scars,
       siblings,
+      grains,
     });
   }
   return cells;
@@ -863,13 +966,14 @@ function drawYeast(canvas: any, layout: SceneLayout, st: DoughState, time: numbe
       glowOrb(canvas, -r * 0.24, r * 0.16, r * 0.16, P.amber, P.amber, 0.12 * bright, 0.08 * bright);
     }
 
-    // Granular cytoplasm — scattered micro-dots for that "grainy" fluorescence look
-    const grng = mulberry32(cell.idx * 17 + 131);
-    const grains = 5 + Math.floor(bright * 3);
-    for (let gi = 0; gi < grains; gi++) {
-      const ga = grng() * TAU;
-      const gd = grng() * r * 0.68;
-      dot(canvas, Math.cos(ga) * gd, Math.sin(ga) * gd, lerp(0.5, 1.3, grng()), P.amberCore, 0.16 * bright * grng());
+    // Granular cytoplasm — scattered micro-dots for that "grainy" fluorescence
+    // look. Constants precomputed in buildYeast (this loop used to allocate a
+    // seeded-RNG closure per cell per frame).
+    const grainN = Math.min(cell.grains.length, 5 + Math.floor(bright * 3));
+    for (let gi = 0; gi < grainN; gi++) {
+      const g = cell.grains[gi];
+      const gd = g.gdFrac * r;
+      dot(canvas, Math.cos(g.ga) * gd, Math.sin(g.ga) * gd, g.gr, P.amberCore, 0.16 * bright * g.gaMul);
     }
 
     // Ring-shaped bud scars from past divisions
@@ -1149,13 +1253,25 @@ function drawBubbles(canvas: any, layout: SceneLayout, st: DoughState, W: number
 // organize (glutenStrength): slack/dim -> aligned/bright lattice
 // fray (glutenDamage): thins, dims, snaps strands, extinguishes nodes
 // nodes flagged `attacked` (a protease is docked) dim toward dark (B4/C3).
+// Pooled live-node scratch for drawGluten — building a fresh array of ~20
+// node objects per recorded frame was the last per-frame allocation in the
+// gluten path. Objects are reused in place; only grown when the node count
+// grows (it's fixed at COLS×ROWS in practice).
+const GLUTEN_LIVE: { x: number; y: number; v: number; attacked: boolean }[] = [];
+
 function drawGluten(canvas: any, g: GlutenLayout, time: number) {
   const organize = g.organize;
   const fray = g.fray;
   // live node positions (static x, breathing y)
-  const live: { x: number; y: number; v: number; attacked: boolean }[] = [];
-  for (const n of g.nodes) {
-    live.push({ x: n.x, y: glutenNodeY(n, time, organize), v: n.v, attacked: n.attacked });
+  const live = GLUTEN_LIVE;
+  while (live.length < g.nodes.length) live.push({ x: 0, y: 0, v: 1, attacked: false });
+  for (let i = 0; i < g.nodes.length; i++) {
+    const n = g.nodes[i];
+    const slot = live[i];
+    slot.x = n.x;
+    slot.y = glutenNodeY(n, time, organize);
+    slot.v = n.v;
+    slot.attacked = n.attacked;
   }
   const strandA = lerp(0.14, 0.6, organize) * (1 - 0.8 * fray);
   const strandW = lerp(1.0, 4.0, organize) * (1 - 0.55 * fray);
@@ -1168,7 +1284,10 @@ function drawGluten(canvas: any, g: GlutenLayout, time: number) {
   }
   const alive = g.alive;
   if (alive >= 0.04) {
-    for (const n of live) {
+    // Indexed loop on purpose: `live` is a pool and may hold more slots than
+    // this layout has nodes.
+    for (let i = 0; i < g.nodes.length; i++) {
+      const n = live[i];
       const nr = lerp(2.0, 6.5, organize) * (1 - 0.6 * fray) * n.v;
       // a docked protease extinguishes the junction toward dark
       const na = n.attacked ? alive * 0.28 : alive;
@@ -1234,6 +1353,86 @@ function drawStrand(
   }
 }
 
+// ── Per-frame recording, shared by both renderer paths ──────────────────────
+// The slow/fast split (see drawSlowOrganisms) needs a tick counter and a
+// cached slow sub-picture; both live in a SlowPicCache owned by the mounted
+// component so the 'direct' loop and the 'react' memo drive the exact same
+// logic. flagsV participates in the dep check so a glow/cull toggle rebuilds
+// the slow picture immediately instead of after the next cadence tick.
+
+function nowMs(): number {
+  const p = (globalThis as { performance?: { now?: () => number } }).performance;
+  return p && p.now ? p.now() : Date.now();
+}
+
+interface SceneDrawState {
+  st: DoughState;
+  layout: SceneLayout;
+  W: number;
+  H: number;
+  dim: number;
+  progress: number;
+}
+
+interface SlowPicCache {
+  pic: SkPicture | null;
+  st: DoughState | null;
+  layout: SceneLayout | null;
+  W: number;
+  H: number;
+  dim: number;
+  flagsV: number;
+  frame: number;
+}
+
+function makeSlowPicCache(): SlowPicCache {
+  return { pic: null, st: null, layout: null, W: 0, H: 0, dim: 1, flagsV: -1, frame: 0 };
+}
+
+function recordScenePicture(sd: SceneDrawState, timeSec: number, cache: SlowPicCache): SkPicture {
+  syncPerfMirrors();
+  const flagsV = getPerfFlagsVersion();
+  const slowEvery = sd.progress >= 0.5 ? 3 : 2;
+  const frame = cache.frame++;
+  const depsChanged =
+    cache.st !== sd.st ||
+    cache.layout !== sd.layout ||
+    cache.W !== sd.W ||
+    cache.H !== sd.H ||
+    cache.dim !== sd.dim ||
+    cache.flagsV !== flagsV;
+  if (!cache.pic || depsChanged || frame % slowEvery === 0) {
+    const { st, layout, W, H, dim } = sd;
+    cache.pic = createPicture((canvas) =>
+      drawSlowOrganisms(canvas, st, layout, W, H, timeSec, dim),
+    );
+    cache.st = sd.st;
+    cache.layout = sd.layout;
+    cache.W = sd.W;
+    cache.H = sd.H;
+    cache.dim = sd.dim;
+    cache.flagsV = flagsV;
+  }
+  const slowPic = cache.pic;
+  const { st, layout, W, H, dim } = sd;
+  return createPicture((canvas) => {
+    canvas.drawPicture(slowPic);
+    drawFastOrganisms(canvas, st, layout, W, H, timeSec, dim);
+  });
+}
+
+// Reduced-backing-resolution experiment: the on-screen view is resScale× the
+// scene size, so the picture it displays must be pre-scaled to fill the
+// smaller surface. The glass panes always receive the UNSCALED picture —
+// SkPictures are resolution-independent and pane canvases are unaffected.
+function wrapForView(pic: SkPicture, f: number): SkPicture {
+  if (f === 1) return pic;
+  return createPicture((canvas) => {
+    canvas.scale(f, f);
+    canvas.drawPicture(pic);
+  });
+}
+
 // ── React component ──────────────────────────────────────────────────────────
 
 interface Props {
@@ -1260,6 +1459,12 @@ export function SkiaFermentationScene({
 }: Props) {
   const [size, setSize] = useState({ w: FALLBACK_W, h: FALLBACK_H });
 
+  // Perf-experiment flags participate in this render (renderer choice, res
+  // scale, demo progress). They only change when toggled by hand in the dev
+  // HUD, so this costs nothing in steady state.
+  useSyncExternalStore(subscribePerfFlags, getPerfFlagsVersion, getPerfFlagsVersion);
+  const flags = getPerfFlags();
+
   // Map the scene mode → a progress point on the doughState curve engine.
   //   bulk     → live fraction
   //   autolyse → a fixed early point; at this progress doughState naturally
@@ -1270,9 +1475,13 @@ export function SkiaFermentationScene({
   // below — a visible once-per-second hitch. Quantize to 0.5% steps: a 2-hour
   // bulk then refreshes the layout every ~36s, and all per-frame motion comes
   // from the animation clock anyway, not from progress.
-  const rawProgress = mode === 'bulk' ? clamp(fraction, 0, 1) : mode === 'autolyse' ? 0.06 : 0.0;
+  // The HUD's "sim" chip overrides progress (and un-dims idle) so late-bulk
+  // performance can be exercised in seconds instead of hours into a bake.
+  const demo = flags.demoProgress;
+  const rawProgress =
+    demo ?? (mode === 'bulk' ? clamp(fraction, 0, 1) : mode === 'autolyse' ? 0.06 : 0.0);
   const progress = Math.round(rawProgress * 200) / 200;
-  const dim = mode === 'idle' ? 0.28 : 1.0;
+  const dim = demo !== null ? 1.0 : mode === 'idle' ? 0.28 : 1.0;
 
   // State is computed once on the JS thread — it does NOT depend on the clock.
   const st = useMemo(
@@ -1287,89 +1496,161 @@ export function SkiaFermentationScene({
   // main performance lever: the hot per-frame path only layers motion on top.
   const layout = useMemo(() => buildLayout(st, W, H), [st, W, H]);
 
-  // Animation clock, driven on the JS thread at 60fps. We deliberately do NOT
-  // use Skia's useClock + reanimated useDerivedValue: on this Skia 2.6.2 +
-  // reanimated 4.3 / worklets 0.8 combo, calling createPicture() inside a
-  // reanimated worklet throws "undefined is not a function" and crashes the
-  // app (see docs/SKIA-HANDOFF.md). Driving from JS keeps the drawing
-  // byte-for-byte identical — only the per-frame trigger moves off the UI
-  // thread. This component re-renders per frame in isolation; `st` and
-  // `layout` (useMemo above) are NOT recomputed each frame, so only the
-  // pictures rebuild.
+  // Both renderer paths share one animation clock design (JS thread,
+  // requestAnimationFrame, 60fps gate with a FRAME_MS−1 epsilon — the old
+  // 30fps gate double-juddered on the 120Hz panel) and one recording routine
+  // (recordScenePicture above, which keeps the slow/fast split). We
+  // deliberately do NOT use Skia's useClock + reanimated useDerivedValue: on
+  // this Skia 2.6.2 + reanimated 4.3 / worklets 0.8 combo, createPicture()
+  // inside a reanimated worklet throws and crashes the app (SKIA-HANDOFF.md).
   //
-  // The gate was 30fps, which judders on a 120Hz phone: rAF ticks every
-  // ~8.3ms, so a 33.3ms threshold fires after 33.3 OR 41.7ms — visibly
-  // uneven — and 30fps is itself choppy for continuous ambient drift. The
-  // 1ms epsilon keeps a frame from slipping a whole vsync tick when the
-  // timestamp lands fractionally early.
-  const [timeSec, setTimeSec] = useState(0);
+  // What differs is what happens AFTER a picture is recorded:
+  //
+  //  'direct' (default): the picture is handed straight to the native view —
+  //    SkiaViewApi.setJsiProperty(id,'picture',pic) + requestRedraw(id), the
+  //    exact two calls RN Skia's own SkiaPictureView makes internally. Zero
+  //    React per frame. This also skips what the declarative <Canvas> does
+  //    per commit on this Skia version: rebuild a ReanimatedRecorder, re-visit
+  //    the scene graph, and dispatch a runOnUI worklet that replays the
+  //    recorder into a second picture (sksg/Container.native.js) — machinery
+  //    plus allocation churn we were paying 60×/s for a tree whose shape
+  //    never changes.
+  //
+  //  'react' (fallback, build #22 behavior): setTimeSec() per tick → React
+  //    render → useMemo records → declarative <Canvas><Picture/>. Kept whole
+  //    behind the flag so the owner can flip back live if the direct path
+  //    misbehaves on-device; the scene also flips itself back if the direct
+  //    loop ever throws (noteDirectFallback).
+  //
+  // timeBaseRef carries the clock across renderer toggles so an A/B flip
+  // doesn't visibly restart every drift/breathe phase.
+  const direct = flags.renderer === 'direct';
+  const resScale = flags.resScale;
+
+  const drawStateRef = useRef<SceneDrawState>({ st, layout, W, H, dim, progress });
+  drawStateRef.current = { st, layout, W, H, dim, progress };
+  const cacheRef = useRef<SlowPicCache | null>(null);
+  if (cacheRef.current === null) cacheRef.current = makeSlowPicCache();
+  const timeBaseRef = useRef(0);
+  const pvRef = useRef<SkiaPictureView>(null);
+
+  // ── 'direct' path: record + hand to the native view, no React per frame ──
   useEffect(() => {
+    if (!direct) return;
+    let raf = 0;
+    let start: number | null = null;
+    let last = -Infinity;
+    let misses = 0;
+    const FRAME_MS = 1000 / 60;
+    const cache = cacheRef.current!;
+    const loop = (ts: number) => {
+      raf = requestAnimationFrame(loop);
+      if (start === null) start = ts - timeBaseRef.current * 1000;
+      if (ts - last < FRAME_MS - 1) return;
+      const delta = last === -Infinity ? FRAME_MS : ts - last;
+      last = ts;
+      const t = (ts - start) / 1000; // seconds — matches scene.js clock units
+      timeBaseRef.current = t;
+      const t0 = nowMs();
+      try {
+        const view = pvRef.current;
+        const api = (globalThis as { SkiaViewApi?: any }).SkiaViewApi;
+        if (!view || !api?.setJsiProperty || !api?.requestRedraw) {
+          // Tolerate a transient null ref (remount timing); only give up on
+          // the direct path if the API stays missing for ~half a second.
+          if (++misses > 30) noteDirectFallback('SkiaViewApi or view ref unavailable');
+          return;
+        }
+        misses = 0;
+        const pic = recordScenePicture(drawStateRef.current, t, cache);
+        api.setJsiProperty(view.nativeId, 'picture', wrapForView(pic, getPerfFlags().resScale));
+        api.requestRedraw(view.nativeId);
+        if (glassEnabled) publishScenePicture(pic);
+        noteFrame(ts, delta, nowMs() - t0);
+      } catch (e) {
+        // A throw here is OUTSIDE React, so the SkiaErrorBoundary can't see
+        // it — never let it escape (an uncaught rAF error takes down the
+        // app). Fall back to the React path, which the boundary does guard.
+        console.warn('[SkiaFermentationScene] direct renderer failed, using React path:', e);
+        noteDirectFallback(e instanceof Error ? e.message : String(e));
+      }
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [direct, glassEnabled]);
+
+  // ── 'react' path: the build #22 pipeline, verbatim ──
+  const [timeSec, setTimeSec] = useState(0);
+  const reactWorkMsRef = useRef(-1);
+  useEffect(() => {
+    if (direct) return;
+    // Re-seed the state clock from the shared base so a direct→react toggle
+    // resumes mid-motion instead of flashing one frame at t=0.
+    setTimeSec(timeBaseRef.current);
     let raf = 0;
     let start: number | null = null;
     let last = -Infinity;
     const FRAME_MS = 1000 / 60;
     const loop = (ts: number) => {
-      if (start === null) start = ts;
-      if (ts - last >= FRAME_MS - 1) {
-        last = ts;
-        setTimeSec((ts - start) / 1000); // seconds — matches scene.js clock units
-      }
       raf = requestAnimationFrame(loop);
+      if (start === null) start = ts - timeBaseRef.current * 1000;
+      if (ts - last >= FRAME_MS - 1) {
+        const delta = last === -Infinity ? FRAME_MS : ts - last;
+        last = ts;
+        const t = (ts - start) / 1000;
+        timeBaseRef.current = t;
+        noteFrame(ts, delta, reactWorkMsRef.current);
+        setTimeSec(t);
+      }
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
-  }, []);
+  }, [direct]);
 
-  // The organisms are recorded into a picture — plain Skia, no worklet — and
-  // drawn full-focus across this canvas. Glass panels are NOT drawn here
-  // anymore: each GlassCard hosts its own small canvas that replays this
-  // same picture through a declarative blur (see GlassBackdrop.tsx).
-  // Publishing happens in an effect so subscriber re-renders never fire
-  // during this component's own render.
-  //
-  // Recording is SPLIT BY MOTION SPEED (on-device, build #21: "still has
-  // some jerkiness, even when not scrolling, especially later in bulk").
-  // Re-recording the whole cast every frame is pure JS-thread cost that
-  // grows with the organism count — and everything except bubbles moves
-  // ~0.2px/frame. So the slow cast is recorded into its own sub-picture
-  // every 2nd clock tick (every 3rd late in bulk, when it is at its
-  // biggest and the per-frame budget is tightest), and each frame's
-  // published picture just REPLAYS it (native, cheap) and records the
-  // bubbles on top at full 60fps. Nested picture replay inside
-  // createPicture is a device-proven path (the old glass design replayed
-  // orgPicture per panel). The slow picture must rebuild immediately when
-  // st/layout/size/dim change — frame cadence alone would replay a stale
-  // cast for a tick or two after a progress step.
-  const slowPicRef = useRef<ReturnType<typeof createPicture> | null>(null);
-  const slowDepsRef = useRef<unknown[]>([]);
-  const frameRef = useRef(0);
   const orgPicture = useMemo(() => {
-    const frame = frameRef.current++;
-    const slowEvery = progress >= 0.5 ? 3 : 2;
-    const d = slowDepsRef.current;
-    const depsChanged =
-      d[0] !== st || d[1] !== layout || d[2] !== W || d[3] !== H || d[4] !== dim;
-    if (!slowPicRef.current || depsChanged || frame % slowEvery === 0) {
-      slowPicRef.current = createPicture((canvas) =>
-        drawSlowOrganisms(canvas, st, layout, W, H, timeSec, dim),
-      );
-      slowDepsRef.current = [st, layout, W, H, dim];
-    }
-    const slowPic = slowPicRef.current;
-    return createPicture((canvas) => {
-      canvas.drawPicture(slowPic);
-      drawFastOrganisms(canvas, st, layout, W, H, timeSec, dim);
-    });
-  }, [st, layout, W, H, timeSec, dim, progress]);
+    if (direct) return null;
+    const t0 = nowMs();
+    const pic = recordScenePicture(drawStateRef.current, timeSec, cacheRef.current!);
+    reactWorkMsRef.current = nowMs() - t0;
+    return pic;
+    // drawStateRef is refreshed during render, so listing its fields keeps
+    // this memo exactly as reactive as the old inline version was.
+  }, [st, layout, W, H, timeSec, dim, progress, direct]);
+  const viewPicture = useMemo(
+    () => (orgPicture ? wrapForView(orgPicture, resScale) : null),
+    [orgPicture, resScale],
+  );
+
   useEffect(() => {
     setSceneSize(W, H);
   }, [W, H]);
   useEffect(() => {
     setSceneProgress(progress);
   }, [progress]);
+  // Publishing happens in an effect (React path) so subscriber re-renders
+  // never fire during this component's own render; the direct loop publishes
+  // straight from its tick instead.
   useEffect(() => {
-    if (glassEnabled) publishScenePicture(orgPicture);
-  }, [orgPicture, glassEnabled]);
+    if (!direct && glassEnabled && orgPicture) publishScenePicture(orgPicture);
+  }, [orgPicture, glassEnabled, direct]);
+
+  // At resScale < 1 the Skia view's LAYOUT is shrunk (that is what shrinks
+  // its native backing surface) and the compositor scales it back up around
+  // its center; left/top place the scaled result exactly over the wrapper.
+  // Soft additive glow upsamples gracefully — sharp specks are the tell, and
+  // the owner judges that via the HUD's res chip.
+  const canvasStyle: ViewStyle =
+    resScale === 1
+      ? { width: W, height: H, backgroundColor: 'black' }
+      : {
+          position: 'absolute',
+          left: (W - W * resScale) / 2,
+          top: (H - H * resScale) / 2,
+          width: W * resScale,
+          height: H * resScale,
+          backgroundColor: 'black',
+          transform: [{ scale: 1 / resScale }],
+        };
 
   return (
     <View
@@ -1380,14 +1661,26 @@ export function SkiaFermentationScene({
           setSize({ w: Math.round(width), h: Math.round(height) });
         }
       }}
-      style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, overflow: 'hidden' }}
+      style={{
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        top: 0,
+        bottom: 0,
+        overflow: 'hidden',
+        backgroundColor: 'black',
+      }}
     >
       {/* backgroundColor black is required: additive glow over pure black.
           Glass panels are NOT drawn here — each GlassCard renders its own
           blurred window onto this same picture (see GlassBackdrop.tsx). */}
-      <Canvas style={{ width: W, height: H, backgroundColor: 'black' }}>
-        <Picture picture={orgPicture} />
-      </Canvas>
+      {direct ? (
+        <SkiaPictureView ref={pvRef} mode="default" style={canvasStyle} />
+      ) : (
+        <Canvas style={canvasStyle}>
+          {viewPicture && <Picture picture={viewPicture} />}
+        </Canvas>
+      )}
     </View>
   );
 }

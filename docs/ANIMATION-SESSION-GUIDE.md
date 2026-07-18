@@ -105,7 +105,7 @@ Chips (each flips a `perfFlags` value live, no rebuild):
 | `draw` | direct / react | React-bypass renderer vs build #22 pipeline. Pixel-identical output; direct should feel smoother or equal. |
 | `glow` | mask / grad | MaskFilter halos vs cached radial-gradient discs (NOT pixel-identical — owner judges look + smoothness). |
 | `res` | 100% / 75% | Scene canvas backing resolution (NOT pixel-identical — sharp specks are the tell; ~44% less GPU fill at 75%). |
-| `cull` | on / off | Skip draws below ~1.2% alpha (≤ ~3/255 per pixel — sub-visible in theory, togglable to prove it). |
+| `cull` | on / off | Skip draws below ~1.2% alpha (≤ ~3/255 per pixel — sub-visible, confirmed by owner). **Default ON since build #24** (evidence: +4 fps, −18ms worst, no visual difference). |
 | `sim` | live / bulk 85% / bulk 97% | Forces the scene to a late-bulk cast immediately — test the worst case without a 5-hour bake. Also un-dims the idle field while active. |
 
 The `sim` chip only affects the SCENE (organism density/progress feeding
@@ -142,6 +142,10 @@ substitution, resolution scaling, culling thresholds, dropped passes), wire
 it to `components/perfFlags.ts`, surface a chip in `PerfHud`, and default it
 to the pixel-identical setting unless the owner has already accepted the
 trade. Never ship a look change as a fait accompli inside a perf build.
+
+**Already owner-accepted** (safe to default ON): `cull` (build #24 evidence).
+**Owner-rejected** (keep default OFF/original): `glow: 'grad'` (no fps gain,
+owner prefers mask look), `resScale: 0.75` (no improvement on Pixel 9).
 
 ### 3. No blur inside a recorded SkPicture — and no backdrop filters
 

@@ -20,7 +20,25 @@ Owner device: **Pixel 9 (120Hz)**. Complaint history and what each build fixed:
 | #20 | `928f4fa` | Staggered pane slots + progress-widening period → "improved" but "scrolling is jerky even pre-bulk" |
 | #21 | `9568f1f` | Blur clipped to visible slice + scroll-time refresh halving + BASE_PERIOD 3→4 → "improved significantly", card edges confirmed good, but "still some jerkiness, even when not scrolling, especially later in bulk" |
 | #22 | `27998f4` | glowOrb unit-gradient shader cache; drift/flow scratch outputs; slow/fast layer split (slow cast @30fps, @20fps late bulk; bubbles @60fps). Verdict: **"better than before, but still could be smoother, especially later in animation."** |
-| #23 | (this pass) | Direct renderer (React/scene-graph/runOnUI bypass — see guide; pixel-identical, default ON, `draw` chip falls back); perf HUD + owner A/B chips; gradient-disc glow substitution (`glow` chip, default mask); 75% backing-resolution option (`res` chip, default 100%); sub-visible-alpha culling (`cull` chip, default off); grain-constants precompute + gluten live-node pool (pixel-identical). **Owner verdict pending.** |
+| #23 | (prev pass) | Direct renderer (React/scene-graph/runOnUI bypass — see guide; pixel-identical, default ON, `draw` chip falls back); perf HUD + owner A/B chips; gradient-disc glow substitution (`glow` chip, default mask); 75% backing-resolution option (`res` chip, default 100%); sub-visible-alpha culling (`cull` chip, default off); grain-constants precompute + gluten live-node pool (pixel-identical). **Owner verdict: "draw direct is smoother, glow mask looks better, res 100 vs 75 no noticeable difference, cull on doesn't change visually."** |
+| #24 | (this pass) | Merged design-modernization UI overhaul (Fraunces font, AppText, DoughButton, Chip, etc.). A/B evidence collected (HUD screenshots, sim:bulk 85%). Promoted `cull: true` as default. See evidence table below. |
+
+### Build #24 A/B evidence (Pixel 9, sim:bulk 85%, HUD screenshots)
+
+| Setting | fps | worst (ms) | late | hitch | js-work avg (ms) | js-work max (ms) |
+|---------|-----|-----------|------|-------|-------------------|-------------------|
+| draw:direct, cull:on, glow:mask, res:100% | 33–35 | 58.6 | 3–5 | 1–2 | 3.68 | 15.3 |
+| draw:direct, cull:off, glow:mask, res:100% | 31 | 76.2 | 5 | 2 | 5.25 | 22.2 |
+| draw:direct, cull:on, glow:grad, res:100% | 29 | 62.7 | 5 | 2 | 4.12 | 16.8 |
+| draw:direct, cull:on, glow:mask, res:75% | 29 | 81.5 | 6 | 2 | 3.91 | 17.1 |
+| draw:react, cull:off, glow:mask, res:100% | 17 | 115.7 | 11 | 5 | — | — |
+
+**Conclusions:**
+- **draw:direct** is the clear winner (2× fps over react path).
+- **cull:on** provides a measurable improvement (+4 fps, −18ms worst, −1.6ms avg JS work) with no visible change per owner.
+- **glow:grad** does NOT help — same or worse fps, and owner prefers mask's look.
+- **res:75%** does NOT help — possibly compositor upscale cost offsets GPU fill savings.
+- **Bottleneck**: JS work avg is only 3–5ms within a 16.7ms budget, yet fps is 29–35. The remaining gap is likely GPU-bound (render thread compositing scene + 9–10 glass panes with blur). GPU profiling (adb gfxinfo) would confirm; owner's machine lacks adb.
 
 The #23 discovery worth knowing: on this Skia (2.6.2) + reanimated combo,
 EVERY declarative `<Canvas>` commit rebuilds a `ReanimatedRecorder`,
@@ -91,29 +109,27 @@ per refresh (~10/s each, staggered) — see direction 2 below.
 
 ## Next-pass workflow (owner in the loop)
 
-1. Get the owner's verdict on #23 defaults (= #22 pixels, new plumbing).
-2. Have them try the chips ONE AT A TIME (glow → res → cull), noting for
-   each: smoother? look acceptable? HUD numbers before/after (screenshots).
-3. Read the evidence:
-   - HUD clean (fps ~60, no hitches) but eye sees jank → GPU-bound → the
-     `glow`/`res` chips are exactly the levers; if they fix it, promote the
-     accepted setting to the default in `perfFlags.ts` DEFAULTS.
-   - `worst` spikes, `js work` low, `gc` ticking → allocation/GC → direction
-     3 (picture disposal).
-   - `js work` high late bulk → recording cost → widen the slow-layer
-     cadence further (slowEvery 3→4 at progress ≥0.75), or split the slow
-     cast into two staggered sub-pictures.
-   - Jank ONLY while scrolling → pane-side → direction 2.
-4. Whatever the owner accepts becomes the new default; drop the losing
-   branch of each A/B in a cleanup commit (keep the HUD).
+**Steps 1–4 completed in build #24.** Evidence collected, defaults promoted.
+
+Current situation: fps is 29–35 at bulk 85% on Pixel 9 (120Hz), well below
+the 60fps target. JS work is low (3–5ms avg), so the bottleneck is almost
+certainly GPU-bound — the render thread is spending too long compositing the
+full-resolution scene + 9–10 glass panes with MaskFilter blur.
+
+**Next steps (in priority order):**
+1. Try direction #4 (opaque scene surface) — one-line experiment that may
+   eliminate a full-screen alpha blend the compositor pays every frame.
+2. Try direction #2 (pane-side SharedValue bypass) — the 90 React
+   renders/s from glass panes generate significant render-thread work.
+3. If the owner can install adb: collect `gfxinfo` render-thread percentiles
+   to confirm the GPU-bound diagnosis before heavier surgery.
 
 ## Ranked directions for the next pass
 
-### 1. Promote winning A/B settings to defaults (trivial, do first)
+### ~~1. Promote winning A/B settings to defaults~~ ✓ DONE (build #24)
 
-One-line changes in `components/perfFlags.ts` DEFAULTS once the owner has
-picked. Delete no code yet — the chips stay until two consecutive builds
-without regressions.
+`cull: true` promoted. `glow: 'mask'`, `resScale: 1`, `renderer: 'direct'`
+confirmed as correct defaults. Chips stay for future experiments.
 
 ### 2. Pane-side React/recorder bypass (JS thread, medium risk)
 

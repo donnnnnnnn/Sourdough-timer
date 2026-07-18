@@ -53,12 +53,14 @@ const DEFAULTS: PerfFlags = {
   // The direct path talks to the native Skia view API; on web that global
   // may not exist, so web keeps the declarative React path from the start.
   renderer: Platform.OS === 'web' ? 'react' : 'direct',
-  // Everything below defaults to the pixel-identical setting: with the HUD
-  // untouched, a build renders EXACTLY like build #22 (only the renderer
-  // mechanism differs), so any owner-reported look change has one suspect.
+  // Build #24 A/B evidence (Pixel 9, sim:bulk 85%):
+  //   cull ON: fps 35, worst 58.6ms, js-work 3.68ms avg
+  //   cull OFF: fps 31, worst 76.2ms, js-work 5.25ms avg
+  //   glow mask > grad (owner: "looks better", no fps gain from grad)
+  //   res 100% >= 75% (75% showed no improvement, possibly compositor cost)
   glow: 'mask',
   resScale: 1,
-  cull: false,
+  cull: true,
   demoProgress: null,
   hud: false,
 };

@@ -26,7 +26,10 @@ export type IconName =
   | 'chevronRight'
   | 'close'
   | 'bubbles'
-  | 'droop';
+  | 'droop'
+  | 'peak'
+  | 'flat'
+  | 'drop';
 
 interface IconProps {
   name: IconName;
@@ -150,6 +153,15 @@ export function Icon({ name, size = 18, color = C.textMuted, strokeWidth = 1.8 }
           <Path {...p} d="M3.5 17.5 C5.5 17.5 5.8 14.6 8 13 C10 11.6 14 11.6 16 13 C18.2 14.6 18.5 17.5 20.5 17.5" />
           <Path {...p} d="M3.5 17.5 H20.5" />
         </>
+      )}
+      {name === 'peak' && (
+        <Path {...p} d="M3.5 17 L9.6 7.9 C10.9 6.1 13.1 6.1 14.4 7.9 L20.5 17 Z" />
+      )}
+      {name === 'flat' && (
+        <Path {...p} d="M3.5 16.5 C3.5 13.6 6.6 12.3 12 12.3 C17.4 12.3 20.5 13.6 20.5 16.5 Z" />
+      )}
+      {name === 'drop' && (
+        <Path {...p} d="M12 4.8 C15 9 17 11.4 17 14.2 a5 5 0 0 1 -10 0 C7 11.4 9 9 12 4.8 Z" />
       )}
     </Svg>
   );

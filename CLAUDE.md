@@ -14,9 +14,19 @@ and classify the crumb as `under_fermented`, `properly_fermented`, or
 
 ### Layout
 
-- `app/(tabs)/` — Expo Router screens: timer (`index`), `diagnose`, `log`, `history`
+- `app/(tabs)/` — Expo Router screens, two tabs: **Bake** (`index` — the
+  timer) and **Shelf** (`log` — logging flow, scan ritual, bake gallery).
+  Native uses `NativeTabs`; web keeps a classic bottom bar (see `_layout.tsx`).
+- `components/theme.ts` — the design system ("The Warm Microscope"): color
+  depths, straw→honey→ember accent ramp, 7-step type scale (Fraunces display,
+  tabular numerals), radius tiers, motion constants, haptic vocabulary.
+  `components/ui/` — the component kit (AppText, Card, Chip, DoughButton,
+  Dial, Ruler, Journey, Corridor, Gauge, ScanOverlay, Sheet, Icon…). Use
+  these instead of hand-rolled styles; rationale + roadmap live in
+  `docs/design-modernization-plan.md`.
 - `model/` — on-device inference: `classifier.ts`, `visionAnalyzer.ts`
-- `store/` — Zustand state + SQLite persistence (`.web.ts` variants for web)
+- `store/` — Zustand state + SQLite persistence (`.web.ts` variants for web);
+  persist version 2 (bakes carry temp/rise/fold times/photo)
 - `tools/` — Python ML pipeline (runs on the owner's machine, not in the app):
   - `build_dataset.py` — scrapes crumb photos from baking blogs (Playwright + BS4)
   - `curate_dataset.py` — Claude-vision pass that filters/relabels/splits the
@@ -25,8 +35,10 @@ and classify the crumb as `under_fermented`, `properly_fermented`, or
 
 ### Tech stack
 
-Expo SDK 56, React Native 0.85, Expo Router (file-based tabs), NativeWind
-(Tailwind), expo-sqlite. Python 3.13 for tooling.
+Expo SDK 56, React Native 0.85, Expo Router (file-based tabs), expo-sqlite.
+Styling is inline style objects fed by `components/theme.ts` tokens — the
+NativeWind/Tailwind toolchain was removed July 2026 after sitting unused.
+Python 3.13 for tooling.
 
 Native modules note: `react-native-notify-kit` (the New-Architecture fork of
 the archived Notifee) drives BOTH the persistent Android notification panel

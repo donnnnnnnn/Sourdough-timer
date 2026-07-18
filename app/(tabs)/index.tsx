@@ -1,38 +1,51 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { View, Text, TouchableOpacity, Pressable, Platform, Animated, Easing, StyleSheet, type NativeSyntheticEvent, type NativeScrollEvent } from 'react-native';
-import * as Notifications from 'expo-notifications';
-import * as Haptics from 'expo-haptics';
-import { useBakeStore } from '@/store/useBakeStore';
-import { suggestBulk, estimatedRise, foldLatenessAdvice } from '@/lib/bulkCoach';
-import { scheduleFoldAlarms, cancelFoldAlarms, MAX_PLANNED_FOLDS } from '@/lib/foldAlarm';
-import { router } from 'expo-router';
-import { Sparkles, Hand, BellRing, Thermometer, Wand2, ArrowUp, FlaskConical, X, Clock, CheckCircle2 } from 'lucide-react-native';
-import { C, fonts, label } from '@/components/theme';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  PHASE_SCRIPT,
-  AUTOLYSE_COPY,
-  bulkPhaseIndex,
-  type PhaseCopy,
-} from '@/components/FermentationScene';
+  View,
+  ScrollView,
+  Pressable,
+  Platform,
+  Animated,
+  Easing,
+  StyleSheet,
+  type NativeSyntheticEvent,
+  type NativeScrollEvent,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as Notifications from 'expo-notifications';
+import { router } from 'expo-router';
+
+import { useBakeStore } from '@/store/useBakeStore';
+import { suggestBulk, estimatedRise, foldLatenessAdvice, formatTemp } from '@/lib/bulkCoach';
+import { scheduleFoldAlarms, cancelFoldAlarms, MAX_PLANNED_FOLDS } from '@/lib/foldAlarm';
+import { syncBulkPanel, clearBulkPanel } from '@/lib/bulkStatusPanel';
+import { AUTOLYSE_COPY } from '@/components/FermentationScene';
 // Deliberately NOT a static import of SkiaFermentationScene: the Skia module
 // runs code at import time, and a throw there would crash the whole route
 // before any error boundary mounts. SafeSkiaFermentationScene lazy-loads the
-// scene inside a dedicated error boundary that shows the real error + stack
-// on-device (see components/SkiaErrorBoundary.tsx and docs/SKIA-HANDOFF.md).
+// scene inside a boundary that falls back to the pure-JS FermentationScene
+// (see components/SkiaErrorBoundary.tsx and docs/SKIA-HANDOFF.md).
 import { SafeSkiaFermentationScene } from '@/components/SkiaErrorBoundary';
 import { GlassStageProvider, GlassCard } from '@/components/GlassCard';
 import { setScrollY, setContentTop, setScrollAnim } from '@/components/glassStage';
-import { syncBulkPanel, clearBulkPanel } from '@/lib/bulkStatusPanel';
-// Dev-only animation perf HUD (plain RN views, no Skia): toggled by
-// long-pressing the faint "· perf ·" label at the bottom of the screen.
 import { PerfHud } from '@/components/PerfHud';
 import { getPerfFlags, setPerfFlags } from '@/components/perfFlags';
+import { C, fonts, accentForFraction, lerpColor, motion, thump, successHaptic, Haptics } from '@/components/theme';
+import { AppText } from '@/components/ui/AppText';
+import { Chip } from '@/components/ui/Chip';
+import { Corridor } from '@/components/ui/Corridor';
+import { Dial } from '@/components/ui/Dial';
+import { DoughButton } from '@/components/ui/DoughButton';
+import { Icon } from '@/components/ui/Icon';
+import { Journey } from '@/components/ui/Journey';
+import { Ruler } from '@/components/ui/Ruler';
+import { Sheet } from '@/components/ui/Sheet';
+import { Squish } from '@/components/ui/Squish';
 
 const AUTOLYSE_OPTIONS = [20, 30, 45, 60];
 
 const FOLD_INTERVALS = [30, 45, 60];
 const FOLD_LATE_THRESHOLD_MIN = 5;
-const TARGET_STEP = 30;       // adjust expected bulk time in 30-min steps
+const TARGET_STEP = 15;       // ruler snaps expected bulk in 15-min detents
 const TARGET_MIN = 60;
 const TARGET_MAX = 720;
 
@@ -56,26 +69,8 @@ function formatMinutes(min: number) {
   return `${h}h ${m}m`;
 }
 
-function formatClock(timestamp: number) {
-  return new Date(timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-}
-
-/** Soft physical feedback; silently does nothing on web. */
-function thump(style: Haptics.ImpactFeedbackStyle = Haptics.ImpactFeedbackStyle.Medium) {
-  if (Platform.OS === 'web') return;
-  Haptics.impactAsync(style).catch(() => {});
-}
-
-/** Mix two hex colors; t=0 gives a, t=1 gives b. */
-function lerpColor(a: string, b: string, t: number) {
-  const pa = [1, 3, 5].map((i) => parseInt(a.slice(i, i + 2), 16));
-  const pb = [1, 3, 5].map((i) => parseInt(b.slice(i, i + 2), 16));
-  const mix = pa.map((v, i) => Math.round(v + (pb[i] - v) * t));
-  return `rgb(${mix[0]},${mix[1]},${mix[2]})`;
-}
-
 /** Soft breathing dot shown while the dough is fermenting. */
-function PulseDot() {
+function PulseDot({ color = C.accent }: { color?: string }) {
   const pulse = useRef(new Animated.Value(0.4)).current;
   useEffect(() => {
     const loop = Animated.loop(
@@ -87,20 +82,10 @@ function PulseDot() {
     loop.start();
     return () => loop.stop();
   }, [pulse]);
-  return (
-    <Animated.View
-      style={{
-        width: 8,
-        height: 8,
-        borderRadius: 4,
-        backgroundColor: C.accent,
-        opacity: pulse,
-      }}
-    />
-  );
+  return <Animated.View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: color, opacity: pulse }} />;
 }
 
-// Bubble tints used by the end-of-bulk celebration burst.
+// Bubble tints used by the celebration burst and the fold-pad ripple.
 const TINTS = [
   { fill: 'rgba(232,163,61,0.16)', rim: 'rgba(232,163,61,0.65)' },
   { fill: 'rgba(232,163,61,0.16)', rim: 'rgba(232,163,61,0.65)' },
@@ -132,22 +117,24 @@ function makeBubbles(count: number): BubbleSpec[] {
   }));
 }
 
-function Bubble({ spec }: { spec: BubbleSpec }) {
+function Bubble({ spec, once = false }: { spec: BubbleSpec; once?: boolean }) {
   const t = useRef(new Animated.Value(0)).current;
   useEffect(() => {
-    const loop = Animated.loop(
-      Animated.timing(t, {
-        toValue: 1,
-        duration: spec.duration,
-        delay: spec.delay,
-        easing: Easing.inOut(Easing.sin),
-        useNativeDriver: true,
-      }),
-      { resetBeforeIteration: true },
-    );
+    const timing = Animated.timing(t, {
+      toValue: 1,
+      duration: spec.duration,
+      delay: spec.delay,
+      easing: Easing.inOut(Easing.sin),
+      useNativeDriver: true,
+    });
+    if (once) {
+      timing.start();
+      return;
+    }
+    const loop = Animated.loop(timing, { resetBeforeIteration: true });
     loop.start();
     return () => loop.stop();
-  }, [t, spec]);
+  }, [t, spec, once]);
 
   const translateY = t.interpolate({ inputRange: [0, 1], outputRange: [0, -spec.rise] });
   const translateX = t.interpolate({
@@ -195,34 +182,26 @@ function Bubble({ spec }: { spec: BubbleSpec }) {
   );
 }
 
-/**
- * Tactile press wrapper: scales down on press-in and springs back on
- * release. Makes every control feel physical.
- */
-function Springy({
-  onPress,
-  style,
-  children,
-  pressScale = 0.96,
-}: {
-  onPress: () => void;
-  style?: object;
-  children: ReactNode;
-  pressScale?: number;
-}) {
-  const scale = useRef(new Animated.Value(1)).current;
+/** One-shot bubble ripple inside the fold pad — fires on each recorded fold. */
+function PadBurst({ trigger }: { trigger: number }) {
+  const specs = useMemo(() => {
+    const s = makeBubbles(6);
+    for (const b of s) {
+      b.duration = 750 + Math.random() * 550;
+      b.delay = Math.random() * 140;
+      b.rise = 90 + Math.random() * 60;
+      b.peak = Math.min(1, b.peak + 0.2);
+    }
+    return s;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trigger]);
+  if (trigger <= 0) return null;
   return (
-    <TouchableOpacity
-      onPress={onPress}
-      activeOpacity={0.85}
-      onPressIn={() =>
-        Animated.spring(scale, { toValue: pressScale, friction: 6, tension: 220, useNativeDriver: true }).start()
-      }
-      onPressOut={() =>
-        Animated.spring(scale, { toValue: 1, friction: 4, tension: 180, useNativeDriver: true }).start()
-      }>
-      <Animated.View style={[style, { transform: [{ scale }] }]}>{children}</Animated.View>
-    </TouchableOpacity>
+    <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, overflow: 'hidden' }}>
+      {specs.map((spec, i) => (
+        <Bubble key={`${trigger}-${i}`} spec={spec} once />
+      ))}
+    </View>
   );
 }
 
@@ -248,7 +227,7 @@ function StartGlow() {
         right: -8,
         top: -8,
         bottom: -8,
-        borderRadius: 30,
+        borderRadius: 34,
         backgroundColor: C.accent,
         opacity: breath.interpolate({ inputRange: [0, 1], outputRange: [0.08, 0.22] }),
         transform: [{ scale: breath.interpolate({ inputRange: [0, 1], outputRange: [1, 1.03] }) }],
@@ -282,110 +261,10 @@ function FoldDots({ completed, planned }: { completed: number; planned: number }
   );
 }
 
-type MilestoneState = 'done' | 'due' | 'future';
-
 /**
- * The dough's story so far: starter mixed, each fold (actual time once
- * recorded, due time until then), and shaping at the planned end.
- */
-function DoughStory({
-  startTs,
-  foldTimestamps,
-  plannedFolds,
-  intervalMinutes,
-  nextFoldDueTimestamp,
-  targetEndTs,
-  now,
-}: {
-  startTs: number;
-  foldTimestamps: number[];
-  plannedFolds: number;
-  intervalMinutes: number;
-  /** Actual due time for the next undone fold — reflects any reschedule, not just startTs + i*interval. */
-  nextFoldDueTimestamp: number | null;
-  targetEndTs: number;
-  now: number;
-}) {
-  const foldRows = Math.max(plannedFolds, foldTimestamps.length);
-  const rows: { label: string; time: string; state: MilestoneState }[] = [
-    { label: 'Starter mixed in', time: formatClock(startTs), state: 'done' },
-  ];
-  for (let i = 0; i < foldRows; i++) {
-    const done = i < foldTimestamps.length;
-    // Steps beyond the immediate next fold project forward from the actual
-    // next-due time (which may have been rescheduled), not the original plan.
-    const stepsAhead = i - foldTimestamps.length;
-    const due = (nextFoldDueTimestamp ?? startTs + intervalMinutes * 60000) + stepsAhead * intervalMinutes * 60000;
-    rows.push({
-      label: `Fold ${i + 1}`,
-      time: formatClock(done ? foldTimestamps[i] : due),
-      state: done ? 'done' : now >= due ? 'due' : 'future',
-    });
-  }
-  rows.push({
-    label: 'Shape',
-    time: `~${formatClock(targetEndTs)}`,
-    state: now >= targetEndTs ? 'due' : 'future',
-  });
-
-  const dotColor = (s: MilestoneState) =>
-    s === 'done' ? C.accent : s === 'due' ? C.orange : C.textDim;
-
-  return (
-    <View>
-      {rows.map((row, i) => (
-        <View key={i} style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
-          <View style={{ alignItems: 'center', width: 20 }}>
-            <View
-              style={{
-                width: 10,
-                height: 10,
-                borderRadius: 5,
-                marginTop: 4,
-                backgroundColor: row.state === 'done' ? C.accent : 'transparent',
-                borderWidth: 1.5,
-                borderColor: dotColor(row.state),
-              }}
-            />
-            {i < rows.length - 1 && (
-              <View style={{ width: 1.5, flex: 1, minHeight: 16, backgroundColor: C.cardBorder, marginVertical: 3 }} />
-            )}
-          </View>
-          <View
-            style={{
-              flex: 1,
-              flexDirection: 'row',
-              justifyContent: 'space-between',
-              paddingBottom: i < rows.length - 1 ? 14 : 0,
-              marginLeft: 10,
-            }}>
-            <Text
-              style={{
-                color: row.state === 'future' ? C.textMuted : C.text,
-                fontSize: 15,
-                fontWeight: row.state === 'due' ? '700' : '500',
-              }}>
-              {row.label}
-              {row.state === 'due' ? ' — due' : ''}
-            </Text>
-            <Text style={{ color: row.state === 'due' ? C.orange : C.textDim, fontSize: 14, fontFamily: fonts.mono }}>
-              {row.time}
-            </Text>
-          </View>
-        </View>
-      ))}
-    </View>
-  );
-}
-
-const RISE_MAX = 150;
-const RISE_SWEET_LOW = 50;
-const RISE_SWEET_HIGH = 75;
-
-/**
- * Contextual tip shown when the user's actual rise reading diverges more
- * than 15 percentage points from the temperature-model estimate.
- * Differences that big usually point to something correctable next bake.
+ * Contextual tip when the observed rise diverges more than 15 percentage
+ * points from the temperature-model estimate. Describes, never grades, and
+ * always ends with a next-bake action (house voice — plan §3.6).
  */
 function RiseAdvisory({ actual, estimated }: { actual: number; estimated: number }) {
   const delta = actual - estimated;
@@ -396,116 +275,19 @@ function RiseAdvisory({ actual, estimated }: { actual: number; estimated: number
       style={{
         marginTop: 14,
         backgroundColor: fast ? 'rgba(232,163,61,0.08)' : 'rgba(100,130,220,0.08)',
-        borderWidth: 1,
-        borderColor: fast ? C.accentBorder : 'rgba(100,130,220,0.3)',
         borderRadius: 12,
         padding: 12,
         gap: 4,
       }}>
-      <Text style={{ color: fast ? C.accent : C.textMuted, fontSize: 12, fontWeight: '700' }}>
+      <AppText role="caption" color={fast ? C.accent : C.textMuted} style={{ fontWeight: '700' }}>
         {fast ? 'Rising faster than expected' : 'Rising slower than expected'}
-      </Text>
-      <Text style={{ color: C.textMuted, fontSize: 12, lineHeight: 17 }}>
+      </AppText>
+      <AppText role="caption" color={C.textMuted}>
         {fast
           ? 'Your dough is ahead of the model — watch it closely and shape earlier if the windowpane looks good. Next bake: try water a few degrees cooler, or reduce your levain % slightly.'
           : 'Your dough is behind the model — give it more time and check the windowpane before shaping. Next bake: try warmer water, a larger levain %, or check that your starter doubled reliably before mixing.'}
-      </Text>
+      </AppText>
     </View>
-  );
-}
-
-/**
- * Manual rise tracker: the user marks how much the dough has grown since
- * the start of bulk. The 50-75% band is the classic "ready to shape" zone.
- */
-function RiseTracker({
-  pct,
-  onChange,
-  estimated,
-}: {
-  pct: number;
-  onChange: (pct: number) => void;
-  estimated?: number;
-}) {
-  const display = pct > 0 ? pct : (estimated ?? 0);
-  const isManual = pct > 0;
-  const inZone = display >= RISE_SWEET_LOW && display <= RISE_SWEET_HIGH;
-  return (
-    <GlassCard radius={20} tint={0.08} blur={11} style={{ padding: 20 }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          <ArrowUp color={C.textMuted} size={13} />
-          <Text style={{ ...label }}>Dough rise</Text>
-        </View>
-        <Text style={{ color: C.textDim, fontSize: 12 }}>shape at 50–75%</Text>
-      </View>
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
-        <TouchableOpacity
-          onPress={() => onChange(Math.max(0, (pct > 0 ? pct : display) - 5))}
-          activeOpacity={0.7}
-          style={{ paddingVertical: 8, paddingHorizontal: 24 }}>
-          <Text style={{ color: C.text, fontSize: 26, fontWeight: '300' }}>−</Text>
-        </TouchableOpacity>
-        <View style={{ alignItems: 'center', minWidth: 120 }}>
-          <Text
-            style={{
-              color: inZone ? C.green : C.text,
-              fontSize: 44,
-              fontWeight: '200',
-              fontFamily: fonts.mono,
-              opacity: isManual ? 1 : 0.55,
-            }}>
-            {display}%
-          </Text>
-          {!isManual && display > 0 && (
-            <Text style={{ color: C.textDim, fontSize: 11, marginTop: -4 }}>estimated</Text>
-          )}
-        </View>
-        <TouchableOpacity
-          onPress={() => onChange(Math.min(RISE_MAX, (pct > 0 ? pct : display) + 5))}
-          activeOpacity={0.7}
-          style={{ paddingVertical: 8, paddingHorizontal: 24 }}>
-          <Text style={{ color: C.text, fontSize: 26, fontWeight: '300' }}>+</Text>
-        </TouchableOpacity>
-      </View>
-      {/* rise scale with the sweet zone marked */}
-      <View style={{ height: 10, borderRadius: 5, backgroundColor: C.chip, marginTop: 12, overflow: 'hidden' }}>
-        <View
-          style={{
-            position: 'absolute',
-            left: `${(RISE_SWEET_LOW / RISE_MAX) * 100}%`,
-            width: `${((RISE_SWEET_HIGH - RISE_SWEET_LOW) / RISE_MAX) * 100}%`,
-            top: 0,
-            bottom: 0,
-            backgroundColor: C.greenSoft,
-            borderLeftWidth: 1,
-            borderRightWidth: 1,
-            borderColor: C.greenBorder,
-          }}
-        />
-        <View
-          style={{
-            width: `${(Math.min(display, RISE_MAX) / RISE_MAX) * 100}%`,
-            height: '100%',
-            borderRadius: 5,
-            backgroundColor: inZone ? C.green : C.accent,
-            opacity: isManual ? 0.85 : 0.4,
-          }}
-        />
-      </View>
-      <Text style={{ color: inZone ? C.green : C.textDim, fontSize: 12, marginTop: 8, textAlign: 'center' }}>
-        {display === 0
-          ? 'tap +/− to mark actual rise, or watch the estimate build'
-          : inZone
-            ? 'in the zone — start watching for shape readiness'
-            : display < RISE_SWEET_LOW
-              ? 'still building'
-              : 'past the zone — consider shaping now'}
-      </Text>
-      {isManual && estimated !== undefined && estimated > 0 && (
-        <RiseAdvisory actual={pct} estimated={estimated} />
-      )}
-    </GlassCard>
   );
 }
 
@@ -548,180 +330,16 @@ function CelebrationOverlay({ durationLabel }: { durationLabel: string }) {
           <Bubble key={i} spec={spec} />
         ))}
       </View>
-      <Text style={{ color: C.text, fontSize: 34, fontFamily: fonts.display }}>Beautiful bulk.</Text>
-      <Text style={{ color: C.textMuted, fontSize: 15, marginTop: 8 }}>{durationLabel} — on to shaping</Text>
-    </Animated.View>
-  );
-}
-
-/**
- * Shown when a fold is recorded more than FOLD_LATE_THRESHOLD_MIN late: asks
- * whether the next fold should stay on the original fixed cadence (so a late
- * tap doesn't compound into every later fold also running late) or restart
- * the interval from right now.
- */
-function LateFoldConfirmOverlay({
-  lateMinutes,
-  intervalMinutes,
-  onKeepSchedule,
-  onRestartFromNow,
-  onDismiss,
-}: {
-  lateMinutes: number;
-  intervalMinutes: number;
-  onKeepSchedule: () => void;
-  onRestartFromNow: () => void;
-  onDismiss: () => void;
-}) {
-  const fade = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    Animated.timing(fade, { toValue: 1, duration: 200, easing: Easing.out(Easing.quad), useNativeDriver: true }).start();
-  }, [fade]);
-  return (
-    <Animated.View
-      style={{
-        position: 'absolute',
-        left: 0,
-        right: 0,
-        top: 0,
-        bottom: 0,
-        backgroundColor: 'rgba(23,18,16,0.88)',
-        alignItems: 'center',
-        justifyContent: 'center',
-        opacity: fade,
-        zIndex: 10,
-        padding: 28,
-      }}>
-      <View style={{ backgroundColor: C.card, borderWidth: 1, borderColor: C.cardBorder, borderRadius: 22, padding: 24, width: '100%', maxWidth: 360 }}>
-        <Text style={{ color: C.text, fontSize: 20, fontWeight: '700', marginBottom: 8 }}>
-          {lateMinutes} min late on this fold
-        </Text>
-        <Text style={{ color: C.textMuted, fontSize: 14, lineHeight: 20, marginBottom: 20 }}>
-          Should the next fold stay on the original {intervalMinutes}-min schedule, or start counting from right now?
-        </Text>
-        <TouchableOpacity
-          onPress={onKeepSchedule}
-          activeOpacity={0.8}
-          style={{ backgroundColor: C.accentSoft, borderWidth: 1, borderColor: C.accentBorder, borderRadius: 16, paddingVertical: 14, alignItems: 'center', marginBottom: 10 }}>
-          <Text style={{ color: C.accent, fontSize: 15, fontWeight: '700' }}>Keep original schedule</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={onRestartFromNow}
-          activeOpacity={0.8}
-          style={{ backgroundColor: C.chip, borderRadius: 16, paddingVertical: 14, alignItems: 'center', marginBottom: 10 }}>
-          <Text style={{ color: C.text, fontSize: 15, fontWeight: '700' }}>Restart {intervalMinutes} min from now</Text>
-        </TouchableOpacity>
-        <TouchableOpacity onPress={onDismiss} activeOpacity={0.7} style={{ alignItems: 'center', paddingVertical: 6 }}>
-          <Text style={{ color: C.textDim, fontSize: 13 }}>cancel</Text>
-        </TouchableOpacity>
-      </View>
-    </Animated.View>
-  );
-}
-
-/**
- * Whole-bulk progress bar: fill = elapsed / expected total, with a notch at
- * every scheduled fold time. Turns orange once the target is passed.
- */
-function BulkProgressBar({
-  elapsedMinutes,
-  targetMinutes,
-  foldIntervalMinutes,
-}: {
-  elapsedMinutes: number;
-  targetMinutes: number;
-  foldIntervalMinutes: number;
-}) {
-  const progress = Math.min(1, elapsedMinutes / targetMinutes);
-  const overdue = elapsedMinutes > targetMinutes;
-  const tickCount = Math.floor(targetMinutes / foldIntervalMinutes);
-  const ticks = Array.from({ length: tickCount })
-    .map((_, k) => ((k + 1) * foldIntervalMinutes) / targetMinutes)
-    .filter((frac) => frac < 0.995);
-
-  return (
-    <View>
-      <View style={{ width: '100%', height: 12, borderRadius: 6, backgroundColor: C.chip, overflow: 'hidden' }}>
-        <View
-          style={{
-            width: `${progress * 100}%`,
-            height: '100%',
-            borderRadius: 6,
-            backgroundColor: overdue ? C.orange : C.accent,
-          }}
-        />
-        {/* fold-time notches */}
-        {ticks.map((frac, i) => (
-          <View
-            key={i}
-            style={{
-              position: 'absolute',
-              left: `${frac * 100}%`,
-              top: 2,
-              bottom: 2,
-              width: 2,
-              borderRadius: 1,
-              backgroundColor: C.bg,
-              opacity: 0.85,
-            }}
-          />
-        ))}
-      </View>
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 }}>
-        <Text style={{ color: C.textDim, fontSize: 12 }}>
-          {formatMinutes(Math.floor(elapsedMinutes))} elapsed
-        </Text>
-        <Text style={{ color: overdue ? C.orange : C.textDim, fontSize: 12 }}>
-          {overdue
-            ? `${formatMinutes(Math.ceil(elapsedMinutes - targetMinutes))} past target`
-            : `${formatMinutes(Math.ceil(targetMinutes - elapsedMinutes))} to go`}
-        </Text>
-      </View>
-    </View>
-  );
-}
-
-/**
- * Two-line caption beneath the scene: a science line (the mechanism) and a
- * sensory line (what you'd feel in the bowl). Crossfades when the copy changes
- * so the words update gently while the animation keeps morphing underneath.
- */
-function PhaseCaption({ copy, phaseLabel }: { copy: PhaseCopy; phaseLabel?: string }) {
-  const fade = useRef(new Animated.Value(1)).current;
-  const shown = useRef(copy);
-  const [, force] = useState(0);
-  useEffect(() => {
-    if (shown.current.title === copy.title) return;
-    Animated.timing(fade, { toValue: 0, duration: 260, easing: Easing.in(Easing.quad), useNativeDriver: true }).start(() => {
-      shown.current = copy;
-      force((n) => n + 1);
-      Animated.timing(fade, { toValue: 1, duration: 360, easing: Easing.out(Easing.quad), useNativeDriver: true }).start();
-    });
-  }, [copy, fade]);
-  const c = shown.current;
-  return (
-    <Animated.View style={{ opacity: fade }}>
-      <GlassCard radius={20} tint={0.0} blur={13} style={{ padding: 18 }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 }}>
-        <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: C.accent }} />
-        <Text style={{ ...label, color: C.accent }}>
-          {phaseLabel ? `${phaseLabel} · ${c.title}` : c.title}
-        </Text>
-      </View>
-      <Text style={{ color: C.text, fontSize: 14.5, lineHeight: 21 }}>{c.science}</Text>
-      <View style={{ height: 1, backgroundColor: C.cardBorder, marginVertical: 12 }} />
-      <View style={{ flexDirection: 'row', gap: 8 }}>
-        <Text style={{ color: C.textDim, fontSize: 12, marginTop: 1 }}>IN THE BOWL</Text>
-      </View>
-      <Text style={{ color: C.textMuted, fontSize: 14, lineHeight: 20, marginTop: 4, fontStyle: 'italic' }}>
-        {c.sensory}
-      </Text>
-      </GlassCard>
+      <AppText role="displayLg">Beautiful bulk.</AppText>
+      <AppText role="body" color={C.textMuted} style={{ marginTop: 8 }}>
+        {durationLabel} — on to shaping
+      </AppText>
     </Animated.View>
   );
 }
 
 export default function HomeScreen() {
+  const insets = useSafeAreaInsets();
   const {
     bulkStartTimestamp,
     autolyseStartTimestamp,
@@ -733,6 +351,8 @@ export default function HomeScreen() {
     defaultFoldCount,
     targetDurationMinutes,
     doughTempF,
+    tempUnit,
+    riseMarks,
     risePercent,
     bakeLogs,
     startAutolyse,
@@ -743,16 +363,17 @@ export default function HomeScreen() {
     setDefaultFoldCount,
     setTargetDuration,
     setDoughTemp,
-    setRisePercent,
+    setTempUnit,
+    addRiseMark,
   } = useBakeStore();
 
   const [selectedInterval, setSelectedInterval] = useState(30);
   const [foldCount, setFoldCount] = useState(defaultFoldCount);
   const [plannedTarget, setPlannedTarget] = useState(targetDurationMinutes);
   const [celebrating, setCelebrating] = useState(false);
-  const [showAutolysePicker, setShowAutolysePicker] = useState(false);
   const [now, setNow] = useState(Date.now());
   const [lateFoldConfirm, setLateFoldConfirm] = useState<{ lateMinutes: number } | null>(null);
+  const [endConfirm, setEndConfirm] = useState(false);
 
   // Frosted-glass stage: the scroll content container node (glass cards measure
   // their position against it) and a tick that asks all cards to re-measure
@@ -766,13 +387,6 @@ export default function HomeScreen() {
   const rootRef = useRef<View>(null);
   const contentViewRef = useRef<View | null>(null);
   const scrollYRef = useRef(0);
-  // contentTop must be the content container's offset relative to the ROOT
-  // view (which the Skia canvas fills), NOT relative to the window — the
-  // window includes the status bar and the tab header above this screen, and
-  // using the window Y drew every glass slab ~a header-height below its card
-  // (confirmed on-device via screenshot). Measure both and take the
-  // difference, adding back the current scroll offset since the content
-  // container's on-screen position moves as the user scrolls.
   const measureContentTop = useCallback(() => {
     const content = contentViewRef.current;
     const root = rootRef.current;
@@ -791,13 +405,6 @@ export default function HomeScreen() {
     },
     [measureContentTop],
   );
-  // Glass world-anchoring: the scroll offset is exported BOTH as a plain
-  // number (for measurements and visibility checks) and as a NATIVE-driven
-  // Animated.Value that each GlassBackdrop binds its counter-translation to.
-  // The native value updates on the UI thread in the same frame as the
-  // scroll, so the blurred world stays pixel-locked under the moving glass —
-  // no JS-driven variant survived on-device (lag = stutter; freeze = sprites
-  // dragging along with the panels).
   const scrollAnim = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     setScrollAnim(scrollAnim);
@@ -819,7 +426,7 @@ export default function HomeScreen() {
   }, [measureContentTop]);
 
   // Coach: suggested bulk time from kitchen temp + the user's own history.
-  const suggestion = useMemo(() => suggestBulk(doughTempF, bakeLogs), [doughTempF, bakeLogs]);
+  const suggestion = useMemo(() => suggestBulk(doughTempF, bakeLogs, tempUnit), [doughTempF, bakeLogs, tempUnit]);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const endNotificationId = useRef<string | null>(null);
 
@@ -829,14 +436,21 @@ export default function HomeScreen() {
   const autolyseDone = autolyseStartTimestamp !== null && now >= autolyseEndTs;
   const autolyseNotificationId = useRef<string | null>(null);
 
-  // Entrance for the active view: fades/slides in when bulk starts.
+  // Entrance for the active view: scroll home, then fade/slide in — without
+  // the scroll reset the active view inherits whatever offset the setup list
+  // was left at and opens mid-screen.
+  const scrollRef = useRef<ScrollView>(null);
   const enter = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     if (isActive) {
+      scrollRef.current?.scrollTo({ y: 0, animated: false });
+      setScrollY(0);
+      scrollYRef.current = 0;
+      remeasureGlass();
       enter.setValue(0);
       Animated.timing(enter, {
         toValue: 1,
-        duration: 600,
+        duration: motion.enterMs,
         easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
       }).start();
@@ -849,7 +463,7 @@ export default function HomeScreen() {
   useEffect(() => {
     if (completedFolds > prevFolds.current) {
       foldPop.setValue(1.25);
-      Animated.spring(foldPop, { toValue: 1, friction: 4, tension: 120, useNativeDriver: true }).start();
+      Animated.spring(foldPop, { toValue: 1, ...motion.pop, useNativeDriver: true }).start();
     }
     prevFolds.current = completedFolds;
   }, [completedFolds, foldPop]);
@@ -918,7 +532,7 @@ export default function HomeScreen() {
       armPulse.setValue(0);
       return;
     }
-    if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    successHaptic();
     const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(armPulse, { toValue: 1, duration: 900, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
@@ -987,8 +601,6 @@ export default function HomeScreen() {
   }
 
   function handleStartAutolyse(minutes: number) {
-    thump(Haptics.ImpactFeedbackStyle.Medium);
-    setShowAutolysePicker(false);
     scheduleAutolyseAlert(minutes * 60);
     startAutolyse(minutes);
     setNow(Date.now());
@@ -1017,26 +629,22 @@ export default function HomeScreen() {
   function handleFold() {
     const lateMinutes = nextFoldDueTimestamp ? Math.floor((Date.now() - nextFoldDueTimestamp) / 60000) : 0;
     if (lateMinutes >= FOLD_LATE_THRESHOLD_MIN) {
-      thump(Haptics.ImpactFeedbackStyle.Light);
       setLateFoldConfirm({ lateMinutes });
       return;
     }
-    thump(Haptics.ImpactFeedbackStyle.Medium);
     recordFold();
   }
 
   /** keepSchedule=true: next fold stays on the original cadence. Otherwise the interval restarts from now. */
   function resolveLateFold(keepSchedule: boolean) {
-    thump(Haptics.ImpactFeedbackStyle.Medium);
     setLateFoldConfirm(null);
     recordFold({ keepSchedule });
   }
 
-  function handleEnd() {
+  function handleEndConfirmed() {
     if (celebrating) return;
-    if (Platform.OS !== 'web') {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-    }
+    setEndConfirm(false);
+    successHaptic();
     cancelNotifications();
     // One last bubble burst before moving on to shaping.
     setCelebrating(true);
@@ -1047,17 +655,9 @@ export default function HomeScreen() {
     }, 2400);
   }
 
-  function changeFoldCount(delta: number) {
-    setFoldCount((n) => Math.max(0, Math.min(MAX_PLANNED_FOLDS, n + delta)));
-  }
-
-  function changePlannedTarget(delta: number) {
-    setPlannedTarget((m) => Math.max(TARGET_MIN, Math.min(TARGET_MAX, m + delta)));
-  }
-
   /** Adjust the target mid-bulk: persist it and reschedule the end alert. */
-  function adjustActiveTarget(delta: number) {
-    const next = Math.max(TARGET_MIN, Math.min(TARGET_MAX, targetDurationMinutes + delta));
+  function adjustActiveTargetTo(minutes: number) {
+    const next = Math.max(TARGET_MIN, Math.min(TARGET_MAX, minutes));
     if (next === targetDurationMinutes) return;
     setTargetDuration(next);
     const elapsedSecs = Math.floor((Date.now() - (bulkStartTimestamp ?? Date.now())) / 1000);
@@ -1078,19 +678,17 @@ export default function HomeScreen() {
   const lateMinutes = nextFoldDueTimestamp && secondsUntilNextFold < 0 ? Math.floor(-secondsUntilNextFold / 60) : 0;
   const foldIsLate = lateMinutes >= FOLD_LATE_THRESHOLD_MIN;
 
-  // First couple of minutes: caption acknowledges the starter just went in.
+  // First couple of minutes: caption acknowledges the levain just went in.
   const justStarted = isActive && elapsedSecs < 120;
-
-  const targetEndTimestamp = (bulkStartTimestamp ?? 0) + targetDurationMinutes * 60000;
 
   // The timer digits warm from cream toward honey as bulk approaches target —
   // capped at 1 so the color stops at full honey instead of extrapolating.
   const bulkFraction = isActive ? Math.min(1, elapsedMs / (targetDurationMinutes * 60000)) : 0;
   const timerColor = lerpColor('#F2E8DC', '#E8A33D', bulkFraction);
-  // Uncapped fraction for the scene/phase caption, so overproofing keeps
-  // visibly progressing (and is correctly labeled) past the planned target
-  // instead of freezing at whatever the dough looked like right at fraction 1.
+  // Uncapped fraction for the scene/journey, so overproofing keeps visibly
+  // progressing (and is correctly labeled) past the planned target.
   const sceneFraction = isActive ? elapsedMs / (targetDurationMinutes * 60000) : 0;
+  const accent = accentForFraction(sceneFraction);
 
   // One fullscreen scene drives the whole screen: bulk while active, the
   // amylase-led autolyse look while resting, else the near-empty idle field.
@@ -1101,6 +699,7 @@ export default function HomeScreen() {
       : 'idle';
 
   const recentLog = bakeLogs.length > 0 ? bakeLogs[0] : null;
+  const lastRise = riseMarks.length > 0 ? riseMarks[riseMarks.length - 1].pct : risePercent;
 
   return (
     <View ref={rootRef} style={{ flex: 1, backgroundColor: '#000' }}>
@@ -1111,616 +710,451 @@ export default function HomeScreen() {
 
       <GlassStageProvider contentNode={contentNode} measureTick={measureTick}>
         <Animated.ScrollView
+          ref={scrollRef}
           style={{ flex: 1 }}
           contentContainerStyle={{ padding: 0 }}
           scrollEventThrottle={16}
           onScroll={onScroll}
           onMomentumScrollEnd={remeasureGlass}
           onScrollEndDrag={remeasureGlass}>
-          <View ref={onContentRef} onLayout={remeasureGlass} style={{ padding: 24, paddingBottom: 48 }}>
+          <View
+            ref={onContentRef}
+            onLayout={remeasureGlass}
+            style={{ padding: 24, paddingTop: insets.top + 16, paddingBottom: 48 }}>
 
-      {recentLog && !isActive && (
-        <GlassCard
-          radius={20}
-          tint={0.09}
-          blur={7}
-          style={{
-            borderColor: C.accentBorder,
-            borderTopColor: C.accentBorder,
-            padding: 18,
-            marginBottom: 24,
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: 14,
-          }}>
-          <Sparkles color={C.accent} size={22} />
-          <View style={{ flex: 1 }}>
-            <Text style={{ ...label, letterSpacing: 1.5, color: C.textMuted }}>
-              Your last bake
-            </Text>
-            <Text style={{ color: C.text, fontSize: 18, fontWeight: '700', marginTop: 2 }}>
-              {formatMinutes(recentLog.bulkDurationMinutes)} · {recentLog.foldCount} fold{recentLog.foldCount !== 1 ? 's' : ''}
-            </Text>
-          </View>
-        </GlassCard>
-      )}
+            {recentLog && !isActive && (
+              <GlassCard radius={20} tint={0.4} blur={14} style={{ padding: 18, marginBottom: 24 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+                  <Icon name="spark" size={22} color={C.accent} />
+                  <View style={{ flex: 1 }}>
+                    <AppText role="label">Your last bake</AppText>
+                    <AppText role="emphasis" style={{ fontSize: 18, marginTop: 2 }}>
+                      {formatMinutes(recentLog.bulkDurationMinutes)} · {recentLog.foldCount} fold
+                      {recentLog.foldCount !== 1 ? 's' : ''}
+                    </AppText>
+                  </View>
+                </View>
+              </GlassCard>
+            )}
 
-      {!isActive ? (
-        <View style={{ gap: 28 }}>
-          {autolyseRunning ? (
-            <View style={{ position: 'relative', alignItems: 'center', paddingVertical: 14, minHeight: 220, justifyContent: 'center' }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                <FlaskConical color={C.accent} size={14} />
-                <Text style={{ ...label, color: C.accent }}>Autolyse resting</Text>
-              </View>
-              <Text style={{ color: C.text, fontSize: 56, fontWeight: '200', fontFamily: fonts.mono, letterSpacing: -2 }}>
-                {(() => {
-                  const left = formatElapsed(Math.max(0, autolyseEndTs - now));
-                  return `${left.minutes}:${left.seconds}`;
-                })()}
-              </Text>
-              <Text style={{ color: C.textDim, fontSize: 13, marginTop: 2 }}>
-                until the levain goes in
-              </Text>
-              <TouchableOpacity
-                onPress={handleCancelAutolyse}
-                activeOpacity={0.7}
-                style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 14, paddingVertical: 6, paddingHorizontal: 12 }}>
-                <X color={C.textDim} size={13} />
-                <Text style={{ color: C.textDim, fontSize: 13 }}>cancel autolyse</Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <View style={{ paddingVertical: 10, minHeight: 200, position: 'relative' }}>
-              <Text style={{ color: C.text, fontSize: 36, fontFamily: fonts.display, letterSpacing: 0.2 }}>
-                {autolyseDone ? 'Levain time.' : 'Ready to bake?'}
-              </Text>
-              <Text style={{ color: C.textMuted, fontSize: 16, marginTop: 6 }}>
-                {autolyseDone
-                  ? 'Autolyse done — mix in your levain, then start bulk.'
-                  : 'Set your fold reminders and expected bulk time.'}
-              </Text>
+            {!isActive ? (
+              <View style={{ gap: 20 }}>
+                {autolyseRunning ? (
+                  <View style={{ alignItems: 'center', paddingVertical: 14, minHeight: 200, justifyContent: 'center' }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                      <Icon name="flask" size={14} color={C.accent} />
+                      <AppText role="label" color={C.accent}>
+                        Autolyse resting
+                      </AppText>
+                    </View>
+                    <AppText role="hero" style={{ fontSize: 60, lineHeight: 66 }}>
+                      {(() => {
+                        const left = formatElapsed(Math.max(0, autolyseEndTs - now));
+                        return `${left.minutes}:${left.seconds}`;
+                      })()}
+                    </AppText>
+                    <AppText role="caption" style={{ marginTop: 2 }}>
+                      until the levain goes in
+                    </AppText>
+                    <Squish
+                      onPress={handleCancelAutolyse}
+                      accessibilityLabel="Cancel autolyse"
+                      hitSlop={8}
+                      style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 14, paddingVertical: 8, paddingHorizontal: 12 }}>
+                      <Icon name="close" size={13} color={C.textDim} />
+                      <AppText role="caption">cancel autolyse</AppText>
+                    </Squish>
+                  </View>
+                ) : (
+                  <View style={{ paddingVertical: 8 }}>
+                    <AppText role="displayLg">{autolyseDone ? 'Levain time.' : 'Ready to bake?'}</AppText>
+                    <AppText role="body" color={C.textMuted} style={{ fontSize: 16, marginTop: 6 }}>
+                      {autolyseDone
+                        ? 'Autolyse done — mix in your levain, then start bulk.'
+                        : 'Plan tonight’s bake, then hand the clock to us.'}
+                    </AppText>
+                  </View>
+                )}
 
-              {!autolyseDone &&
-                (showAutolysePicker ? (
-                  <GlassCard
-                    radius={16}
-                    tint={0.08}
-                    blur={11}
+                {autolyseRunning && (
+                  <GlassCard radius={20} tint={0.44} blur={14} style={{ padding: 18 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+                      <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: C.accent }} />
+                      <AppText role="label" color={C.accent}>
+                        Pre-ferment · {AUTOLYSE_COPY.title}
+                      </AppText>
+                    </View>
+                    <AppText role="body" color={C.text}>
+                      {AUTOLYSE_COPY.science}
+                    </AppText>
+                    <View style={{ height: 1, backgroundColor: C.cardBorder, marginVertical: 12 }} />
+                    <AppText role="label">In the bowl</AppText>
+                    <AppText role="body" color={C.textMuted} style={{ fontStyle: 'italic', marginTop: 4 }}>
+                      {AUTOLYSE_COPY.sensory}
+                    </AppText>
+                  </GlassCard>
+                )}
+
+                {/* The bake plan: one card, every knob */}
+                <GlassCard radius={24} tint={0.4} blur={14} style={{ padding: 20 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+                      <Icon name="thermometer" size={14} color={C.textMuted} />
+                      <AppText role="label">Kitchen temp</AppText>
+                    </View>
+                    <View style={{ flexDirection: 'row', gap: 6 }}>
+                      <Chip label="°F" selected={tempUnit === 'F'} onPress={() => setTempUnit('F')} accessibilityLabel="Show Fahrenheit" />
+                      <Chip label="°C" selected={tempUnit === 'C'} onPress={() => setTempUnit('C')} accessibilityLabel="Show Celsius" />
+                    </View>
+                  </View>
+                  <Dial valueF={doughTempF} onChange={setDoughTemp} unit={tempUnit} />
+
+                  {/* Coach: temperature + your history in, suggested bulk out */}
+                  <View
                     style={{
-                      marginTop: 16,
+                      marginTop: 12,
+                      backgroundColor: C.accentSoft,
+                      borderRadius: 14,
                       padding: 14,
                     }}>
-                    <Text style={{ ...label, marginBottom: 10 }}>Autolyse for</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                        <Icon name="spark" size={16} color={C.accent} />
+                        <AppText role="emphasis">
+                          Suggested bulk: {formatMinutes(suggestion.minutes)}
+                        </AppText>
+                      </View>
+                      {plannedTarget !== suggestion.minutes && (
+                        <Chip
+                          label="Use"
+                          selected
+                          onPress={() => setPlannedTarget(suggestion.minutes)}
+                          accessibilityLabel={`Use suggested bulk of ${formatMinutes(suggestion.minutes)}`}
+                        />
+                      )}
+                    </View>
+                    <AppText role="caption" color={C.textMuted} style={{ marginTop: 6 }}>
+                      {suggestion.reason}
+                    </AppText>
+                  </View>
+
+                  <View style={{ marginTop: 14 }}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                      <AppText role="label">Expected bulk</AppText>
+                      <AppText role="emphasis" color={C.accent} style={{ fontVariant: ['tabular-nums'] }}>
+                        {formatMinutes(plannedTarget)}
+                      </AppText>
+                    </View>
+                    <Ruler
+                      value={plannedTarget}
+                      min={TARGET_MIN}
+                      max={TARGET_MAX}
+                      step={TARGET_STEP}
+                      majorEvery={4}
+                      onChange={setPlannedTarget}
+                      format={formatMinutes}
+                      accessibilityLabel="Expected bulk length"
+                    />
+                  </View>
+
+                  <View style={{ marginTop: 14 }}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                      <AppText role="label">Planned folds</AppText>
+                      <AppText role="emphasis" color={C.accent} style={{ fontVariant: ['tabular-nums'] }}>
+                        {foldCount}
+                      </AppText>
+                    </View>
+                    <Ruler
+                      value={foldCount}
+                      min={0}
+                      max={MAX_PLANNED_FOLDS}
+                      step={1}
+                      majorEvery={1}
+                      onChange={setFoldCount}
+                      accessibilityLabel="Planned folds"
+                    />
+                  </View>
+
+                  <View style={{ marginTop: 14 }}>
+                    <AppText role="label" style={{ marginBottom: 8 }}>
+                      Remind me every
+                    </AppText>
                     <View style={{ flexDirection: 'row', gap: 8 }}>
-                      {AUTOLYSE_OPTIONS.map((m) => (
-                        <View key={m} style={{ flex: 1 }}>
-                          <Springy
-                            onPress={() => handleStartAutolyse(m)}
-                            pressScale={0.93}
-                            style={{
-                              paddingVertical: 14,
-                              borderRadius: 12,
-                              alignItems: 'center',
-                              backgroundColor: m === autolyseDurationMinutes ? C.accentSoft : C.chip,
-                              borderWidth: 1,
-                              borderColor: m === autolyseDurationMinutes ? C.accent : C.cardBorder,
-                            }}>
-                            <Text style={{ fontSize: 20, fontWeight: '700', color: C.text }}>{m}</Text>
-                            <Text style={{ fontSize: 11, color: C.textDim }}>min</Text>
-                          </Springy>
-                        </View>
+                      {FOLD_INTERVALS.map((mins) => (
+                        <Chip
+                          key={mins}
+                          label={`${mins}`}
+                          sub="min"
+                          grow
+                          selected={selectedInterval === mins}
+                          onPress={() => setSelectedInterval(mins)}
+                          accessibilityLabel={`Fold reminder every ${mins} minutes`}
+                        />
                       ))}
                     </View>
-                  </GlassCard>
-                ) : (
-                  <GlassCard
-                    radius={12}
-                    tint={0.08}
-                    blur={11}
-                    style={{ marginTop: 16, alignSelf: 'flex-start' }}>
-                    <TouchableOpacity
-                      onPress={() => {
-                        thump(Haptics.ImpactFeedbackStyle.Light);
-                        setShowAutolysePicker(true);
-                      }}
-                      activeOpacity={0.7}
-                      style={{
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        gap: 6,
-                        paddingVertical: 8,
-                        paddingHorizontal: 14,
-                      }}>
-                      <FlaskConical color={C.textMuted} size={14} />
-                      <Text style={{ color: C.textMuted, fontSize: 13, fontWeight: '600' }}>
-                        Autolyse first
-                      </Text>
-                    </TouchableOpacity>
-                  </GlassCard>
-                ))}
-            </View>
-          )}
-
-          {autolyseRunning && <PhaseCaption copy={AUTOLYSE_COPY} phaseLabel="Pre-ferment" />}
-
-          {/* Coach: kitchen temp in, suggested bulk time out */}
-          <GlassCard radius={20} tint={0.13} blur={16} style={{ padding: 20 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 14 }}>
-              <Thermometer color={C.textMuted} size={13} />
-              <Text style={{ ...label }}>Kitchen temp</Text>
-            </View>
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
-              <TouchableOpacity
-                onPress={() => setDoughTemp(Math.max(58, doughTempF - 1))}
-                activeOpacity={0.7}
-                style={{ paddingVertical: 8, paddingHorizontal: 24 }}>
-                <Text style={{ color: C.text, fontSize: 26, fontWeight: '300' }}>−</Text>
-              </TouchableOpacity>
-              <Text style={{ color: C.text, fontSize: 40, fontWeight: '200', fontFamily: fonts.mono, minWidth: 110, textAlign: 'center' }}>
-                {doughTempF}°F
-              </Text>
-              <TouchableOpacity
-                onPress={() => setDoughTemp(Math.min(90, doughTempF + 1))}
-                activeOpacity={0.7}
-                style={{ paddingVertical: 8, paddingHorizontal: 24 }}>
-                <Text style={{ color: C.text, fontSize: 26, fontWeight: '300' }}>+</Text>
-              </TouchableOpacity>
-            </View>
-            <View
-              style={{
-                marginTop: 14,
-                backgroundColor: C.accentSoft,
-                borderWidth: 1,
-                borderColor: C.accentBorder,
-                borderRadius: 14,
-                padding: 14,
-              }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
-                  <Wand2 color={C.accent} size={16} />
-                  <Text style={{ color: C.text, fontSize: 16, fontWeight: '700' }}>
-                    Suggested bulk: {formatMinutes(suggestion.minutes)}
-                  </Text>
-                </View>
-                {plannedTarget !== suggestion.minutes && (
-                  <TouchableOpacity
-                    onPress={() => {
-                      thump(Haptics.ImpactFeedbackStyle.Light);
-                      setPlannedTarget(suggestion.minutes);
-                    }}
-                    activeOpacity={0.7}
-                    style={{
-                      backgroundColor: C.accent,
-                      borderRadius: 10,
-                      paddingVertical: 7,
-                      paddingHorizontal: 14,
-                    }}>
-                    <Text style={{ color: C.onAccent, fontSize: 13, fontWeight: '800' }}>Use</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-              <Text style={{ color: C.textMuted, fontSize: 12.5, marginTop: 6, lineHeight: 17 }}>
-                {suggestion.reason}
-              </Text>
-            </View>
-          </GlassCard>
-
-          <View>
-            <Text style={{ ...label, marginBottom: 14 }}>
-              Alert me every
-            </Text>
-            <View style={{ flexDirection: 'row', gap: 10 }}>
-              {FOLD_INTERVALS.map((mins) => {
-                const active = selectedInterval === mins;
-                return (
-                  <View key={mins} style={{ flex: 1 }}>
-                    <GlassCard
-                      radius={18}
-                      tint={0.0}
-                      blur={6}
-                      style={
-                        active
-                          ? { borderWidth: 1.5, borderColor: C.accent, borderTopColor: C.accent }
-                          : undefined
-                      }>
-                      <Springy
-                        onPress={() => setSelectedInterval(mins)}
-                        pressScale={0.93}
-                        style={{
-                          paddingVertical: 22,
-                          alignItems: 'center',
-                          backgroundColor: active ? C.accentSoft : 'transparent',
-                        }}>
-                        <Text style={{ fontSize: 30, fontWeight: '700', color: active ? C.accent : C.text }}>
-                          {mins}
-                        </Text>
-                        <Text style={{ fontSize: 12, color: active ? C.accent : C.textDim, marginTop: 2 }}>
-                          min
-                        </Text>
-                      </Springy>
-                    </GlassCard>
                   </View>
-                );
-              })}
-            </View>
-          </View>
 
-          <View>
-            <Text style={{ ...label, marginBottom: 14 }}>
-              Expected bulk time
-            </Text>
-            <GlassCard radius={18} tint={0.16} blur={12} style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'center',
-              padding: 8,
-            }}>
-              <TouchableOpacity
-                onPress={() => changePlannedTarget(-TARGET_STEP)}
-                activeOpacity={0.7}
-                style={{ paddingVertical: 12, paddingHorizontal: 28 }}>
-                <Text style={{ color: plannedTarget > TARGET_MIN ? C.text : C.textDim, fontSize: 28, fontWeight: '300' }}>−</Text>
-              </TouchableOpacity>
-              <View style={{ flex: 1, alignItems: 'center' }}>
-                <Text style={{ color: C.accent, fontSize: 36, fontWeight: '200', fontFamily: fonts.mono }}>
-                  {formatMinutes(plannedTarget)}
-                </Text>
-                <Text style={{ color: C.textDim, fontSize: 12, marginTop: 2 }}>
-                  we'll alert you when it's time to end bulk
-                </Text>
-              </View>
-              <TouchableOpacity
-                onPress={() => changePlannedTarget(TARGET_STEP)}
-                activeOpacity={0.7}
-                style={{ paddingVertical: 12, paddingHorizontal: 28 }}>
-                <Text style={{ color: plannedTarget < TARGET_MAX ? C.text : C.textDim, fontSize: 28, fontWeight: '300' }}>+</Text>
-              </TouchableOpacity>
-            </GlassCard>
-          </View>
-
-          <View>
-            <Text style={{ ...label, marginBottom: 14 }}>
-              Planned folds
-            </Text>
-            <GlassCard radius={18} tint={0.16} blur={9} style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'center',
-              padding: 8,
-            }}>
-              <TouchableOpacity
-                onPress={() => changeFoldCount(-1)}
-                activeOpacity={0.7}
-                style={{ paddingVertical: 12, paddingHorizontal: 28 }}>
-                <Text style={{ color: foldCount > 0 ? C.text : C.textDim, fontSize: 28, fontWeight: '300' }}>−</Text>
-              </TouchableOpacity>
-              <View style={{ flex: 1, alignItems: 'center' }}>
-                <Text style={{ color: C.accent, fontSize: 40, fontWeight: '200', fontFamily: fonts.mono }}>
-                  {foldCount}
-                </Text>
-                <Text style={{ color: C.textDim, fontSize: 12, marginTop: -2 }}>
-                  fold{foldCount !== 1 ? 's' : ''}
-                </Text>
-              </View>
-              <TouchableOpacity
-                onPress={() => changeFoldCount(1)}
-                activeOpacity={0.7}
-                style={{ paddingVertical: 12, paddingHorizontal: 28 }}>
-                <Text style={{ color: foldCount < MAX_PLANNED_FOLDS ? C.text : C.textDim, fontSize: 28, fontWeight: '300' }}>+</Text>
-              </TouchableOpacity>
-            </GlassCard>
-          </View>
-
-          <View>
-            <View>
-              <StartGlow />
-              {/* Once autolyse is done, an extra honey ring pulses to "arm" the button. */}
-              {autolyseDone && (
-                <Animated.View
-                  pointerEvents="none"
-                  style={{
-                    position: 'absolute',
-                    left: -10,
-                    right: -10,
-                    top: -10,
-                    bottom: -10,
-                    borderRadius: 30,
-                    borderWidth: 2,
-                    borderColor: C.accent,
-                    opacity: armPulse.interpolate({ inputRange: [0, 1], outputRange: [0.25, 0.85] }),
-                    transform: [{ scale: armPulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.04] }) }],
-                  }}
-                />
-              )}
-              <Springy onPress={handleStart} pressScale={0.97}>
-                <GlassCard
-                  radius={22}
-                  tint={0.46}
-                  blur={14}
-                  style={{
-                    borderWidth: 1.5,
-                    borderColor: C.accent,
-                    borderTopColor: C.accent,
-                    paddingVertical: 26,
-                    alignItems: 'center',
-                  }}>
-                  <Text style={{ color: C.accent, fontSize: 26, fontWeight: '800', letterSpacing: -0.3 }}>
-                    Start Bulk
-                  </Text>
+                  {!autolyseRunning && !autolyseDone && (
+                    <View style={{ marginTop: 14 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                        <Icon name="flask" size={13} color={C.textMuted} />
+                        <AppText role="label">Autolyse first (optional)</AppText>
+                        <AppText role="caption" style={{ flex: 1 }} numberOfLines={1}>
+                          — its own flour + water timer
+                        </AppText>
+                      </View>
+                      <View style={{ flexDirection: 'row', gap: 8 }}>
+                        {AUTOLYSE_OPTIONS.map((m) => (
+                          <Chip
+                            key={m}
+                            label={`${m}m`}
+                            grow
+                            onPress={() => handleStartAutolyse(m)}
+                            accessibilityLabel={`Start a ${m} minute autolyse rest`}
+                          />
+                        ))}
+                      </View>
+                    </View>
+                  )}
                 </GlassCard>
-              </Springy>
-            </View>
-            <Text
-              style={{
-                color: autolyseDone ? C.accent : C.textDim,
-                fontSize: 13,
-                textAlign: 'center',
-                marginTop: 10,
-                fontWeight: autolyseDone ? '700' : '400',
-              }}>
-              {autolyseDone ? 'levain in? don’t forget the salt' : 'starter mixed in?'}
-            </Text>
-          </View>
-        </View>
-      ) : (
-        <Animated.View
-          style={{
-            gap: 18,
-            opacity: enter,
-            transform: [{
-              translateY: enter.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }),
-            }],
-          }}>
-          <View style={{ position: 'relative', alignItems: 'center', paddingTop: 8, paddingBottom: 12, minHeight: 280, justifyContent: 'center' }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-              <PulseDot />
-              <Text style={{ ...label, color: C.accent }}>
-                {justStarted ? 'Levain in' : 'Bulk fermenting'}
-              </Text>
-            </View>
-            <Text
-              style={{
-                color: timerColor,
-                fontSize: 88,
-                fontWeight: '200',
-                lineHeight: 96,
-                letterSpacing: -4,
-                fontFamily: fonts.mono,
-              }}>
-              {elapsed.hours}:{elapsed.minutes}
-            </Text>
-            <Text style={{
-              color: C.textDim,
-              fontSize: 28,
-              fontWeight: '300',
-              fontFamily: fonts.mono,
-              marginTop: -4,
-            }}>
-              :{elapsed.seconds}
-            </Text>
-          </View>
 
-          {/* What's happening in the dough right now — science + sensory */}
-          <PhaseCaption
-            copy={PHASE_SCRIPT[bulkPhaseIndex(sceneFraction)]}
-            phaseLabel={`Phase ${bulkPhaseIndex(sceneFraction) + 1}/5`}
-          />
-
-          {/* Whole-bulk progress toward the planned end time */}
-          <GlassCard radius={20} tint={0.12} blur={11} style={{ padding: 20 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-              <Text style={{ ...label }}>Bulk progress</Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                <BellRing color={C.textMuted} size={13} />
-                <Text style={{ color: C.textMuted, fontSize: 13 }}>
-                  ends ~{formatClock(targetEndTimestamp)}
-                </Text>
+                <View>
+                  <View>
+                    <StartGlow />
+                    {/* Once autolyse is done, an extra honey ring pulses to "arm" the button. */}
+                    {autolyseDone && (
+                      <Animated.View
+                        pointerEvents="none"
+                        style={{
+                          position: 'absolute',
+                          left: -10,
+                          right: -10,
+                          top: -10,
+                          bottom: -10,
+                          borderRadius: 36,
+                          borderWidth: 2,
+                          borderColor: C.accent,
+                          opacity: armPulse.interpolate({ inputRange: [0, 1], outputRange: [0.25, 0.85] }),
+                          transform: [{ scale: armPulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.04] }) }],
+                        }}
+                      />
+                    )}
+                    <DoughButton
+                      label="Start Bulk"
+                      onPress={handleStart}
+                      variant="honey"
+                      size="lg"
+                      accessibilityHint="Starts the bulk fermentation timer and fold reminders"
+                    />
+                  </View>
+                  <AppText
+                    role="caption"
+                    center
+                    color={autolyseDone ? C.accent : C.textDim}
+                    style={{ marginTop: 10, fontWeight: autolyseDone ? '700' : '400' }}>
+                    {autolyseDone
+                      ? 'levain in? don’t forget the salt'
+                      : 'starter mixed in? we’ll ring you for every fold and the finish'}
+                  </AppText>
+                </View>
               </View>
-            </View>
-            <BulkProgressBar
-              elapsedMinutes={elapsedMs / 60000}
-              targetMinutes={targetDurationMinutes}
-              foldIntervalMinutes={foldIntervalMinutes}
-            />
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 16, gap: 4 }}>
-              <TouchableOpacity
-                onPress={() => adjustActiveTarget(-TARGET_STEP)}
-                activeOpacity={0.7}
-                style={{ paddingVertical: 6, paddingHorizontal: 22 }}>
-                <Text style={{ color: C.text, fontSize: 22, fontWeight: '300' }}>−</Text>
-              </TouchableOpacity>
-              <View style={{ alignItems: 'center', minWidth: 110 }}>
-                <Text style={{ color: C.text, fontSize: 20, fontWeight: '600', fontFamily: fonts.mono }}>
-                  {formatMinutes(targetDurationMinutes)}
-                </Text>
-                <Text style={{ color: C.textDim, fontSize: 11 }}>planned bulk</Text>
-              </View>
-              <TouchableOpacity
-                onPress={() => adjustActiveTarget(TARGET_STEP)}
-                activeOpacity={0.7}
-                style={{ paddingVertical: 6, paddingHorizontal: 22 }}>
-                <Text style={{ color: C.text, fontSize: 22, fontWeight: '300' }}>+</Text>
-              </TouchableOpacity>
-            </View>
-          </GlassCard>
+            ) : (
+              <Animated.View
+                style={{
+                  gap: 14,
+                  opacity: enter,
+                  transform: [{ translateY: enter.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }) }],
+                }}>
+                <View style={{ alignItems: 'center', minHeight: 148, justifyContent: 'center' }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                    <PulseDot color={accent} />
+                    <AppText role="label" color={accent}>
+                      {justStarted ? 'Levain in' : 'Bulk fermenting'}
+                    </AppText>
+                  </View>
+                  <AppText role="hero" color={timerColor} style={{ letterSpacing: -4 }}>
+                    {elapsed.hours}:{elapsed.minutes}
+                  </AppText>
+                  <AppText role="stat" color={C.textDim} style={{ fontSize: 24, lineHeight: 28, marginTop: -4, fontWeight: '300' }}>
+                    :{elapsed.seconds}
+                  </AppText>
+                </View>
 
-          {foldsComplete ? (
-            <GlassCard
-              radius={20}
-              tint={0.13}
-              blur={12}
-              style={{
-                paddingVertical: 14,
-                paddingHorizontal: 20,
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 10,
-              }}>
-              <CheckCircle2 color={C.accent} size={18} />
-              <Text style={{ color: C.text, fontSize: 15, fontWeight: '600' }}>
-                All {defaultFoldCount} folds done — watch the dough for shape readiness
-              </Text>
-            </GlassCard>
-          ) : foldIsLate ? (
-            <GlassCard radius={20} tint={0.13} blur={12} style={{ padding: 20 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-                <Clock color={C.orange} size={16} />
-                <Text style={{ ...label, color: C.orange }}>{foldLatenessAdvice(lateMinutes, doughTempF).title}</Text>
-              </View>
-              <Text style={{ color: C.textMuted, fontSize: 14, lineHeight: 20 }}>
-                {foldLatenessAdvice(lateMinutes, doughTempF).body}
-              </Text>
-            </GlassCard>
-          ) : (
-            <GlassCard
-              radius={20}
-              tint={0.13}
-              blur={12}
-              style={{
-                padding: 20,
-                alignItems: 'center',
-              }}>
-              <Text style={{ ...label, marginBottom: 6 }}>
-                Next fold in
-              </Text>
-              <Text style={{
-                color: C.text,
-                fontSize: 38,
-                fontWeight: '300',
-                fontFamily: fonts.mono,
-              }}>
-                {nextFold.minutes}:{nextFold.seconds}
-              </Text>
-              {/* progress through the current fold interval */}
-              <View style={{
-                width: '100%',
-                height: 6,
-                borderRadius: 3,
-                backgroundColor: C.chip,
-                marginTop: 14,
-                overflow: 'hidden',
-              }}>
-                <View style={{
-                  width: `${Math.min(100, intervalProgress * 100)}%`,
-                  height: '100%',
-                  borderRadius: 3,
-                  backgroundColor: C.accent,
-                }} />
-              </View>
-              <Text style={{ color: C.textDim, fontSize: 13, marginTop: 10 }}>
-                every {foldIntervalMinutes} min
-              </Text>
-            </GlassCard>
-          )}
+                {/* The dough pad: countdown + count + record, one surface, thumb-first */}
+                <DoughButton
+                  label="Record a fold"
+                  onPress={handleFold}
+                  variant="soft"
+                  accessibilityLabel="Record a fold"
+                  accessibilityHint={
+                    foldsComplete
+                      ? `All ${defaultFoldCount} folds recorded`
+                      : `${completedFolds} of ${defaultFoldCount} folds recorded, next due in ${nextFold.minutes} minutes ${nextFold.seconds} seconds`
+                  }
+                  style={{ overflow: 'hidden' }}>
+                  <PadBurst trigger={completedFolds} />
+                  <View style={{ alignItems: 'center', width: '100%' }}>
+                    {foldsComplete ? (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Icon name="check" size={14} color={C.accent} />
+                        <AppText role="label" color={C.accent}>
+                          All folds in
+                        </AppText>
+                      </View>
+                    ) : foldIsLate ? (
+                      <AppText role="label" color={C.ember}>
+                        Fold {completedFolds + 1} due · {lateMinutes}m ago
+                      </AppText>
+                    ) : (
+                      <AppText role="label" color={C.accent} style={{ fontVariant: ['tabular-nums'] }}>
+                        Next fold in {nextFold.minutes}:{nextFold.seconds}
+                      </AppText>
+                    )}
+                    <Animated.Text
+                      style={{
+                        color: C.accent,
+                        fontSize: 58,
+                        fontWeight: '200',
+                        lineHeight: 64,
+                        marginTop: 2,
+                        fontVariant: ['tabular-nums'],
+                        transform: [{ scale: foldPop }],
+                      }}>
+                      {completedFolds}
+                    </Animated.Text>
+                    <View style={{ marginTop: 6 }}>
+                      <FoldDots completed={completedFolds} planned={defaultFoldCount} />
+                    </View>
+                    {!foldsComplete && (
+                      <View
+                        style={{
+                          width: '68%',
+                          height: 4,
+                          borderRadius: 2,
+                          backgroundColor: 'rgba(232,163,61,0.18)',
+                          marginTop: 10,
+                          overflow: 'hidden',
+                        }}>
+                        <View
+                          style={{
+                            width: `${Math.min(100, intervalProgress * 100)}%`,
+                            height: '100%',
+                            borderRadius: 2,
+                            backgroundColor: foldIsLate ? C.ember : accent,
+                          }}
+                        />
+                      </View>
+                    )}
+                    <AppText role="caption" style={{ marginTop: 8 }}>
+                      {foldsComplete ? 'watch the dough for shape readiness' : 'tap to record a fold'}
+                    </AppText>
+                  </View>
+                </DoughButton>
+                {foldIsLate && (
+                  <AppText role="caption" center color={C.textMuted} style={{ marginTop: -6 }}>
+                    running late is okay — the dough keeps working
+                  </AppText>
+                )}
 
-          {/* The dough's story so far */}
-          <GlassCard radius={20} tint={0.26} blur={9} style={{ padding: 20 }}>
-            <Text style={{ ...label, marginBottom: 16 }}>Dough story</Text>
-            <DoughStory
-              startTs={bulkStartTimestamp ?? now}
-              foldTimestamps={foldTimestamps}
-              plannedFolds={defaultFoldCount}
-              intervalMinutes={foldIntervalMinutes}
-              nextFoldDueTimestamp={nextFoldDueTimestamp}
-              targetEndTs={targetEndTimestamp}
-              now={now}
-            />
-          </GlassCard>
+                {/* The journey: phase, progress, milestones, landing time */}
+                <GlassCard radius={24} tint={0.5} blur={16} style={{ padding: 20 }}>
+                  <Journey
+                    startTs={bulkStartTimestamp ?? now}
+                    foldTimestamps={foldTimestamps}
+                    plannedFolds={defaultFoldCount}
+                    intervalMinutes={foldIntervalMinutes}
+                    nextFoldDueTimestamp={nextFoldDueTimestamp}
+                    targetMinutes={targetDurationMinutes}
+                    onChangeTarget={adjustActiveTargetTo}
+                    targetMin={TARGET_MIN}
+                    targetMax={TARGET_MAX}
+                    targetStep={TARGET_STEP}
+                    now={now}
+                    fraction={sceneFraction}
+                  />
+                </GlassCard>
 
-          <RiseTracker
-            pct={risePercent}
-            onChange={setRisePercent}
-            estimated={estimatedRise(elapsedMs / 60000, targetDurationMinutes)}
-          />
+                {/* Predicted vs observed rise */}
+                <GlassCard radius={24} tint={0.44} blur={14} style={{ padding: 20 }}>
+                  <Corridor
+                    elapsedMinutes={elapsedMs / 60000}
+                    targetMinutes={targetDurationMinutes}
+                    marks={riseMarks}
+                    onAddMark={addRiseMark}
+                  />
+                  {lastRise > 0 && (
+                    <RiseAdvisory actual={lastRise} estimated={estimatedRise(elapsedMs / 60000, targetDurationMinutes)} />
+                  )}
+                </GlassCard>
 
-          <Springy
-            onPress={handleFold}
-            pressScale={0.97}>
-            <GlassCard
-              radius={22}
-              tint={0.0}
-              blur={7}
-              style={{
-                borderWidth: 1.5,
-                borderColor: C.accentBorder,
-                borderTopColor: C.accentBorder,
-                paddingVertical: 26,
-                alignItems: 'center',
-              }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-              <Hand color={C.accent} size={14} />
-              <Text style={{ ...label, color: C.accent }}>
-                Folds completed
-              </Text>
-            </View>
-            <Animated.Text
-              style={{
-                color: C.accent,
-                fontSize: 68,
-                fontWeight: '200',
-                lineHeight: 76,
-                fontFamily: fonts.mono,
-                transform: [{ scale: foldPop }],
-              }}>
-              {completedFolds}
-            </Animated.Text>
-            <View style={{ marginTop: 10, marginBottom: 6 }}>
-              <FoldDots completed={completedFolds} planned={defaultFoldCount} />
-            </View>
-            <Text style={{ color: C.textDim, fontSize: 13 }}>tap to record a fold</Text>
-            </GlassCard>
-          </Springy>
-
-          <TouchableOpacity onPress={handleEnd} activeOpacity={0.8}>
-            <GlassCard
-              radius={22}
-              tint={0.0}
-              blur={9}
-              style={{
-                borderColor: C.redBorder,
-                borderTopColor: C.redBorder,
-                paddingVertical: 24,
-                alignItems: 'center',
-              }}>
-              <Text style={{ color: C.red, fontSize: 20, fontWeight: '700' }}>
-                End Bulk & Shape
-              </Text>
-            </GlassCard>
-          </TouchableOpacity>
-        </Animated.View>
-      )}
-            {/* Hidden entry to the animation perf HUD: long-press this faint
-                label. Deliberately at the very bottom so it can never collide
-                with real controls; a stray tap does nothing. */}
+                {/* Ending bulk is the happy milestone, not a destructive act */}
+                <DoughButton
+                  label="Finish & Shape"
+                  icon="loaf"
+                  onPress={() => setEndConfirm(true)}
+                  variant="cream"
+                  size="lg"
+                  glow={false}
+                  accessibilityHint="Ends bulk fermentation and moves to logging"
+                />
+              </Animated.View>
+            )}
             <Pressable
               onLongPress={() => setPerfFlags({ hud: !getPerfFlags().hud })}
               delayLongPress={600}
               hitSlop={12}
               style={{ alignSelf: 'center', paddingVertical: 10, paddingHorizontal: 24, marginTop: 6 }}>
-              <Text style={{ color: 'rgba(255,255,255,0.14)', fontSize: 11, letterSpacing: 2 }}>
+              <AppText role="caption" color="rgba(255,255,255,0.14)" style={{ letterSpacing: 2 }}>
                 · perf ·
-              </Text>
+              </AppText>
             </Pressable>
           </View>
         </Animated.ScrollView>
       </GlassStageProvider>
 
-    <PerfHud />
+      <PerfHud />
 
-    {celebrating && (
-      <CelebrationOverlay durationLabel={`${formatMinutes(Math.round(elapsedMs / 60000))} of bulk`} />
-    )}
+      {celebrating && (
+        <CelebrationOverlay durationLabel={`${formatMinutes(Math.round(elapsedMs / 60000))} of bulk`} />
+      )}
 
-    {lateFoldConfirm && (
-      <LateFoldConfirmOverlay
-        lateMinutes={lateFoldConfirm.lateMinutes}
-        intervalMinutes={foldIntervalMinutes}
-        onKeepSchedule={() => resolveLateFold(true)}
-        onRestartFromNow={() => resolveLateFold(false)}
-        onDismiss={() => setLateFoldConfirm(null)}
-      />
-    )}
+      <Sheet
+        visible={lateFoldConfirm !== null}
+        onClose={() => setLateFoldConfirm(null)}
+        title={foldLatenessAdvice(lateFoldConfirm?.lateMinutes ?? 0, doughTempF, tempUnit).title}>
+        <AppText role="body" color={C.textMuted} style={{ marginBottom: 12 }}>
+          {foldLatenessAdvice(lateFoldConfirm?.lateMinutes ?? 0, doughTempF, tempUnit).body}
+        </AppText>
+        <AppText role="body" color={C.text} style={{ marginBottom: 18 }}>
+          Should the next fold stay on the original {foldIntervalMinutes}-min schedule, or start counting from
+          right now?
+        </AppText>
+        <View style={{ gap: 10 }}>
+          <DoughButton
+            label="Keep original schedule"
+            onPress={() => resolveLateFold(true)}
+            variant="soft"
+            size="md"
+          />
+          <DoughButton
+            label={`Restart ${foldIntervalMinutes} min from now`}
+            onPress={() => resolveLateFold(false)}
+            variant="quiet"
+            size="md"
+          />
+        </View>
+      </Sheet>
+
+      <Sheet visible={endConfirm} onClose={() => setEndConfirm(false)} title="Ready to shape?">
+        <AppText role="body" color={C.textMuted} style={{ marginBottom: 18 }}>
+          This wraps bulk at {formatMinutes(Math.round(elapsedMs / 60000))} at{' '}
+          {formatTemp(doughTempF, tempUnit)}. If it's a slip of the thumb, you can undo from the Shelf.
+        </AppText>
+        <View style={{ gap: 10 }}>
+          <DoughButton label="Finish bulk" icon="loaf" onPress={handleEndConfirmed} variant="cream" size="md" />
+          <DoughButton label="Keep fermenting" onPress={() => setEndConfirm(false)} variant="quiet" size="md" />
+        </View>
+      </Sheet>
     </View>
   );
 }

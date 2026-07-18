@@ -41,6 +41,12 @@ export interface FoldLatenessAdvice {
   body: string;
 }
 
+/** Format a stored-°F temperature in the user's display unit. */
+export function formatTemp(tempF: number, unit: 'F' | 'C' = 'F'): string {
+  if (unit === 'C') return `${Math.round(((tempF - 32) * 5) / 9)}°C`;
+  return `${tempF}°F`;
+}
+
 /**
  * Reassurance + a sourced suggestion when a fold reminder has gone unanswered
  * for a while — the push notification may have been delayed by Android/iOS
@@ -48,13 +54,20 @@ export interface FoldLatenessAdvice {
  * (docs/references) since the natural fix is adjusting the planned interval
  * for kitchen temperature, not panicking about the dough.
  */
-export function foldLatenessAdvice(lateMinutes: number, kitchenTempF: number): FoldLatenessAdvice {
+export function foldLatenessAdvice(
+  lateMinutes: number,
+  kitchenTempF: number,
+  unit: 'F' | 'C' = 'F',
+): FoldLatenessAdvice {
   const warm = kitchenTempF >= 78;
+  const kitchen = formatTemp(kitchenTempF, unit);
+  const baseline = unit === 'C' ? '26°C' : '78°F';
+  const delta = unit === 'C' ? '8°C' : '15°F';
   return {
     title: `Running ${lateMinutes} min late — that's okay`,
     body: warm
-      ? `A few extra minutes won't hurt a fold — the dough keeps working the whole time. Since your kitchen's ${kitchenTempF}°F, fermentation runs faster than the 78°F baseline (the Q10 rule: roughly 2× faster per 15°F warmer), so if this keeps happening, try a shorter interval next bake.`
-      : `A few extra minutes won't hurt a fold — the dough keeps working the whole time. Since your kitchen's ${kitchenTempF}°F, fermentation runs slower than the 78°F baseline (the Q10 rule: roughly 2× slower per 15°F cooler), so a longer interval next bake may fit your schedule better.`,
+      ? `A few extra minutes won't hurt a fold — the dough keeps working the whole time. Since your kitchen's ${kitchen}, fermentation runs faster than the ${baseline} baseline (the Q10 rule: roughly 2× faster per ${delta} warmer), so if this keeps happening, try a shorter interval next bake.`
+      : `A few extra minutes won't hurt a fold — the dough keeps working the whole time. Since your kitchen's ${kitchen}, fermentation runs slower than the ${baseline} baseline (the Q10 rule: roughly 2× slower per ${delta} cooler), so a longer interval next bake may fit your schedule better.`,
   };
 }
 
@@ -80,7 +93,7 @@ function median(sorted: number[]): number {
  * own logged bakes turned out like. Priority: their history of good bakes
  * beats the generic baseline; their most recent miss nudges the number.
  */
-export function suggestBulk(tempF: number, logs: BakeLog[]): BulkSuggestion {
+export function suggestBulk(tempF: number, logs: BakeLog[], unit: 'F' | 'C' = 'F'): BulkSuggestion {
   const proper = logs
     .filter((l) => l.diagnosis === 'properly_fermented')
     .map((l) => l.bulkDurationMinutes)
@@ -116,9 +129,9 @@ export function suggestBulk(tempF: number, logs: BakeLog[]): BulkSuggestion {
 
   const tempFactor = Math.pow(2, (BASELINE_TEMP_F - tempF) / DOUBLING_DELTA_F);
   if (tempF <= BASELINE_TEMP_F - 3) {
-    reasonParts.push(`${tempF}°F kitchen ferments slower`);
+    reasonParts.push(`${formatTemp(tempF, unit)} kitchen ferments slower`);
   } else if (tempF >= BASELINE_TEMP_F + 3) {
-    reasonParts.push(`${tempF}°F kitchen ferments faster`);
+    reasonParts.push(`${formatTemp(tempF, unit)} kitchen ferments faster`);
   }
 
   const raw = base * tempFactor;
@@ -127,7 +140,7 @@ export function suggestBulk(tempF: number, logs: BakeLog[]): BulkSuggestion {
   const reason =
     reasonParts.length > 0
       ? reasonParts.join(' · ')
-      : `typical dough at ${tempF}°F`;
+      : `typical dough at ${formatTemp(tempF, unit)}`;
 
   return { minutes, reason };
 }

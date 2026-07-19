@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   ScrollView,
+  Pressable,
   Platform,
   Animated,
   Easing,
@@ -25,7 +26,9 @@ import { AUTOLYSE_COPY } from '@/components/FermentationScene';
 // (see components/SkiaErrorBoundary.tsx and docs/SKIA-HANDOFF.md).
 import { SafeSkiaFermentationScene } from '@/components/SkiaErrorBoundary';
 import { GlassStageProvider, GlassCard } from '@/components/GlassCard';
-import { setScrollY, setContentTop } from '@/components/glassStage';
+import { setScrollY, setContentTop, setScrollAnim } from '@/components/glassStage';
+import { PerfHud } from '@/components/PerfHud';
+import { getPerfFlags, setPerfFlags } from '@/components/perfFlags';
 import { C, fonts, accentForFraction, lerpColor, motion, thump, successHaptic, Haptics } from '@/components/theme';
 import { AppText } from '@/components/ui/AppText';
 import { Chip } from '@/components/ui/Chip';
@@ -381,18 +384,46 @@ export default function HomeScreen() {
   // registered, so no glass panel was ever drawn.
   const [contentNode, setContentNode] = useState<View | null>(null);
   const [measureTick, setMeasureTick] = useState(0);
-  const onContentRef = useCallback((node: View | null) => {
-    setContentNode(node);
-    if (node) {
-      node.measureInWindow((_x: number, y: number) => {
-        setContentTop(y);
+  const rootRef = useRef<View>(null);
+  const contentViewRef = useRef<View | null>(null);
+  const scrollYRef = useRef(0);
+  const measureContentTop = useCallback(() => {
+    const content = contentViewRef.current;
+    const root = rootRef.current;
+    if (!content || !root) return;
+    content.measureInWindow((_cx: number, cy: number) => {
+      root.measureInWindow((_rx: number, ry: number) => {
+        setContentTop(cy - ry + scrollYRef.current);
       });
-    }
+    });
   }, []);
-  const onScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
-    setScrollY(e.nativeEvent.contentOffset.y);
-  }, []);
-  const remeasureGlass = useCallback(() => setMeasureTick((t) => t + 1), []);
+  const onContentRef = useCallback(
+    (node: View | null) => {
+      contentViewRef.current = node;
+      setContentNode(node);
+      measureContentTop();
+    },
+    [measureContentTop],
+  );
+  const scrollAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    setScrollAnim(scrollAnim);
+  }, [scrollAnim]);
+  const onScroll = useMemo(
+    () =>
+      Animated.event([{ nativeEvent: { contentOffset: { y: scrollAnim } } }], {
+        useNativeDriver: true,
+        listener: (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+          scrollYRef.current = e.nativeEvent.contentOffset.y;
+          setScrollY(e.nativeEvent.contentOffset.y);
+        },
+      }),
+    [scrollAnim],
+  );
+  const remeasureGlass = useCallback(() => {
+    measureContentTop();
+    setMeasureTick((t) => t + 1);
+  }, [measureContentTop]);
 
   // Coach: suggested bulk time from kitchen temp + the user's own history.
   const suggestion = useMemo(() => suggestBulk(doughTempF, bakeLogs, tempUnit), [doughTempF, bakeLogs, tempUnit]);
@@ -413,9 +444,8 @@ export default function HomeScreen() {
   useEffect(() => {
     if (isActive) {
       scrollRef.current?.scrollTo({ y: 0, animated: false });
-      // Programmatic scrolls don't always fire onScroll — keep the Skia glass
-      // stage in step or its panels render at the stale offset.
       setScrollY(0);
+      scrollYRef.current = 0;
       remeasureGlass();
       enter.setValue(0);
       Animated.timing(enter, {
@@ -672,14 +702,14 @@ export default function HomeScreen() {
   const lastRise = riseMarks.length > 0 ? riseMarks[riseMarks.length - 1].pct : risePercent;
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#000' }}>
+    <View ref={rootRef} style={{ flex: 1, backgroundColor: '#000' }}>
       {/* Fullscreen living "microscope" backdrop, behind everything. */}
       <View style={StyleSheet.absoluteFill} pointerEvents="none">
         <SafeSkiaFermentationScene mode={sceneMode} fraction={sceneFraction} />
       </View>
 
       <GlassStageProvider contentNode={contentNode} measureTick={measureTick}>
-        <ScrollView
+        <Animated.ScrollView
           ref={scrollRef}
           style={{ flex: 1 }}
           contentContainerStyle={{ padding: 0 }}
@@ -1069,9 +1099,20 @@ export default function HomeScreen() {
                 />
               </Animated.View>
             )}
+            <Pressable
+              onLongPress={() => setPerfFlags({ hud: !getPerfFlags().hud })}
+              delayLongPress={600}
+              hitSlop={12}
+              style={{ alignSelf: 'center', paddingVertical: 10, paddingHorizontal: 24, marginTop: 6 }}>
+              <AppText role="caption" color="rgba(255,255,255,0.14)" style={{ letterSpacing: 2 }}>
+                · perf ·
+              </AppText>
+            </Pressable>
           </View>
-        </ScrollView>
+        </Animated.ScrollView>
       </GlassStageProvider>
+
+      <PerfHud />
 
       {celebrating && (
         <CelebrationOverlay durationLabel={`${formatMinutes(Math.round(elapsedMs / 60000))} of bulk`} />

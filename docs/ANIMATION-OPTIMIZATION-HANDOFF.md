@@ -1,7 +1,7 @@
 # Animation Optimization Handoff — next pass
 
-Updated July 18 2026, when build #23 shipped. Audience: a fresh session
-taking **the next optimization pass at animation smoothness**.
+Updated July 19 2026, after build #25/25a (session closed). Audience: a
+fresh session taking **the next optimization pass at animation smoothness**.
 
 Read `docs/ANIMATION-SESSION-GUIDE.md` FIRST (architecture + hard
 constraints — including the new "direct renderer & perf HUD" section), and
@@ -21,8 +21,9 @@ Owner device: **Pixel 9 (120Hz)**. Complaint history and what each build fixed:
 | #21 | `9568f1f` | Blur clipped to visible slice + scroll-time refresh halving + BASE_PERIOD 3→4 → "improved significantly", card edges confirmed good, but "still some jerkiness, even when not scrolling, especially later in bulk" |
 | #22 | `27998f4` | glowOrb unit-gradient shader cache; drift/flow scratch outputs; slow/fast layer split (slow cast @30fps, @20fps late bulk; bubbles @60fps). Verdict: **"better than before, but still could be smoother, especially later in animation."** |
 | #23 | (prev pass) | Direct renderer (React/scene-graph/runOnUI bypass — see guide; pixel-identical, default ON, `draw` chip falls back); perf HUD + owner A/B chips; gradient-disc glow substitution (`glow` chip, default mask); 75% backing-resolution option (`res` chip, default 100%); sub-visible-alpha culling (`cull` chip, default off); grain-constants precompute + gluten live-node pool (pixel-identical). **Owner verdict: "draw direct is smoother, glow mask looks better, res 100 vs 75 no noticeable difference, cull on doesn't change visually."** |
-| #24 | (prev pass) | Merged design-modernization UI overhaul (Fraunces font, AppText, DoughButton, Chip, etc.). A/B evidence collected (HUD screenshots, sim:bulk 85%). Promoted `cull: true` as default. See evidence table below. |
-| #25 | (this pass) | Opaque scene surface experiment (`opaque` chip) — **FAILED**: toggling opaque off corrupts the native surface (sprites disappear, can't recover without restart). Pane-side SharedValue bypass (`pane` chip) — **FAILED**: crashes on tap; Skia 2.6.2 declarative components don't support SharedValues for `picture`/`clip` props at runtime. Both reverted in build #25a. |
+| #24 | `92adb1f` | Merged design-modernization UI overhaul (Fraunces font, AppText, DoughButton, Chip, etc.). A/B evidence collected (HUD screenshots, sim:bulk 85%). Promoted `cull: true` as default. See evidence table below. |
+| #25 | `eaaff4a` | Opaque scene surface experiment (`opaque` chip) — **FAILED**: toggling opaque off corrupts the native surface (sprites disappear, can't recover without restart). Pane-side SharedValue bypass (`pane` chip) — **FAILED**: crashes on tap; Skia 2.6.2 declarative components don't support SharedValues for `picture`/`clip` props at runtime. |
+| #25a | `040bfdb` | Reverted both #25 experiments. App identical to #24. Docs updated with failure details. |
 
 ### Build #24 A/B evidence (Pixel 9, sim:bulk 85%, HUD screenshots)
 
